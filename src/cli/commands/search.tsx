@@ -9,7 +9,7 @@ interface SearchOptions {
   limit?: string;
 }
 
-type ViewMode = 'list' | 'matches' | 'conversation';
+type ViewMode = 'list' | 'matches' | 'conversation' | 'message';
 
 function formatRelativeTime(isoDate: string | undefined): string {
   if (!isoDate) return '';
@@ -237,7 +237,7 @@ function MatchesView({
               </Text>
               <Box>
                 <HighlightedText
-                  text={match.snippet.replace(/\n/g, ' ').slice(0, (width - 6) * 2)}
+                  text={match.content.replace(/\n/g, ' ').slice(0, (width - 6) * 3)}
                   query={query}
                 />
               </Box>
@@ -264,6 +264,7 @@ function ConversationView({
   height,
   scrollOffset,
   highlightMessageIndex,
+  selectedIndex,
 }: {
   conversation: Conversation;
   messages: Message[];
@@ -273,6 +274,7 @@ function ConversationView({
   height: number;
   scrollOffset: number;
   highlightMessageIndex?: number;
+  selectedIndex: number;
 }) {
   // Build project context info
   const projectParts: string[] = [];
@@ -333,6 +335,7 @@ function ConversationView({
         {visibleMessages.map((msg, idx) => {
           const actualIdx = scrollOffset + idx;
           const isHighlighted = actualIdx === highlightMessageIndex;
+          const isSelected = actualIdx === selectedIndex;
           const roleLabel = msg.role === 'user' ? 'You' : msg.role === 'assistant' ? 'Assistant' : 'System';
           const roleColor = msg.role === 'user' ? 'green' : msg.role === 'assistant' ? 'blue' : 'yellow';
 
@@ -343,33 +346,93 @@ function ConversationView({
             return parts[parts.length - 1] || f.filePath;
           });
 
-          // Truncate long messages
-          const maxLen = width * 3;
-          const content = msg.content.length > maxLen
-            ? msg.content.slice(0, maxLen) + '…'
-            : msg.content;
+          // Truncate messages to ~2 lines for compact view
+          const maxLen = (width - 6) * 2;
+          const truncatedContent = msg.content.replace(/\n/g, ' ').slice(0, maxLen);
+          const isTruncated = msg.content.length > maxLen;
 
           return (
             <Box
               key={msg.id}
               flexDirection="column"
               marginBottom={1}
-              borderStyle={isHighlighted ? 'single' : undefined}
-              borderColor="yellow"
-              paddingLeft={isHighlighted ? 1 : 0}
+              borderStyle={isSelected ? 'single' : isHighlighted ? 'single' : undefined}
+              borderColor={isSelected ? 'cyan' : 'yellow'}
+              paddingLeft={isSelected || isHighlighted ? 1 : 0}
             >
               <Box>
-                <Text color={roleColor} bold>[{roleLabel}]</Text>
+                <Text color={isSelected ? 'cyan' : roleColor} bold>
+                  {isSelected ? '▸ ' : ''}[{roleLabel}]
+                </Text>
                 {msgFileNames.length > 0 && (
                   <Text dimColor> ({msgFileNames.join(', ')})</Text>
                 )}
+                {isTruncated && (
+                  <Text dimColor> [Enter for full]</Text>
+                )}
               </Box>
               <Box marginLeft={2}>
-                <Text wrap="wrap">{content.replace(/\n/g, ' ').slice(0, width * 2)}</Text>
+                <Text wrap="wrap">{truncatedContent}{isTruncated ? '…' : ''}</Text>
               </Box>
             </Box>
           );
         })}
+      </Box>
+    </Box>
+  );
+}
+
+function MessageDetailView({
+  message,
+  messageFiles,
+  width,
+  height,
+  scrollOffset,
+  query,
+}: {
+  message: Message;
+  messageFiles: MessageFile[];
+  width: number;
+  height: number;
+  scrollOffset: number;
+  query: string;
+}) {
+  const roleLabel = message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Assistant' : 'System';
+  const roleColor = message.role === 'user' ? 'green' : message.role === 'assistant' ? 'blue' : 'yellow';
+
+  // Get file names for this message
+  const fileNames = messageFiles.map((f) => {
+    const parts = f.filePath.split('/');
+    return parts[parts.length - 1] || f.filePath;
+  });
+
+  // Split content into lines for scrolling
+  const lines = message.content.split('\n');
+  const headerHeight = 3;
+  const footerHeight = 2;
+  const availableHeight = height - headerHeight - footerHeight;
+  const visibleLines = lines.slice(scrollOffset, scrollOffset + availableHeight);
+
+  return (
+    <Box flexDirection="column" height={height}>
+      <Box flexDirection="column" marginBottom={1}>
+        <Box>
+          <Text color={roleColor} bold>[{roleLabel}]</Text>
+          <Text dimColor> · Message {message.messageIndex + 1}</Text>
+          {fileNames.length > 0 && (
+            <Text dimColor> · Files: {fileNames.join(', ')}</Text>
+          )}
+        </Box>
+        <Text dimColor>
+          {lines.length} lines · {scrollOffset + 1}-{Math.min(scrollOffset + availableHeight, lines.length)} of {lines.length}
+        </Text>
+      </Box>
+
+      <Box flexDirection="column" flexGrow={1}>
+        <HighlightedText
+          text={visibleLines.join('\n')}
+          query={query}
+        />
       </Box>
     </Box>
   );
@@ -403,6 +466,10 @@ function SearchApp({
   const [conversationMessageFiles, setConversationMessageFiles] = useState<MessageFile[]>([]);
   const [conversationScrollOffset, setConversationScrollOffset] = useState(0);
   const [highlightMessageIndex, setHighlightMessageIndex] = useState<number | undefined>(undefined);
+  const [selectedMessageIndex, setSelectedMessageIndex] = useState(0);
+
+  // Message detail view state
+  const [messageScrollOffset, setMessageScrollOffset] = useState(0);
 
   useEffect(() => {
     async function runSearch() {
@@ -476,23 +543,74 @@ function SearchApp({
 
     if (!response || response.results.length === 0) return;
 
-    if (viewMode === 'conversation' && expandedResult) {
+    if (viewMode === 'message' && conversationMessages.length > 0) {
+      // Message detail view navigation
+      const currentMessage = conversationMessages[selectedMessageIndex];
+      if (key.escape || key.backspace || key.delete) {
+        setViewMode('conversation');
+        setMessageScrollOffset(0);
+      } else if (input === 'j' || key.downArrow) {
+        const lines = currentMessage?.content.split('\n') || [];
+        const maxOffset = Math.max(0, lines.length - (height - 5));
+        setMessageScrollOffset((o) => Math.min(o + 1, maxOffset));
+      } else if (input === 'k' || key.upArrow) {
+        setMessageScrollOffset((o) => Math.max(o - 1, 0));
+      } else if (input === 'g') {
+        setMessageScrollOffset(0);
+      } else if (input === 'G') {
+        const lines = currentMessage?.content.split('\n') || [];
+        setMessageScrollOffset(Math.max(0, lines.length - (height - 5)));
+      } else if (input === 'n') {
+        // Next message
+        if (selectedMessageIndex < conversationMessages.length - 1) {
+          setSelectedMessageIndex((i) => i + 1);
+          setMessageScrollOffset(0);
+        }
+      } else if (input === 'p') {
+        // Previous message
+        if (selectedMessageIndex > 0) {
+          setSelectedMessageIndex((i) => i - 1);
+          setMessageScrollOffset(0);
+        }
+      }
+    } else if (viewMode === 'conversation' && expandedResult) {
       // Conversation view navigation
       if (key.escape || key.backspace || key.delete) {
         setViewMode('matches');
         setConversationMessages([]);
         setHighlightMessageIndex(undefined);
+        setSelectedMessageIndex(0);
       } else if (input === 'j' || key.downArrow) {
+        setSelectedMessageIndex((i) => Math.min(i + 1, conversationMessages.length - 1));
+        // Adjust scroll to keep selected message visible
         const messagesPerPage = Math.max(1, Math.floor((height - 8) / 5));
-        const maxOffset = Math.max(0, conversationMessages.length - messagesPerPage);
-        setConversationScrollOffset((o) => Math.min(o + 1, maxOffset));
+        setConversationScrollOffset((o) => {
+          const newIdx = Math.min(selectedMessageIndex + 1, conversationMessages.length - 1);
+          if (newIdx >= o + messagesPerPage) {
+            return Math.min(o + 1, Math.max(0, conversationMessages.length - messagesPerPage));
+          }
+          return o;
+        });
       } else if (input === 'k' || key.upArrow) {
-        setConversationScrollOffset((o) => Math.max(o - 1, 0));
+        setSelectedMessageIndex((i) => Math.max(i - 1, 0));
+        setConversationScrollOffset((o) => {
+          const newIdx = Math.max(selectedMessageIndex - 1, 0);
+          if (newIdx < o) {
+            return Math.max(o - 1, 0);
+          }
+          return o;
+        });
       } else if (input === 'g') {
         setConversationScrollOffset(0);
+        setSelectedMessageIndex(0);
       } else if (input === 'G') {
         const messagesPerPage = Math.max(1, Math.floor((height - 8) / 5));
         setConversationScrollOffset(Math.max(0, conversationMessages.length - messagesPerPage));
+        setSelectedMessageIndex(conversationMessages.length - 1);
+      } else if (key.return) {
+        // Open message detail view
+        setViewMode('message');
+        setMessageScrollOffset(0);
       }
     } else if (viewMode === 'matches' && expandedResult) {
       // Matches view navigation
@@ -573,7 +691,9 @@ function SearchApp({
   if (viewMode === 'matches') {
     footerText = 'j/k: navigate · Enter: view conversation · Esc: back · q: quit';
   } else if (viewMode === 'conversation') {
-    footerText = 'j/k: scroll · g/G: top/bottom · Esc: back · q: quit';
+    footerText = 'j/k: select · Enter: view full message · g/G: top/bottom · Esc: back · q: quit';
+  } else if (viewMode === 'message') {
+    footerText = 'j/k: scroll · n/p: next/prev message · g/G: top/bottom · Esc: back · q: quit';
   }
 
   return (
@@ -592,6 +712,15 @@ function SearchApp({
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
         {response.results.length === 0 ? (
           <Text dimColor>No results found.</Text>
+        ) : viewMode === 'message' && conversationMessages[selectedMessageIndex] ? (
+          <MessageDetailView
+            message={conversationMessages[selectedMessageIndex]!}
+            messageFiles={conversationMessageFiles.filter((f) => f.messageId === conversationMessages[selectedMessageIndex]!.id)}
+            width={width - 2}
+            height={availableHeight}
+            scrollOffset={messageScrollOffset}
+            query={query}
+          />
         ) : viewMode === 'conversation' && expandedResult ? (
           <ConversationView
             conversation={expandedResult.conversation}
@@ -602,6 +731,7 @@ function SearchApp({
             height={availableHeight}
             scrollOffset={conversationScrollOffset}
             highlightMessageIndex={highlightMessageIndex}
+            selectedIndex={selectedMessageIndex}
           />
         ) : viewMode === 'matches' && expandedResult ? (
           <MatchesView
