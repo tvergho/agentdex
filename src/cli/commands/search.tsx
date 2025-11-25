@@ -49,7 +49,7 @@ function HighlightedText({
   const parts = text.split(regex);
 
   return (
-    <Text dimColor={dimColor}>
+    <Text dimColor={dimColor} wrap="wrap">
       {parts.map((part, i) => {
         const isMatch = terms.some((t) => part.toLowerCase() === t);
         if (isMatch) {
@@ -235,10 +235,12 @@ function MatchesView({
                 )}
                 <Text dimColor> · msg {match.messageIndex + 1}</Text>
               </Text>
-              <HighlightedText
-                text={match.snippet.replace(/\n/g, ' ').slice(0, width - 6)}
-                query={query}
-              />
+              <Box>
+                <HighlightedText
+                  text={match.snippet.replace(/\n/g, ' ').slice(0, (width - 6) * 2)}
+                  query={query}
+                />
+              </Box>
             </Box>
           );
         })}

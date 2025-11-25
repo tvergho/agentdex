@@ -38,7 +38,7 @@ function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]>
 function extractSnippet(
   content: string,
   query: string,
-  contextChars = 100
+  contextChars = 200
 ): { snippet: string; highlightRanges: [number, number][] } {
   const lowerContent = content.toLowerCase();
   const lowerQuery = query.toLowerCase();
