@@ -2,6 +2,8 @@
 /**
  * Background embedding worker - runs embeddings in background after sync
  * Can be spawned with: bun run src/cli/commands/embed.ts
+ *
+ * Uses llama-server for fast batch embedding with fallback to node-llama-cpp
  */
 
 import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable } from '../../db/index.js';
@@ -14,13 +16,27 @@ import {
   setEmbeddingProgress,
   getEmbeddingProgress,
   isEmbeddingInProgress,
+  EMBEDDING_DIMENSIONS,
 } from '../../embeddings/index.js';
+import {
+  isLlamaServerInstalled,
+  downloadLlamaServer,
+  startLlamaServer,
+  stopLlamaServer,
+  embedBatchViaServer,
+} from '../../embeddings/llama-server.js';
 import { existsSync } from 'fs';
 
-// Smaller batch size for smoother CPU usage
-const BATCH_SIZE = 50;
-// Pause between batches to prevent sustained high CPU
-const BATCH_DELAY_MS = 100;
+// Batch size for server - moderate due to long texts
+const SERVER_BATCH_SIZE = 32;
+// Smaller batch size for node-llama-cpp fallback
+const FALLBACK_BATCH_SIZE = 16;
+// Pause between batches
+const BATCH_DELAY_MS = 50;
+// Instruction prefix for query embeddings
+const INSTRUCTION_PREFIX = 'Instruct: Retrieve relevant code conversations\nQuery: ';
+// Max characters per text (8192 tokens ~ 32K chars, but be conservative)
+const MAX_TEXT_CHARS = 8000;
 
 interface MessageRow {
   id: string;
@@ -47,6 +63,170 @@ async function getAllMessagesNeedingEmbedding(): Promise<MessageRow[]> {
   }) as MessageRow[];
 }
 
+function truncateText(text: string): string {
+  if (text.length <= MAX_TEXT_CHARS) {
+    return text;
+  }
+  return text.slice(0, MAX_TEXT_CHARS) + '...';
+}
+
+function prepareTexts(texts: string[]): string[] {
+  return texts.map((text) => INSTRUCTION_PREFIX + truncateText(text));
+}
+
+async function runWithServer(
+  messages: MessageRow[],
+  table: Awaited<ReturnType<typeof getMessagesTable>>
+): Promise<boolean> {
+  const modelPath = getModelPath();
+
+  try {
+    // Download llama-server if needed
+    if (!isLlamaServerInstalled()) {
+      console.log('Downloading llama-server...');
+      await downloadLlamaServer((downloaded, total) => {
+        const pct = Math.round((downloaded / total) * 100);
+        process.stdout.write(`\rDownloading llama-server: ${pct}%`);
+      });
+      console.log('\nllama-server downloaded.');
+    }
+
+    // Start server
+    console.log('Starting llama-server...');
+    const port = await startLlamaServer(modelPath, 4);
+    console.log(`llama-server started on port ${port}`);
+
+    // Process in batches
+    for (let i = 0; i < messages.length; i += SERVER_BATCH_SIZE) {
+      const batch = messages.slice(i, i + SERVER_BATCH_SIZE);
+      const texts = prepareTexts(batch.map((m) => m.content));
+
+      const vectors = await embedBatchViaServer(texts, port);
+
+      // Validate vector dimensions
+      const validVectors = vectors.filter((v) => v && v.length === EMBEDDING_DIMENSIONS);
+      if (validVectors.length !== vectors.length) {
+        console.warn(`Warning: ${vectors.length - validVectors.length} invalid vectors in batch`);
+      }
+
+      // Build full rows with updated vectors for batch mergeInsert
+      const updatedRows = batch
+        .map((msg, j) => {
+          const vec = vectors[j];
+          if (!vec || vec.length !== EMBEDDING_DIMENSIONS) return null;
+          return {
+            id: msg.id,
+            conversationId: msg.conversationId,
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp,
+            messageIndex: msg.messageIndex,
+            vector: vec,
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => row !== null);
+
+      // Use mergeInsert for batch update
+      if (updatedRows.length > 0) {
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            await table.mergeInsert('id').whenMatchedUpdateAll().execute(updatedRows);
+            break;
+          } catch (err) {
+            retries--;
+            if (retries === 0) throw err;
+            await new Promise((r) => setTimeout(r, 200));
+          }
+        }
+      }
+
+      // Update progress
+      setEmbeddingProgress({
+        status: 'embedding',
+        total: messages.length,
+        completed: Math.min(i + SERVER_BATCH_SIZE, messages.length),
+        startedAt: getEmbeddingProgress().startedAt,
+      });
+
+      // Brief pause between batches
+      if (i + SERVER_BATCH_SIZE < messages.length) {
+        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      }
+    }
+
+    await stopLlamaServer();
+    return true;
+  } catch (error) {
+    console.error('Server embedding failed:', error);
+    await stopLlamaServer();
+    return false;
+  }
+}
+
+async function runWithNodeLlamaCpp(
+  messages: MessageRow[],
+  table: Awaited<ReturnType<typeof getMessagesTable>>
+): Promise<void> {
+  console.log('Using node-llama-cpp fallback...');
+
+  // Use low priority mode
+  await initEmbeddings(true);
+
+  // Process in batches
+  for (let i = 0; i < messages.length; i += FALLBACK_BATCH_SIZE) {
+    const batch = messages.slice(i, i + FALLBACK_BATCH_SIZE);
+    const texts = batch.map((m) => m.content);
+    const vectors = await embed(texts);
+
+    // Build full rows with updated vectors for batch mergeInsert
+    const updatedRows = batch
+      .map((msg, j) => {
+        const vec = vectors[j];
+        return {
+          id: msg.id,
+          conversationId: msg.conversationId,
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          messageIndex: msg.messageIndex,
+          vector: vec ? Array.from(vec) : Array.from(msg.vector),
+        };
+      })
+      .filter((row) => row.vector && row.vector.length > 0);
+
+    // Use mergeInsert for batch update
+    if (updatedRows.length > 0) {
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          await table.mergeInsert('id').whenMatchedUpdateAll().execute(updatedRows);
+          break;
+        } catch (err) {
+          retries--;
+          if (retries === 0) throw err;
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      }
+    }
+
+    // Update progress
+    setEmbeddingProgress({
+      status: 'embedding',
+      total: messages.length,
+      completed: Math.min(i + FALLBACK_BATCH_SIZE, messages.length),
+      startedAt: getEmbeddingProgress().startedAt,
+    });
+
+    // Brief pause between batches
+    if (i + FALLBACK_BATCH_SIZE < messages.length) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  await disposeEmbeddings();
+}
+
 async function runBackgroundEmbedding(): Promise<void> {
   // Check if already in progress (prevent duplicate runs)
   if (isEmbeddingInProgress()) {
@@ -70,6 +250,8 @@ async function runBackgroundEmbedding(): Promise<void> {
       return;
     }
 
+    console.log(`Found ${messages.length} messages to embed`);
+
     // Update progress: starting
     setEmbeddingProgress({
       status: 'downloading',
@@ -81,17 +263,15 @@ async function runBackgroundEmbedding(): Promise<void> {
     // Download model if needed
     const modelPath = getModelPath();
     if (!existsSync(modelPath)) {
+      console.log('Downloading embedding model...');
       await downloadModel((downloaded, total) => {
-        // Update progress during download
-        const progress = getEmbeddingProgress();
-        setEmbeddingProgress({
-          ...progress,
-          status: 'downloading',
-        });
+        const pct = Math.round((downloaded / total) * 100);
+        process.stdout.write(`\rDownloading model: ${pct}%`);
       });
+      console.log('\nModel downloaded.');
     }
 
-    // Initialize embeddings
+    // Update progress: embedding
     setEmbeddingProgress({
       status: 'embedding',
       total: messages.length,
@@ -99,65 +279,18 @@ async function runBackgroundEmbedding(): Promise<void> {
       startedAt: getEmbeddingProgress().startedAt,
     });
 
-    // Use low priority mode - limits CPU threads to minimize user impact
-    await initEmbeddings(true);
-
     const table = await getMessagesTable();
 
-    // Process in batches
-    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-      const batch = messages.slice(i, i + BATCH_SIZE);
-      const texts = batch.map((m) => m.content);
-      const vectors = await embed(texts);
+    // Try server-based embedding first (faster)
+    const serverSuccess = await runWithServer(messages, table);
 
-      // Build full rows with updated vectors for batch mergeInsert
-      const updatedRows = batch.map((msg, j) => {
-        const vec = vectors[j];
-        return {
-          id: msg.id,
-          conversationId: msg.conversationId,
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          messageIndex: msg.messageIndex,
-          vector: vec ? Array.from(vec) : Array.from(msg.vector),
-        };
-      }).filter((row) => row.vector && row.vector.length > 0);
-
-      // Use mergeInsert for batch update - much more efficient than individual updates
-      // This also handles concurrent reads better
-      if (updatedRows.length > 0) {
-        let retries = 3;
-        while (retries > 0) {
-          try {
-            await table.mergeInsert('id')
-              .whenMatchedUpdateAll()
-              .execute(updatedRows);
-            break;
-          } catch (err) {
-            retries--;
-            if (retries === 0) throw err;
-            await new Promise((r) => setTimeout(r, 200));
-          }
-        }
-      }
-
-      // Update progress
-      setEmbeddingProgress({
-        status: 'embedding',
-        total: messages.length,
-        completed: Math.min(i + BATCH_SIZE, messages.length),
-        startedAt: getEmbeddingProgress().startedAt,
-      });
-
-      // Brief pause between batches to prevent sustained high CPU usage
-      // This allows other processes to get CPU time and prevents thermal throttling
-      if (i + BATCH_SIZE < messages.length) {
-        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-      }
+    // Fall back to node-llama-cpp if server fails
+    if (!serverSuccess) {
+      await runWithNodeLlamaCpp(messages, table);
     }
 
     // Rebuild both FTS and vector indexes after all updates
+    console.log('Rebuilding indexes...');
     await rebuildFtsIndex();
     await rebuildVectorIndex();
 
@@ -170,8 +303,9 @@ async function runBackgroundEmbedding(): Promise<void> {
       completedAt: new Date().toISOString(),
     });
 
-    await disposeEmbeddings();
+    console.log('Embedding complete!');
   } catch (error) {
+    console.error('Embedding failed:', error);
     setEmbeddingProgress({
       status: 'error',
       total: getEmbeddingProgress().total,
@@ -179,6 +313,7 @@ async function runBackgroundEmbedding(): Promise<void> {
       error: error instanceof Error ? error.message : String(error),
     });
     await disposeEmbeddings();
+    await stopLlamaServer();
     process.exit(1);
   }
 }
