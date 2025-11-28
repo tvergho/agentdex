@@ -27,14 +27,15 @@ interface SyncProgress {
   phase:
     | 'detecting'
     | 'discovering'
+    | 'extracting'
     | 'syncing'
     | 'indexing'
     | 'done'
     | 'error';
   currentSource?: string;
-  currentWorkspace?: string;
-  workspacesFound: number;
-  workspacesProcessed: number;
+  currentProject?: string;
+  projectsFound: number;
+  projectsProcessed: number;
   conversationsFound: number;
   conversationsIndexed: number;
   messagesIndexed: number;
@@ -80,7 +81,7 @@ function SyncUI({ progress }: { progress: SyncProgress }) {
       <Box flexDirection="column">
         <Text color="green">✓ Sync complete</Text>
         <Text dimColor>
-          {progress.workspacesProcessed} workspaces, {progress.conversationsIndexed} conversations,{' '}
+          {progress.projectsProcessed} projects, {progress.conversationsIndexed} conversations,{' '}
           {progress.messagesIndexed} messages
         </Text>
         {progress.embeddingStarted && (
@@ -92,32 +93,36 @@ function SyncUI({ progress }: { progress: SyncProgress }) {
     );
   }
 
+  // Format project name for display
+  const projectDisplay = progress.currentProject
+    ? progress.currentProject.length > 50
+      ? '...' + progress.currentProject.slice(-47)
+      : progress.currentProject
+    : null;
+
   return (
     <Box flexDirection="column">
       <Box>
         <Text color="cyan">{spinner[frame]} </Text>
         <Text>
           {progress.phase === 'detecting' && 'Detecting sources...'}
-          {progress.phase === 'discovering' && `Discovering ${progress.currentSource} workspaces...`}
+          {progress.phase === 'discovering' && `Discovering ${progress.currentSource}...`}
+          {progress.phase === 'extracting' && `Extracting ${progress.currentSource} conversations...`}
           {progress.phase === 'syncing' && `Syncing ${progress.currentSource}...`}
           {progress.phase === 'indexing' && 'Building search index...'}
         </Text>
       </Box>
 
-      {progress.currentWorkspace && (
+      {projectDisplay && (
         <Box marginLeft={2}>
-          <Text dimColor>
-            {progress.currentWorkspace.length > 50
-              ? '...' + progress.currentWorkspace.slice(-47)
-              : progress.currentWorkspace}
-          </Text>
+          <Text color="magenta">{projectDisplay}</Text>
         </Box>
       )}
 
       <Box marginLeft={2} marginTop={1}>
         <Text dimColor>
-          Workspaces: {progress.workspacesProcessed}/{progress.workspacesFound} | Conversations:{' '}
-          {progress.conversationsIndexed} | Messages: {progress.messagesIndexed}
+          Projects: {progress.projectsProcessed}/{progress.projectsFound} | Conversations:{' '}
+          {progress.conversationsIndexed}/{progress.conversationsFound} | Messages: {progress.messagesIndexed}
         </Text>
       </Box>
     </Box>
@@ -145,8 +150,8 @@ async function runSync(
 ): Promise<void> {
   const progress: SyncProgress = {
     phase: 'detecting',
-    workspacesFound: 0,
-    workspacesProcessed: 0,
+    projectsFound: 0,
+    projectsProcessed: 0,
     conversationsFound: 0,
     conversationsIndexed: 0,
     messagesIndexed: 0,
@@ -155,6 +160,9 @@ async function runSync(
   try {
     // Connect to database
     await connect();
+
+    // Collect all normalized conversations from all adapters first
+    const allConversations: { normalized: NormalizedConversation; adapter: typeof adapters[0]; location: SourceLocation }[] = [];
 
     // Process each adapter
     for (const adapter of adapters) {
@@ -171,117 +179,29 @@ async function runSync(
       onProgress({ ...progress });
 
       const locations = await adapter.discover();
-      progress.workspacesFound += locations.length;
-      onProgress({ ...progress });
 
-      // Process each workspace
-      progress.phase = 'syncing';
+      // Extract from each location
+      progress.phase = 'extracting';
 
       for (const location of locations) {
-        progress.currentWorkspace = location.workspacePath;
-        onProgress({ ...progress });
-
         // Check if we need to sync this workspace
         if (!options.force) {
           const syncState = await syncStateRepo.get(adapter.name, location.dbPath);
           if (syncState && syncState.lastMtime >= location.mtime) {
             // Skip - no changes since last sync
-            progress.workspacesProcessed++;
-            onProgress({ ...progress });
             continue;
           }
         }
 
-        // Extract conversations
+        // Extract and normalize all conversations
         const rawConversations = await adapter.extract(location);
-        progress.conversationsFound += rawConversations.length;
-        onProgress({ ...progress });
 
-        if (options.force) {
-          // Force mode: Delete existing data for this workspace (for clean re-sync)
-          await conversationRepo.deleteBySource(adapter.name, location.workspacePath);
-        }
-
-        // Normalize and index each conversation
         for (const raw of rawConversations) {
           const normalized = adapter.normalize(raw, location);
-
-          if (options.force) {
-            // Force mode: Delete and re-insert everything
-            await messageRepo.deleteByConversation(normalized.conversation.id);
-            await toolCallRepo.deleteByConversation(normalized.conversation.id);
-            await filesRepo.deleteByConversation(normalized.conversation.id);
-            await messageFilesRepo.deleteByConversation(normalized.conversation.id);
-
-            // Insert conversation (upsert handles duplicates)
-            await conversationRepo.upsert(normalized.conversation);
-            progress.conversationsIndexed++;
-
-            // Insert messages (without vectors - embeddings are generated in background)
-            if (normalized.messages.length > 0) {
-              await messageRepo.bulkInsert(normalized.messages);
-              progress.messagesIndexed += normalized.messages.length;
-            }
-
-            // Insert tool calls
-            if (normalized.toolCalls.length > 0) {
-              await toolCallRepo.bulkInsert(normalized.toolCalls);
-            }
-
-            // Insert files
-            if (normalized.files && normalized.files.length > 0) {
-              await filesRepo.bulkInsert(normalized.files);
-            }
-
-            // Insert message files
-            if (normalized.messageFiles && normalized.messageFiles.length > 0) {
-              await messageFilesRepo.bulkInsert(normalized.messageFiles);
-            }
-          } else {
-            // Incremental mode: Only insert new data, preserve existing embeddings
-            const conversationExists = await conversationRepo.exists(normalized.conversation.id);
-
-            // Always upsert conversation metadata (title, timestamps may change)
-            await conversationRepo.upsert(normalized.conversation);
-            progress.conversationsIndexed++;
-
-            if (conversationExists) {
-              // Get existing message IDs to avoid duplicates
-              const existingMessageIds = await messageRepo.getExistingIds(normalized.conversation.id);
-
-              // Only insert new messages (preserves embeddings on existing ones)
-              if (normalized.messages.length > 0) {
-                const newCount = await messageRepo.bulkInsertNew(normalized.messages, existingMessageIds);
-                progress.messagesIndexed += newCount;
-              }
-
-              // For tool calls, files, message files - skip if conversation exists
-              // (they're tied to messages which we're preserving)
-            } else {
-              // New conversation: insert everything
-              if (normalized.messages.length > 0) {
-                await messageRepo.bulkInsert(normalized.messages);
-                progress.messagesIndexed += normalized.messages.length;
-              }
-
-              if (normalized.toolCalls.length > 0) {
-                await toolCallRepo.bulkInsert(normalized.toolCalls);
-              }
-
-              if (normalized.files && normalized.files.length > 0) {
-                await filesRepo.bulkInsert(normalized.files);
-              }
-
-              if (normalized.messageFiles && normalized.messageFiles.length > 0) {
-                await messageFilesRepo.bulkInsert(normalized.messageFiles);
-              }
-            }
-          }
-
-          onProgress({ ...progress });
+          allConversations.push({ normalized, adapter, location });
         }
 
-        // Update sync state
+        // Update sync state after extraction
         await syncStateRepo.set({
           source: adapter.name,
           workspacePath: location.workspacePath,
@@ -289,17 +209,127 @@ async function runSync(
           lastSyncedAt: new Date().toISOString(),
           lastMtime: location.mtime,
         });
+      }
+    }
 
-        progress.workspacesProcessed++;
+    progress.conversationsFound = allConversations.length;
+    onProgress({ ...progress });
+
+    // Group conversations by project path
+    const byProject = new Map<string, typeof allConversations>();
+    for (const item of allConversations) {
+      const projectPath = item.normalized.conversation.workspacePath || 'unknown';
+      if (!byProject.has(projectPath)) {
+        byProject.set(projectPath, []);
+      }
+      byProject.get(projectPath)!.push(item);
+    }
+
+    progress.projectsFound = byProject.size;
+    onProgress({ ...progress });
+
+    // Process by project
+    progress.phase = 'syncing';
+
+    for (const [projectPath, conversations] of byProject) {
+      progress.currentProject = projectPath;
+      onProgress({ ...progress });
+
+      if (options.force) {
+        // Force mode: Delete existing data for this project
+        // We need to delete by each adapter/workspace combo
+        const seen = new Set<string>();
+        for (const { adapter, location } of conversations) {
+          const key = `${adapter.name}:${location.workspacePath}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            await conversationRepo.deleteBySource(adapter.name, location.workspacePath);
+          }
+        }
+      }
+
+      for (const { normalized } of conversations) {
+        if (options.force) {
+          // Force mode: Delete and re-insert everything
+          await messageRepo.deleteByConversation(normalized.conversation.id);
+          await toolCallRepo.deleteByConversation(normalized.conversation.id);
+          await filesRepo.deleteByConversation(normalized.conversation.id);
+          await messageFilesRepo.deleteByConversation(normalized.conversation.id);
+
+          // Insert conversation
+          await conversationRepo.upsert(normalized.conversation);
+          progress.conversationsIndexed++;
+
+          // Insert messages
+          if (normalized.messages.length > 0) {
+            await messageRepo.bulkInsert(normalized.messages);
+            progress.messagesIndexed += normalized.messages.length;
+          }
+
+          // Insert tool calls
+          if (normalized.toolCalls.length > 0) {
+            await toolCallRepo.bulkInsert(normalized.toolCalls);
+          }
+
+          // Insert files
+          if (normalized.files && normalized.files.length > 0) {
+            await filesRepo.bulkInsert(normalized.files);
+          }
+
+          // Insert message files
+          if (normalized.messageFiles && normalized.messageFiles.length > 0) {
+            await messageFilesRepo.bulkInsert(normalized.messageFiles);
+          }
+        } else {
+          // Incremental mode: Only insert new data, preserve existing embeddings
+          const conversationExists = await conversationRepo.exists(normalized.conversation.id);
+
+          // Always upsert conversation metadata
+          await conversationRepo.upsert(normalized.conversation);
+          progress.conversationsIndexed++;
+
+          if (conversationExists) {
+            // Get existing message IDs to avoid duplicates
+            const existingMessageIds = await messageRepo.getExistingIds(normalized.conversation.id);
+
+            // Only insert new messages
+            if (normalized.messages.length > 0) {
+              const newCount = await messageRepo.bulkInsertNew(normalized.messages, existingMessageIds);
+              progress.messagesIndexed += newCount;
+            }
+          } else {
+            // New conversation: insert everything
+            if (normalized.messages.length > 0) {
+              await messageRepo.bulkInsert(normalized.messages);
+              progress.messagesIndexed += normalized.messages.length;
+            }
+
+            if (normalized.toolCalls.length > 0) {
+              await toolCallRepo.bulkInsert(normalized.toolCalls);
+            }
+
+            if (normalized.files && normalized.files.length > 0) {
+              await filesRepo.bulkInsert(normalized.files);
+            }
+
+            if (normalized.messageFiles && normalized.messageFiles.length > 0) {
+              await messageFilesRepo.bulkInsert(normalized.messageFiles);
+            }
+          }
+        }
+
         onProgress({ ...progress });
       }
+
+      progress.projectsProcessed++;
+      onProgress({ ...progress });
     }
 
     // Rebuild FTS index after all data is inserted
     if (progress.messagesIndexed > 0) {
       progress.phase = 'indexing';
       progress.currentSource = undefined;
-      progress.currentWorkspace = undefined;
+      progress.currentProject = undefined;
       onProgress({ ...progress });
 
       await rebuildFtsIndex();
@@ -321,7 +351,7 @@ async function runSync(
 
     progress.phase = 'done';
     progress.currentSource = undefined;
-    progress.currentWorkspace = undefined;
+    progress.currentProject = undefined;
     onProgress({ ...progress });
   } catch (error) {
     progress.phase = 'error';
@@ -334,8 +364,8 @@ async function runSync(
 function SyncApp({ options }: { options: SyncOptions }) {
   const [progress, setProgress] = useState<SyncProgress>({
     phase: 'detecting',
-    workspacesFound: 0,
-    workspacesProcessed: 0,
+    projectsFound: 0,
+    projectsProcessed: 0,
     conversationsFound: 0,
     conversationsIndexed: 0,
     messagesIndexed: 0,

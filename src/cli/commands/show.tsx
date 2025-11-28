@@ -135,22 +135,9 @@ function ShowApp({ conversationId }: { conversationId: string }) {
     );
   }
 
-  // Build project context info
-  const projectParts: string[] = [];
-  if (conversation.projectName) {
-    projectParts.push(conversation.projectName);
-  } else if (conversation.workspacePath) {
-    const parts = conversation.workspacePath.split('/').filter(Boolean);
-    if (parts.length > 0) {
-      projectParts.push(parts[parts.length - 1]!);
-    }
-  }
-  if (conversation.mode) {
-    projectParts.push(conversation.mode);
-  }
-  if (conversation.model) {
-    projectParts.push(conversation.model);
-  }
+  // Capitalize source name and add model if available (e.g., "Cursor · gpt-4")
+  const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
+  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
 
   // Get file names
   const fileNames = files.slice(0, 5).map((f) => {
@@ -158,8 +145,8 @@ function ShowApp({ conversationId }: { conversationId: string }) {
     return parts[parts.length - 1] || f.filePath;
   });
 
-  // Adjust header height based on content
-  const dynamicHeaderHeight = 4 + (projectParts.length > 0 ? 1 : 0) + (fileNames.length > 0 ? 1 : 0);
+  // Adjust header height based on content (source info always shown now)
+  const dynamicHeaderHeight = 5 + (fileNames.length > 0 ? 1 : 0);
 
   // Show messages starting from scrollOffset
   const visibleMessages = messages.slice(scrollOffset, scrollOffset + Math.max(1, Math.floor((height - dynamicHeaderHeight - footerHeight) / 4)));
@@ -169,9 +156,7 @@ function ShowApp({ conversationId }: { conversationId: string }) {
       {/* Header */}
       <Box flexDirection="column" paddingX={1} marginBottom={1}>
         <Text bold color="cyan">{conversation.title}</Text>
-        {projectParts.length > 0 && (
-          <Text color="yellow">{projectParts.join(' · ')}</Text>
-        )}
+        <Text color="yellow">{sourceInfo}</Text>
         {conversation.workspacePath && (
           <Text color="magenta">
             {conversation.workspacePath.length > width - 4
@@ -225,13 +210,10 @@ async function plainShow(conversationId: string): Promise<void> {
   console.log(conversation.title);
 
   // Project context
-  const projectParts: string[] = [];
-  if (conversation.projectName) projectParts.push(conversation.projectName);
-  if (conversation.mode) projectParts.push(conversation.mode);
-  if (conversation.model) projectParts.push(conversation.model);
-  if (projectParts.length > 0) {
-    console.log(projectParts.join(' · '));
-  }
+  // Build source info line (e.g., "Cursor · gpt-4")
+  const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
+  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
+  console.log(sourceInfo);
 
   if (conversation.workspacePath) {
     console.log(conversation.workspacePath);

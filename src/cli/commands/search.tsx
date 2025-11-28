@@ -85,19 +85,12 @@ function ResultRow({
   const timeStr = formatRelativeTime(conversation.updatedAt);
   const matchStr = `${totalMatches} match${totalMatches !== 1 ? 'es' : ''}`;
 
-  // Build project info line
-  const projectParts: string[] = [];
-  if (conversation.projectName) {
-    projectParts.push(conversation.projectName);
-  }
-  if (conversation.mode) {
-    projectParts.push(conversation.mode);
-  }
-  const projectInfo = projectParts.length > 0 ? projectParts.join(' · ') : null;
+  // Capitalize source name (e.g., "Cursor")
+  const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
 
   // Truncate workspace path if needed
   const workspacePath = conversation.workspacePath;
-  const maxPathWidth = width - 6;
+  const maxPathWidth = width - 6 - sourceName.length - 3; // account for "Source · "
   const displayPath = workspacePath
     ? (workspacePath.length > maxPathWidth ? '…' + workspacePath.slice(-(maxPathWidth - 1)) : workspacePath)
     : null;
@@ -113,16 +106,15 @@ function ResultRow({
         </Text>
         <Text dimColor> · {matchStr} · {timeStr}</Text>
       </Box>
-      {projectInfo && (
-        <Box marginLeft={4}>
-          <Text color="yellow" dimColor>{projectInfo}</Text>
-        </Box>
-      )}
-      {displayPath && (
-        <Box marginLeft={4}>
-          <Text color="magenta">{displayPath}</Text>
-        </Box>
-      )}
+      <Box marginLeft={4}>
+        <Text color="yellow" dimColor>{sourceName}</Text>
+        {displayPath && (
+          <>
+            <Text dimColor> · </Text>
+            <Text color="magenta">{displayPath}</Text>
+          </>
+        )}
+      </Box>
       <Box marginLeft={4}>
         <HighlightedText text={snippetText} query={query} dimColor />
       </Box>
@@ -151,23 +143,9 @@ function MatchesView({
 }) {
   const { conversation, matches } = result;
 
-  // Build project context info
-  const projectParts: string[] = [];
-  if (conversation.projectName) {
-    projectParts.push(conversation.projectName);
-  } else if (conversation.workspacePath) {
-    // Extract last part of workspace path as project name
-    const parts = conversation.workspacePath.split('/').filter(Boolean);
-    if (parts.length > 0) {
-      projectParts.push(parts[parts.length - 1]!);
-    }
-  }
-  if (conversation.mode) {
-    projectParts.push(conversation.mode);
-  }
-  if (conversation.model) {
-    projectParts.push(conversation.model);
-  }
+  // Capitalize source name and add model if available (e.g., "Cursor · gpt-4")
+  const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
+  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
 
   // Get unique file names (just the filename, not full path)
   const fileNames = files.slice(0, 5).map((f) => {
@@ -185,9 +163,7 @@ function MatchesView({
     <Box flexDirection="column" height={height}>
       <Box flexDirection="column" marginBottom={1}>
         <Text bold color="cyan">{conversation.title}</Text>
-        {projectParts.length > 0 && (
-          <Text color="yellow">{projectParts.join(' · ')}</Text>
-        )}
+        <Text color="yellow">{sourceInfo}</Text>
         {conversation.workspacePath && (
           <Text color="magenta">
             {conversation.workspacePath.length > width - 4
@@ -276,22 +252,9 @@ function ConversationView({
   highlightMessageIndex?: number;
   selectedIndex: number;
 }) {
-  // Build project context info
-  const projectParts: string[] = [];
-  if (conversation.projectName) {
-    projectParts.push(conversation.projectName);
-  } else if (conversation.workspacePath) {
-    const parts = conversation.workspacePath.split('/').filter(Boolean);
-    if (parts.length > 0) {
-      projectParts.push(parts[parts.length - 1]!);
-    }
-  }
-  if (conversation.mode) {
-    projectParts.push(conversation.mode);
-  }
-  if (conversation.model) {
-    projectParts.push(conversation.model);
-  }
+  // Capitalize source name and add model if available (e.g., "Cursor · gpt-4")
+  const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
+  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
 
   // Get file names
   const fileNames = files.slice(0, 5).map((f) => {
@@ -310,9 +273,7 @@ function ConversationView({
     <Box flexDirection="column" height={height}>
       <Box flexDirection="column" marginBottom={1}>
         <Text bold color="cyan">{conversation.title}</Text>
-        {projectParts.length > 0 && (
-          <Text color="yellow">{projectParts.join(' · ')}</Text>
-        )}
+        <Text color="yellow">{sourceInfo}</Text>
         {conversation.workspacePath && (
           <Text color="magenta">
             {conversation.workspacePath.length > width - 4
@@ -799,13 +760,10 @@ async function plainSearch(query: string, limit: number): Promise<void> {
   }
 
   for (const r of result.results) {
-    console.log(`${r.conversation.title} [${r.conversation.source}]`);
-    const projectParts: string[] = [];
-    if (r.conversation.projectName) projectParts.push(r.conversation.projectName);
-    if (r.conversation.mode) projectParts.push(r.conversation.mode);
-    if (projectParts.length > 0) {
-      console.log(`   ${projectParts.join(' · ')}`);
-    }
+    console.log(`${r.conversation.title}`);
+    // Build source info line (e.g., "Cursor")
+    const sourceName = r.conversation.source.charAt(0).toUpperCase() + r.conversation.source.slice(1);
+    console.log(`   ${sourceName}`);
     if (r.conversation.workspacePath) {
       console.log(`   ${r.conversation.workspacePath}`);
     }

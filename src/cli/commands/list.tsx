@@ -46,18 +46,9 @@ function ConversationRow({
   const timeStr = formatRelativeTime(conversation.updatedAt);
   const msgStr = `${conversation.messageCount} msg${conversation.messageCount !== 1 ? 's' : ''}`;
 
-  // Build project info line
-  const projectParts: string[] = [];
-  if (conversation.projectName) {
-    projectParts.push(conversation.projectName);
-  }
-  if (conversation.mode) {
-    projectParts.push(conversation.mode);
-  }
-  if (conversation.model) {
-    projectParts.push(conversation.model);
-  }
-  const projectInfo = projectParts.length > 0 ? projectParts.join(' · ') : null;
+  // Capitalize source name and add model if available (e.g., "Cursor · gpt-4")
+  const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
+  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
 
   // Truncate workspace path if needed
   const workspacePath = conversation.workspacePath;
@@ -75,11 +66,9 @@ function ConversationRow({
         </Text>
         <Text dimColor> · {msgStr} · {timeStr}</Text>
       </Box>
-      {projectInfo && (
-        <Box marginLeft={4}>
-          <Text color="yellow" dimColor>{projectInfo}</Text>
-        </Box>
-      )}
+      <Box marginLeft={4}>
+        <Text color="yellow" dimColor>{sourceInfo}</Text>
+      </Box>
       {isSelected && displayPath && (
         <Box marginLeft={4}>
           <Text dimColor>{displayPath}</Text>
@@ -242,14 +231,11 @@ async function plainList(limit: number, source?: string): Promise<void> {
   }
 
   for (const conv of conversations) {
-    console.log(`${conv.title} [${conv.source}]`);
-    const projectParts: string[] = [];
-    if (conv.projectName) projectParts.push(conv.projectName);
-    if (conv.mode) projectParts.push(conv.mode);
-    if (conv.model) projectParts.push(conv.model);
-    if (projectParts.length > 0) {
-      console.log(`   ${projectParts.join(' · ')}`);
-    }
+    console.log(`${conv.title}`);
+    // Build source info line (e.g., "Cursor · gpt-4")
+    const sourceName = conv.source.charAt(0).toUpperCase() + conv.source.slice(1);
+    const sourceInfo = conv.model ? `${sourceName} · ${conv.model}` : sourceName;
+    console.log(`   ${sourceInfo}`);
     if (conv.workspacePath) {
       console.log(`   ${conv.workspacePath}`);
     }
