@@ -96,6 +96,12 @@ function extractSnippet(
 // ============ Conversation Repository ============
 
 export const conversationRepo = {
+  async exists(id: string): Promise<boolean> {
+    const table = await getConversationsTable();
+    const results = await table.query().where(`id = '${id}'`).limit(1).toArray();
+    return results.length > 0;
+  },
+
   async upsert(conv: Conversation): Promise<void> {
     const table = await getConversationsTable();
     const existing = await table
@@ -196,6 +202,15 @@ export const conversationRepo = {
 // ============ Message Repository ============
 
 export const messageRepo = {
+  async getExistingIds(conversationId: string): Promise<Set<string>> {
+    const table = await getMessagesTable();
+    const allResults = await table.query().toArray();
+    const ids = allResults
+      .filter((row) => (row.conversationId as string) === conversationId)
+      .map((row) => row.id as string);
+    return new Set(ids);
+  },
+
   async bulkInsert(messages: Message[]): Promise<void> {
     if (messages.length === 0) return;
 
@@ -211,6 +226,25 @@ export const messageRepo = {
     }));
 
     await table.add(rows);
+  },
+
+  async bulkInsertNew(messages: Message[], existingIds: Set<string>): Promise<number> {
+    const newMessages = messages.filter((msg) => !existingIds.has(msg.id));
+    if (newMessages.length === 0) return 0;
+
+    const table = await getMessagesTable();
+    const rows = newMessages.map((msg) => ({
+      id: msg.id,
+      conversationId: msg.conversationId,
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp ?? '',
+      messageIndex: msg.messageIndex,
+      vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings
+    }));
+
+    await table.add(rows);
+    return newMessages.length;
   },
 
   async updateVector(messageId: string, vector: number[]): Promise<void> {

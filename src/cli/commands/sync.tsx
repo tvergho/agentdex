@@ -197,42 +197,85 @@ async function runSync(
         progress.conversationsFound += rawConversations.length;
         onProgress({ ...progress });
 
-        // Delete existing data for this workspace (for clean re-sync)
-        await conversationRepo.deleteBySource(adapter.name, location.workspacePath);
+        if (options.force) {
+          // Force mode: Delete existing data for this workspace (for clean re-sync)
+          await conversationRepo.deleteBySource(adapter.name, location.workspacePath);
+        }
 
         // Normalize and index each conversation
         for (const raw of rawConversations) {
           const normalized = adapter.normalize(raw, location);
 
-          // Delete existing messages, tool calls, and files for this conversation
-          await messageRepo.deleteByConversation(normalized.conversation.id);
-          await toolCallRepo.deleteByConversation(normalized.conversation.id);
-          await filesRepo.deleteByConversation(normalized.conversation.id);
-          await messageFilesRepo.deleteByConversation(normalized.conversation.id);
+          if (options.force) {
+            // Force mode: Delete and re-insert everything
+            await messageRepo.deleteByConversation(normalized.conversation.id);
+            await toolCallRepo.deleteByConversation(normalized.conversation.id);
+            await filesRepo.deleteByConversation(normalized.conversation.id);
+            await messageFilesRepo.deleteByConversation(normalized.conversation.id);
 
-          // Insert conversation (upsert handles duplicates)
-          await conversationRepo.upsert(normalized.conversation);
-          progress.conversationsIndexed++;
+            // Insert conversation (upsert handles duplicates)
+            await conversationRepo.upsert(normalized.conversation);
+            progress.conversationsIndexed++;
 
-          // Insert messages (without vectors - embeddings are generated in background)
-          if (normalized.messages.length > 0) {
-            await messageRepo.bulkInsert(normalized.messages);
-            progress.messagesIndexed += normalized.messages.length;
-          }
+            // Insert messages (without vectors - embeddings are generated in background)
+            if (normalized.messages.length > 0) {
+              await messageRepo.bulkInsert(normalized.messages);
+              progress.messagesIndexed += normalized.messages.length;
+            }
 
-          // Insert tool calls
-          if (normalized.toolCalls.length > 0) {
-            await toolCallRepo.bulkInsert(normalized.toolCalls);
-          }
+            // Insert tool calls
+            if (normalized.toolCalls.length > 0) {
+              await toolCallRepo.bulkInsert(normalized.toolCalls);
+            }
 
-          // Insert files
-          if (normalized.files && normalized.files.length > 0) {
-            await filesRepo.bulkInsert(normalized.files);
-          }
+            // Insert files
+            if (normalized.files && normalized.files.length > 0) {
+              await filesRepo.bulkInsert(normalized.files);
+            }
 
-          // Insert message files
-          if (normalized.messageFiles && normalized.messageFiles.length > 0) {
-            await messageFilesRepo.bulkInsert(normalized.messageFiles);
+            // Insert message files
+            if (normalized.messageFiles && normalized.messageFiles.length > 0) {
+              await messageFilesRepo.bulkInsert(normalized.messageFiles);
+            }
+          } else {
+            // Incremental mode: Only insert new data, preserve existing embeddings
+            const conversationExists = await conversationRepo.exists(normalized.conversation.id);
+
+            // Always upsert conversation metadata (title, timestamps may change)
+            await conversationRepo.upsert(normalized.conversation);
+            progress.conversationsIndexed++;
+
+            if (conversationExists) {
+              // Get existing message IDs to avoid duplicates
+              const existingMessageIds = await messageRepo.getExistingIds(normalized.conversation.id);
+
+              // Only insert new messages (preserves embeddings on existing ones)
+              if (normalized.messages.length > 0) {
+                const newCount = await messageRepo.bulkInsertNew(normalized.messages, existingMessageIds);
+                progress.messagesIndexed += newCount;
+              }
+
+              // For tool calls, files, message files - skip if conversation exists
+              // (they're tied to messages which we're preserving)
+            } else {
+              // New conversation: insert everything
+              if (normalized.messages.length > 0) {
+                await messageRepo.bulkInsert(normalized.messages);
+                progress.messagesIndexed += normalized.messages.length;
+              }
+
+              if (normalized.toolCalls.length > 0) {
+                await toolCallRepo.bulkInsert(normalized.toolCalls);
+              }
+
+              if (normalized.files && normalized.files.length > 0) {
+                await filesRepo.bulkInsert(normalized.files);
+              }
+
+              if (normalized.messageFiles && normalized.messageFiles.length > 0) {
+                await messageFilesRepo.bulkInsert(normalized.messageFiles);
+              }
+            }
           }
 
           onProgress({ ...progress });
