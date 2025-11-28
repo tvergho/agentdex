@@ -338,21 +338,27 @@ export const messageRepo = {
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
 
-      return combined.map(({ score, row }) => {
-        const content = row.content as string;
-        const { snippet, highlightRanges } = extractSnippet(content, query);
+      return combined
+        .filter(({ row }) => {
+          // Filter out messages with empty/whitespace-only content
+          const content = row.content as string;
+          return content && content.trim().length > 0;
+        })
+        .map(({ score, row }) => {
+          const content = row.content as string;
+          const { snippet, highlightRanges } = extractSnippet(content, query);
 
-        return {
-          messageId: row.id as string,
-          conversationId: row.conversationId as string,
-          role: row.role as MessageMatch['role'],
-          content,
-          snippet,
-          highlightRanges,
-          score,
-          messageIndex: row.messageIndex as number,
-        };
-      });
+          return {
+            messageId: row.id as string,
+            conversationId: row.conversationId as string,
+            role: row.role as MessageMatch['role'],
+            content,
+            snippet,
+            highlightRanges,
+            score,
+            messageIndex: row.messageIndex as number,
+          };
+        });
     } catch {
       // Fallback to FTS-only if embedding model not available
       const results = await table
@@ -361,21 +367,27 @@ export const messageRepo = {
         .limit(limit)
         .toArray();
 
-      return results.map((row) => {
-        const content = row.content as string;
-        const { snippet, highlightRanges } = extractSnippet(content, query);
+      return results
+        .filter((row) => {
+          // Filter out messages with empty/whitespace-only content
+          const content = row.content as string;
+          return content && content.trim().length > 0;
+        })
+        .map((row) => {
+          const content = row.content as string;
+          const { snippet, highlightRanges } = extractSnippet(content, query);
 
-        return {
-          messageId: row.id as string,
-          conversationId: row.conversationId as string,
-          role: row.role as MessageMatch['role'],
-          content,
-          snippet,
-          highlightRanges,
-          score: (row._score as number) ?? 0,
-          messageIndex: row.messageIndex as number,
-        };
-      });
+          return {
+            messageId: row.id as string,
+            conversationId: row.conversationId as string,
+            role: row.role as MessageMatch['role'],
+            content,
+            snippet,
+            highlightRanges,
+            score: (row._score as number) ?? 0,
+            messageIndex: row.messageIndex as number,
+          };
+        });
     }
   },
 };

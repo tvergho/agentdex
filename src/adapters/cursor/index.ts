@@ -79,17 +79,19 @@ export class CursorAdapter implements SourceAdapter {
       sourceRef,
     };
 
-    // Build messages
-    const messages: Message[] = raw.bubbles.map((bubble, index) => {
-      return {
-        id: `${conversationId}:${bubble.bubbleId}`,
-        conversationId,
-        role: bubble.type,
-        content: bubble.text,
-        timestamp: undefined,
-        messageIndex: index,
-      };
-    });
+    // Build messages (filter out empty content)
+    const messages: Message[] = raw.bubbles
+      .filter((bubble) => bubble.text.trim().length > 0)
+      .map((bubble, index) => {
+        return {
+          id: `${conversationId}:${bubble.bubbleId}`,
+          conversationId,
+          role: bubble.type,
+          content: bubble.text,
+          timestamp: undefined,
+          messageIndex: index,
+        };
+      });
 
     // Build conversation files
     const files: ConversationFile[] = raw.files.map((file, index) => ({

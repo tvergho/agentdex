@@ -36,7 +36,7 @@ function ConversationRow({
   width: number;
 }) {
   const metaWidth = 25;
-  const prefixWidth = 2;
+  const prefixWidth = 3;
   const maxTitleWidth = Math.max(20, width - metaWidth - prefixWidth - 4);
 
   const title = conversation.title.length > maxTitleWidth
@@ -46,13 +46,12 @@ function ConversationRow({
   const timeStr = formatRelativeTime(conversation.updatedAt);
   const msgStr = `${conversation.messageCount} msg${conversation.messageCount !== 1 ? 's' : ''}`;
 
-  // Capitalize source name and add model if available (e.g., "Cursor · gpt-4")
+  // Capitalize source name (e.g., "Cursor")
   const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
-  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
 
   // Truncate workspace path if needed
   const workspacePath = conversation.workspacePath;
-  const maxPathWidth = width - 6;
+  const maxPathWidth = width - 6 - sourceName.length - 3;
   const displayPath = workspacePath
     ? (workspacePath.length > maxPathWidth ? '…' + workspacePath.slice(-(maxPathWidth - 1)) : workspacePath)
     : null;
@@ -60,20 +59,23 @@ function ConversationRow({
   return (
     <Box flexDirection="column">
       <Box>
-        <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>
-          {isSelected ? '▸ ' : '  '}
+        <Text color={isSelected ? 'black' : 'gray'} backgroundColor={isSelected ? 'cyan' : undefined}>
+          {isSelected ? ' ▸ ' : '   '}
+        </Text>
+        <Text color={isSelected ? 'cyan' : 'white'} bold>
           {title}
         </Text>
         <Text dimColor> · {msgStr} · {timeStr}</Text>
       </Box>
-      <Box marginLeft={4}>
-        <Text color="yellow" dimColor>{sourceInfo}</Text>
+      <Box marginLeft={3}>
+        <Text color="yellow" dimColor={!isSelected}>{sourceName}</Text>
+        {displayPath && (
+          <>
+            <Text dimColor> · </Text>
+            <Text color="magenta" dimColor={!isSelected}>{displayPath}</Text>
+          </>
+        )}
       </Box>
-      {isSelected && displayPath && (
-        <Box marginLeft={4}>
-          <Text dimColor>{displayPath}</Text>
-        </Box>
-      )}
     </Box>
   );
 }
@@ -181,9 +183,14 @@ function ListApp({
   return (
     <Box width={width} height={height} flexDirection="column">
       {/* Header */}
-      <Box paddingX={1} marginBottom={1}>
-        <Text bold>Conversations</Text>
-        <Text dimColor> ({conversations.length})</Text>
+      <Box flexDirection="column" marginBottom={1}>
+        <Box paddingX={1}>
+          <Text bold color="white">Conversations</Text>
+          <Text dimColor> ({conversations.length})</Text>
+        </Box>
+        <Box paddingX={1}>
+          <Text dimColor>{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
       </Box>
 
       {/* List */}
@@ -191,28 +198,30 @@ function ListApp({
         {visibleConversations.map((conv, idx) => {
           const actualIndex = scrollOffset + idx;
           return (
-            <ConversationRow
-              key={conv.id}
-              conversation={conv}
-              isSelected={actualIndex === selectedIndex}
-              width={width - 2}
-            />
+            <Box key={conv.id} marginBottom={1}>
+              <ConversationRow
+                conversation={conv}
+                isSelected={actualIndex === selectedIndex}
+                width={width - 2}
+              />
+            </Box>
           );
         })}
       </Box>
 
-      {/* Scroll indicator */}
-      {conversations.length > visibleCount && (
-        <Box paddingX={1}>
-          <Text dimColor>
-            {scrollOffset + 1}-{Math.min(scrollOffset + visibleCount, conversations.length)} of {conversations.length}
-          </Text>
-        </Box>
-      )}
-
       {/* Footer */}
-      <Box paddingX={1} marginTop={1}>
-        <Text dimColor>j/k: navigate · Enter: select · q: quit</Text>
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          <Text dimColor>{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
+        <Box paddingX={1} justifyContent="space-between">
+          <Text dimColor>j/k: navigate · Enter: select · q: quit</Text>
+          {conversations.length > visibleCount && (
+            <Text dimColor>
+              {scrollOffset + 1}-{Math.min(scrollOffset + visibleCount, conversations.length)} of {conversations.length}
+            </Text>
+          )}
+        </Box>
       </Box>
     </Box>
   );

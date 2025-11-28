@@ -9,10 +9,12 @@ function MessageView({
   message,
   messageFiles,
   width,
+  isSelected,
 }: {
   message: Message;
   messageFiles: MessageFile[];
   width: number;
+  isSelected?: boolean;
 }) {
   const roleLabel = message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Assistant' : 'System';
   const roleColor = message.role === 'user' ? 'green' : message.role === 'assistant' ? 'blue' : 'yellow';
@@ -20,8 +22,10 @@ function MessageView({
   // Truncate very long messages for display
   const maxContentLength = width * 20; // ~20 lines worth
   const content = message.content.length > maxContentLength
-    ? message.content.slice(0, maxContentLength) + '\n… (truncated)'
+    ? message.content.slice(0, maxContentLength)
     : message.content;
+  const isTruncated = message.content.length > maxContentLength;
+  const totalLines = message.content.split('\n').length;
 
   // Get file names for this message
   const fileNames = messageFiles.map((f) => {
@@ -32,13 +36,19 @@ function MessageView({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box>
-        <Text color={roleColor} bold>[{roleLabel}]</Text>
+        <Text backgroundColor={isSelected ? 'cyan' : undefined} color={isSelected ? 'black' : 'gray'}>
+          {isSelected ? ' ▸ ' : '   '}
+        </Text>
+        <Box width={9}>
+          <Text color={roleColor} bold={isSelected}>{roleLabel}</Text>
+        </Box>
         {fileNames.length > 0 && (
           <Text dimColor> ({fileNames.join(', ')})</Text>
         )}
       </Box>
-      <Box marginLeft={2}>
-        <Text wrap="wrap">{content}</Text>
+      <Box marginLeft={12}>
+        <Text wrap="wrap" dimColor={!isSelected}>{content}</Text>
+        {isTruncated && <Text dimColor> ({totalLines} lines)</Text>}
       </Box>
     </Box>
   );
@@ -135,9 +145,8 @@ function ShowApp({ conversationId }: { conversationId: string }) {
     );
   }
 
-  // Capitalize source name and add model if available (e.g., "Cursor · gpt-4")
+  // Capitalize source name (e.g., "Cursor")
   const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
-  const sourceInfo = conversation.model ? `${sourceName} · ${conversation.model}` : sourceName;
 
   // Get file names
   const fileNames = files.slice(0, 5).map((f) => {
@@ -145,8 +154,8 @@ function ShowApp({ conversationId }: { conversationId: string }) {
     return parts[parts.length - 1] || f.filePath;
   });
 
-  // Adjust header height based on content (source info always shown now)
-  const dynamicHeaderHeight = 5 + (fileNames.length > 0 ? 1 : 0);
+  // Adjust header height based on content
+  const dynamicHeaderHeight = 6 + (fileNames.length > 0 ? 1 : 0);
 
   // Show messages starting from scrollOffset
   const visibleMessages = messages.slice(scrollOffset, scrollOffset + Math.max(1, Math.floor((height - dynamicHeaderHeight - footerHeight) / 4)));
@@ -154,40 +163,56 @@ function ShowApp({ conversationId }: { conversationId: string }) {
   return (
     <Box width={width} height={height} flexDirection="column">
       {/* Header */}
-      <Box flexDirection="column" paddingX={1} marginBottom={1}>
-        <Text bold color="cyan">{conversation.title}</Text>
-        <Text color="yellow">{sourceInfo}</Text>
-        {conversation.workspacePath && (
-          <Text color="magenta">
-            {conversation.workspacePath.length > width - 4
-              ? '…' + conversation.workspacePath.slice(-(width - 7))
-              : conversation.workspacePath}
-          </Text>
-        )}
-        {fileNames.length > 0 && (
+      <Box flexDirection="column" marginBottom={1}>
+        <Box paddingX={1} flexDirection="column">
+          <Text bold color="cyan">{conversation.title}</Text>
+          <Box>
+            <Text color="yellow" dimColor>{sourceName}</Text>
+            {conversation.workspacePath && (
+              <>
+                <Text dimColor> · </Text>
+                <Text color="magenta" dimColor>
+                  {conversation.workspacePath.length > width - sourceName.length - 7
+                    ? '…' + conversation.workspacePath.slice(-(width - sourceName.length - 10))
+                    : conversation.workspacePath}
+                </Text>
+              </>
+            )}
+          </Box>
+          {fileNames.length > 0 && (
+            <Text dimColor>
+              Files: {fileNames.join(', ')}{files.length > 5 ? ` (+${files.length - 5} more)` : ''}
+            </Text>
+          )}
           <Text dimColor>
-            Files: {fileNames.join(', ')}{files.length > 5 ? ` (+${files.length - 5} more)` : ''}
+            {conversation.messageCount} messages
+            {messages.length > 0 && ` · Viewing ${scrollOffset + 1}-${Math.min(scrollOffset + visibleMessages.length, messages.length)} of ${messages.length}`}
           </Text>
-        )}
-        <Text dimColor>
-          {conversation.messageCount} messages
-          {messages.length > 0 && ` · Viewing ${scrollOffset + 1}-${Math.min(scrollOffset + visibleMessages.length, messages.length)} of ${messages.length}`}
-        </Text>
+        </Box>
+        <Box paddingX={1}>
+          <Text dimColor>{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
       </Box>
 
       {/* Messages */}
       <Box flexDirection="column" flexGrow={1} paddingX={1} overflowY="hidden">
-        {visibleMessages.map((msg) => {
+        {visibleMessages.map((msg, idx) => {
           const msgFiles = messageFiles.filter((f) => f.messageId === msg.id);
+          const isSelected = idx === 0; // First visible message is "selected" for visual focus
           return (
-            <MessageView key={msg.id} message={msg} messageFiles={msgFiles} width={width - 4} />
+            <MessageView key={msg.id} message={msg} messageFiles={msgFiles} width={width - 4} isSelected={isSelected} />
           );
         })}
       </Box>
 
       {/* Footer */}
-      <Box paddingX={1} marginTop={1}>
-        <Text dimColor>j/k: scroll · g/G: top/bottom · q: quit</Text>
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          <Text dimColor>{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
+        <Box paddingX={1}>
+          <Text dimColor>j/k: scroll · g/G: top/bottom · q: quit</Text>
+        </Box>
       </Box>
     </Box>
   );

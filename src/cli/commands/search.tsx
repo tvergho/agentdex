@@ -65,17 +65,15 @@ function ResultRow({
   result,
   isSelected,
   width,
-  query,
 }: {
   result: ConversationResult;
   isSelected: boolean;
   width: number;
-  query: string;
 }) {
   const { conversation, bestMatch, totalMatches } = result;
 
   const metaWidth = 25;
-  const prefixWidth = 2;
+  const prefixWidth = 3;
   const maxTitleWidth = Math.max(20, width - metaWidth - prefixWidth - 4);
 
   const title = conversation.title.length > maxTitleWidth
@@ -88,35 +86,37 @@ function ResultRow({
   // Capitalize source name (e.g., "Cursor")
   const sourceName = conversation.source.charAt(0).toUpperCase() + conversation.source.slice(1);
 
-  // Truncate workspace path if needed
+  // Truncate workspace path if needed - ensure minimum display width
   const workspacePath = conversation.workspacePath;
-  const maxPathWidth = width - 6 - sourceName.length - 3; // account for "Source · "
+  const minPathWidth = 20; // Always try to show at least this much of the path
+  const maxPathWidth = Math.max(minPathWidth, width - sourceName.length - 8); // source + " · " + buffer
   const displayPath = workspacePath
     ? (workspacePath.length > maxPathWidth ? '…' + workspacePath.slice(-(maxPathWidth - 1)) : workspacePath)
     : null;
 
-  const snippetText = bestMatch.snippet.replace(/\n/g, ' ').slice(0, width - 6);
+  // Snippet - truncate to reasonable length
+  const snippetContent = bestMatch.snippet.replace(/\n/g, ' ').trim();
+  const snippetText = snippetContent.slice(0, Math.max(20, width - 6));
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginBottom={1}>
       <Box>
-        <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>
+        <Text color={isSelected ? 'black' : 'gray'} backgroundColor={isSelected ? 'cyan' : undefined}>
           {isSelected ? '▸ ' : '  '}
-          {title}
         </Text>
+        <Text color={isSelected ? 'cyan' : 'white'} bold>{title}</Text>
         <Text dimColor> · {matchStr} · {timeStr}</Text>
       </Box>
-      <Box marginLeft={4}>
-        <Text color="yellow" dimColor>{sourceName}</Text>
-        {displayPath && (
-          <>
-            <Text dimColor> · </Text>
-            <Text color="magenta">{displayPath}</Text>
-          </>
-        )}
+      <Box>
+        <Text color="yellow" dimColor={!isSelected}>{'  '}{sourceName}</Text>
+        {displayPath ? (
+          <Text color="magenta" dimColor={!isSelected}> · {displayPath}</Text>
+        ) : workspacePath ? (
+          <Text color="magenta" dimColor={!isSelected}> · …{workspacePath.slice(-19)}</Text>
+        ) : null}
       </Box>
-      <Box marginLeft={4}>
-        <HighlightedText text={snippetText} query={query} dimColor />
+      <Box>
+        <Text dimColor={!isSelected}>{'  '}{snippetText}</Text>
       </Box>
     </Box>
   );
@@ -153,35 +153,44 @@ function MatchesView({
     return parts[parts.length - 1] || f.filePath;
   });
 
-  const headerHeight = files.length > 0 ? 6 : 4;
+  // Fixed header height (always 6 lines: title, source/path, files, matches count, separator)
+  const headerHeight = 6;
   const availableHeight = height - headerHeight;
-  const matchesPerPage = Math.max(1, Math.floor(availableHeight / 2));
+  const matchesPerPage = Math.max(1, Math.floor(availableHeight / 3));
 
   const visibleMatches = matches.slice(scrollOffset, scrollOffset + matchesPerPage);
 
+  // Build workspace display - always show something
+  const workspaceDisplay = conversation.workspacePath
+    ? (conversation.workspacePath.length > width - sourceInfo.length - 7
+        ? '…' + conversation.workspacePath.slice(-(width - sourceInfo.length - 10))
+        : conversation.workspacePath)
+    : '';
+
+  // Always show pagination
+  const paginationInfo = `${scrollOffset + 1}-${Math.min(scrollOffset + matchesPerPage, matches.length)} of ${matches.length}`;
+
   return (
     <Box flexDirection="column" height={height}>
-      <Box flexDirection="column" marginBottom={1}>
+      {/* Fixed header - always same structure */}
+      <Box flexDirection="column">
         <Text bold color="cyan">{conversation.title}</Text>
-        <Text color="yellow">{sourceInfo}</Text>
-        {conversation.workspacePath && (
-          <Text color="magenta">
-            {conversation.workspacePath.length > width - 4
-              ? '…' + conversation.workspacePath.slice(-(width - 7))
-              : conversation.workspacePath}
-          </Text>
-        )}
-        {fileNames.length > 0 && (
-          <Text dimColor>
-            Files: {fileNames.join(', ')}{files.length > 5 ? ` (+${files.length - 5} more)` : ''}
-          </Text>
-        )}
-        <Text dimColor>
-          {matches.length} match{matches.length !== 1 ? 'es' : ''}
+        <Text>
+          <Text color="yellow" dimColor>{sourceInfo}</Text>
+          {workspaceDisplay && <Text dimColor> · </Text>}
+          <Text color="magenta" dimColor>{workspaceDisplay}</Text>
         </Text>
+        <Text dimColor>
+          {fileNames.length > 0
+            ? `Files: ${fileNames.join(', ')}${files.length > 5 ? ` (+${files.length - 5} more)` : ''}`
+            : 'No files'}
+        </Text>
+        <Text dimColor>{matches.length} matches · {paginationInfo}</Text>
+        <Text dimColor>{'─'.repeat(Math.max(0, width))}</Text>
       </Box>
 
-      <Box flexDirection="column" flexGrow={1}>
+      {/* Matches - fixed height per match */}
+      <Box flexDirection="column" flexGrow={1} marginTop={1}>
         {visibleMatches.map((match, idx) => {
           const actualIdx = scrollOffset + idx;
           const isSelected = actualIdx === selectedMatchIndex;
@@ -194,25 +203,32 @@ function MatchesView({
           });
 
           const roleColor = match.role === 'user' ? 'green' : 'blue';
+          const roleLabel = match.role === 'user' ? 'You' : 'Assistant';
 
           return (
             <Box
               key={match.messageId}
               flexDirection="column"
-              marginBottom={0}
+              marginBottom={1}
+              height={3}
             >
               <Box>
-                <Text backgroundColor={isSelected ? 'cyan' : undefined} color={isSelected ? 'black' : roleColor} bold>
-                  {isSelected ? ' ▸ ' : '   '}{match.role === 'user' ? 'You' : 'Assistant'}
+                <Text backgroundColor={isSelected ? 'cyan' : undefined} color={isSelected ? 'black' : 'gray'}>
+                  {isSelected ? ' ▸ ' : '   '}
                 </Text>
+                <Box width={9}>
+                  <Text color={roleColor} bold={isSelected}>
+                    {roleLabel}
+                  </Text>
+                </Box>
                 {msgFileNames.length > 0 && (
-                  <Text dimColor={!isSelected}> ({msgFileNames.join(', ')})</Text>
+                  <Text dimColor> ({msgFileNames.join(', ')})</Text>
                 )}
-                <Text dimColor={!isSelected}> · msg {match.messageIndex + 1}</Text>
+                <Text dimColor> · msg {match.messageIndex + 1}</Text>
               </Box>
-              <Box marginLeft={5}>
+              <Box marginLeft={12}>
                 <HighlightedText
-                  text={match.content.replace(/\n/g, ' ').slice(0, width - 8)}
+                  text={match.content.replace(/\n/g, ' ').slice(0, width - 14)}
                   query={query}
                   dimColor={!isSelected}
                 />
@@ -221,12 +237,6 @@ function MatchesView({
           );
         })}
       </Box>
-
-      {matches.length > matchesPerPage && (
-        <Text dimColor>
-          {scrollOffset + 1}-{Math.min(scrollOffset + matchesPerPage, matches.length)} of {matches.length}
-        </Text>
-      )}
     </Box>
   );
 }
@@ -269,30 +279,39 @@ function ConversationView({
 
   const visibleMessages = messages.slice(scrollOffset, scrollOffset + messagesPerPage);
 
+  // Always show pagination info when more than 1 message
+  const paginationInfo = messages.length > 0
+    ? `${scrollOffset + 1}-${Math.min(scrollOffset + messagesPerPage, messages.length)} of ${messages.length}`
+    : '';
+
+  // Build workspace display - always show something
+  const workspaceDisplay = conversation.workspacePath
+    ? (conversation.workspacePath.length > width - sourceInfo.length - 7
+        ? '…' + conversation.workspacePath.slice(-(width - sourceInfo.length - 10))
+        : conversation.workspacePath)
+    : '';
+
   return (
     <Box flexDirection="column" height={height}>
-      <Box flexDirection="column" marginBottom={1}>
+      {/* Fixed header - always same structure */}
+      <Box flexDirection="column">
         <Text bold color="cyan">{conversation.title}</Text>
-        <Text color="yellow">{sourceInfo}</Text>
-        {conversation.workspacePath && (
-          <Text color="magenta">
-            {conversation.workspacePath.length > width - 4
-              ? '…' + conversation.workspacePath.slice(-(width - 7))
-              : conversation.workspacePath}
-          </Text>
-        )}
-        {fileNames.length > 0 && (
-          <Text dimColor>
-            Files: {fileNames.join(', ')}{files.length > 5 ? ` (+${files.length - 5} more)` : ''}
-          </Text>
-        )}
-        <Text dimColor>
-          {messages.length} message{messages.length !== 1 ? 's' : ''}
-          {messages.length > messagesPerPage && ` · ${scrollOffset + 1}-${Math.min(scrollOffset + messagesPerPage, messages.length)} of ${messages.length}`}
+        <Text>
+          <Text color="yellow" dimColor>{sourceInfo}</Text>
+          {workspaceDisplay && <Text dimColor> · </Text>}
+          <Text color="magenta" dimColor>{workspaceDisplay}</Text>
         </Text>
+        <Text dimColor>
+          {fileNames.length > 0
+            ? `Files: ${fileNames.join(', ')}${files.length > 5 ? ` (+${files.length - 5} more)` : ''}`
+            : 'No files'}
+        </Text>
+        <Text dimColor>{messages.length} messages · {paginationInfo}</Text>
+        <Text dimColor>{'─'.repeat(Math.max(0, width))}</Text>
       </Box>
 
-      <Box flexDirection="column" flexGrow={1}>
+      {/* Messages - fixed height per message */}
+      <Box flexDirection="column" flexGrow={1} marginTop={1}>
         {visibleMessages.map((msg, idx) => {
           const actualIdx = scrollOffset + idx;
           const isHighlighted = actualIdx === highlightMessageIndex;
@@ -308,36 +327,42 @@ function ConversationView({
           });
 
           // Truncate messages to ~2 lines for readable view
-          const maxLen = (width - 8) * 2;
+          const maxLen = (width - 14) * 2;
           const truncatedContent = msg.content.replace(/\n/g, ' ').slice(0, maxLen);
           const isTruncated = msg.content.length > maxLen;
+          const totalLines = msg.content.split('\n').length;
 
           // Determine visual state
-          const bgColor = isSelected ? 'cyan' : isHighlighted ? 'yellow' : undefined;
-          const textColor = isSelected || isHighlighted ? 'black' : roleColor;
+          const showIndicator = isSelected || isHighlighted;
 
           return (
             <Box
               key={msg.id}
               flexDirection="column"
               marginBottom={1}
+              height={3}
             >
               <Box>
-                <Text backgroundColor={bgColor} color={textColor} bold>
-                  {isSelected ? ' ▸ ' : isHighlighted ? ' ★ ' : '   '}[{roleLabel}]
+                <Text backgroundColor={isSelected ? 'cyan' : isHighlighted ? 'yellow' : undefined} color={showIndicator ? 'black' : 'gray'}>
+                  {isSelected ? ' ▸ ' : isHighlighted ? ' ★ ' : '   '}
                 </Text>
+                <Box width={9}>
+                  <Text color={roleColor} bold={isSelected || isHighlighted}>
+                    {roleLabel}
+                  </Text>
+                </Box>
                 {msgFileNames.length > 0 && (
-                  <Text dimColor={!isSelected && !isHighlighted}> ({msgFileNames.join(', ')})</Text>
+                  <Text dimColor> ({msgFileNames.join(', ')})</Text>
                 )}
                 {isHighlighted && !isSelected && (
-                  <Text color="yellow"> (matched)</Text>
-                )}
-                {isTruncated && isSelected && (
-                  <Text color="cyan"> ↵</Text>
+                  <Text color="yellow" dimColor> matched</Text>
                 )}
               </Box>
-              <Box marginLeft={5}>
-                <Text dimColor={!isSelected && !isHighlighted} wrap="wrap">{truncatedContent}{isTruncated ? '…' : ''}</Text>
+              <Box marginLeft={12}>
+                <Text dimColor={!isSelected && !isHighlighted} wrap="truncate">
+                  {truncatedContent}
+                  {isTruncated && <Text dimColor> ({totalLines} lines)</Text>}
+                </Text>
               </Box>
             </Box>
           );
@@ -350,14 +375,12 @@ function ConversationView({
 function MessageDetailView({
   message,
   messageFiles,
-  width,
   height,
   scrollOffset,
   query,
 }: {
   message: Message;
   messageFiles: MessageFile[];
-  width: number;
   height: number;
   scrollOffset: number;
   query: string;
@@ -465,7 +488,7 @@ function SearchApp({
 
   const headerHeight = 3;
   const footerHeight = 2;
-  const rowHeight = 3;
+  const rowHeight = 4; // title + source + snippet + margin
   const availableHeight = height - headerHeight - footerHeight;
   const visibleCount = Math.max(1, Math.floor(availableHeight / rowHeight));
 
@@ -666,13 +689,18 @@ function SearchApp({
   return (
     <Box width={width} height={height} flexDirection="column">
       {/* Header */}
-      <Box paddingX={1} marginBottom={1}>
-        <Text bold>Search: </Text>
-        <Text color="cyan">"{response.query}"</Text>
-        <Text dimColor>
-          {' '}— {response.totalConversations} conversation{response.totalConversations !== 1 ? 's' : ''}
-          , {response.totalMessages} message{response.totalMessages !== 1 ? 's' : ''} ({response.searchTimeMs}ms)
-        </Text>
+      <Box flexDirection="column" marginBottom={1}>
+        <Box paddingX={1}>
+          <Text bold color="white">Search </Text>
+          <Text color="cyan" bold>"{response.query}"</Text>
+          <Text dimColor>
+            {' '}— {response.totalConversations} conversation{response.totalConversations !== 1 ? 's' : ''}
+            , {response.totalMessages} message{response.totalMessages !== 1 ? 's' : ''} ({response.searchTimeMs}ms)
+          </Text>
+        </Box>
+        <Box paddingX={1}>
+          <Text dimColor>{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
       </Box>
 
       {/* Content */}
@@ -683,7 +711,6 @@ function SearchApp({
           <MessageDetailView
             message={conversationMessages[selectedMessageIndex]!}
             messageFiles={conversationMessageFiles.filter((f) => f.messageId === conversationMessages[selectedMessageIndex]!.id)}
-            width={width - 2}
             height={availableHeight}
             scrollOffset={messageScrollOffset}
             query={query}
@@ -715,31 +742,30 @@ function SearchApp({
           visibleResults.map((result, idx) => {
             const actualIndex = scrollOffset + idx;
             return (
-              <Box key={result.conversation.id} marginBottom={1}>
-                <ResultRow
-                  result={result}
-                  isSelected={actualIndex === selectedIndex}
-                  width={width - 2}
-                  query={query}
-                />
-              </Box>
+              <ResultRow
+                key={result.conversation.id}
+                result={result}
+                isSelected={actualIndex === selectedIndex}
+                width={width - 2}
+              />
             );
           })
         )}
       </Box>
 
-      {/* Scroll indicator for list view */}
-      {viewMode === 'list' && response.results.length > visibleCount && (
-        <Box paddingX={1}>
-          <Text dimColor>
-            {scrollOffset + 1}-{Math.min(scrollOffset + visibleCount, response.results.length)} of {response.results.length}
-          </Text>
-        </Box>
-      )}
-
       {/* Footer */}
-      <Box paddingX={1} marginTop={1}>
-        <Text dimColor>{footerText}</Text>
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          <Text dimColor>{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
+        <Box paddingX={1} justifyContent="space-between">
+          <Text dimColor>{footerText}</Text>
+          {viewMode === 'list' && response.results.length > visibleCount && (
+            <Text dimColor>
+              {scrollOffset + 1}-{Math.min(scrollOffset + visibleCount, response.results.length)} of {response.results.length}
+            </Text>
+          )}
+        </Box>
       </Box>
     </Box>
   );
