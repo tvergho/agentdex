@@ -11,6 +11,7 @@ import {
   getRoleColor,
   getRoleLabel,
   formatTokenPair,
+  formatLineCounts,
   type CombinedMessage,
 } from '../../utils/format';
 import type { Conversation, ConversationFile, MessageFile } from '../../schema/index';
@@ -71,6 +72,12 @@ export function ConversationView({
     conversation.totalCacheReadTokens
   );
 
+  // Format conversation-level line counts
+  const lineCountTotals = formatLineCounts(
+    conversation.totalLinesAdded,
+    conversation.totalLinesRemoved
+  );
+
   return (
     <Box flexDirection="column" height={height}>
       {/* Fixed header - always same structure */}
@@ -87,6 +94,7 @@ export function ConversationView({
         <Text dimColor>
           {formatMessageCount(messages.length)} · {paginationInfo}
           {tokenTotals && <Text color="cyan"> · {tokenTotals}</Text>}
+          {lineCountTotals && <Text color="green"> · {lineCountTotals}</Text>}
         </Text>
         <Text dimColor>{'─'.repeat(Math.max(0, width))}</Text>
       </Box>
@@ -109,6 +117,11 @@ export function ConversationView({
           // Format per-message tokens (only show for assistant messages)
           const msgTokens = msg.role === 'assistant'
             ? formatTokenPair(msg.inputTokens, msg.outputTokens, msg.cacheCreationTokens, msg.cacheReadTokens)
+            : '';
+
+          // Format per-message line counts (only show for assistant messages with edits)
+          const msgLineCounts = msg.role === 'assistant'
+            ? formatLineCounts(msg.totalLinesAdded, msg.totalLinesRemoved)
             : '';
 
           // Truncate messages to ~1 line for readable view
@@ -140,6 +153,9 @@ export function ConversationView({
                 )}
                 {msgTokens && (
                   <Text color="cyan" dimColor> [{msgTokens}]</Text>
+                )}
+                {msgLineCounts && (
+                  <Text color="green" dimColor> [{msgLineCounts}]</Text>
                 )}
                 {isHighlighted && !isSelected && (
                   <Text color="yellow" dimColor> matched</Text>

@@ -1,4 +1,4 @@
-import type { Conversation, Message, ToolCall, SourceRef, SourceType, ConversationFile, MessageFile } from '../schema/index';
+import type { Conversation, Message, ToolCall, SourceRef, SourceType, ConversationFile, MessageFile, FileEdit } from '../schema/index';
 
 export interface SourceLocation {
   source: SourceType;
@@ -13,6 +13,7 @@ export interface NormalizedConversation {
   toolCalls: ToolCall[];
   files?: ConversationFile[];
   messageFiles?: MessageFile[];
+  fileEdits?: FileEdit[];
 }
 
 export interface SourceAdapter {

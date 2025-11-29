@@ -165,6 +165,13 @@ Stores conversations in JSONL files:
 3. Test search: `bun run dev search "your query"`
 4. Run typecheck: `bun run typecheck`
 
+## Platform Notes
+
+### macOS
+- The `timeout` command is not available by default on macOS
+- Use the Bash tool's `timeout` parameter instead of the `timeout` command
+- Example: Use `Bash(command: "bun ...", timeout: 10000)` instead of `timeout 10 bun ...`
+
 ## Git Commits
 
 - Do NOT include "Claude Code" references, co-author lines, or AI attribution in commit messages

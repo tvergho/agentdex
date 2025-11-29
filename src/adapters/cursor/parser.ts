@@ -1,17 +1,30 @@
-import Database from 'better-sqlite3';
+import Database, { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 
 export interface RawBubble {
   bubbleId: string;
   type: 'user' | 'assistant' | 'system';
   text: string;
   files: RawFile[]; // files associated with this specific bubble
+  fileEdits: RawFileEdit[]; // edits made in this bubble
   inputTokens?: number;
   outputTokens?: number;
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
 }
 
 export interface RawFile {
   path: string;
   role: 'context' | 'edited' | 'mentioned';
+}
+
+export interface RawFileEdit {
+  filePath: string;
+  editType: 'create' | 'modify' | 'delete';
+  linesAdded: number;
+  linesRemoved: number;
+  startLine?: number;
+  endLine?: number;
+  bubbleId?: string; // Associate edit with a specific bubble
 }
 
 export interface RawConversation {
@@ -25,8 +38,11 @@ export interface RawConversation {
   mode?: string;
   model?: string;
   files: RawFile[];
+  fileEdits: RawFileEdit[];
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
 }
 
 interface FileSelection {
@@ -72,6 +88,33 @@ interface ComposerDataEntry {
     bubbleId?: string;
     type?: number;
   }>;
+  codeBlockData?: Record<string, Record<string, CodeBlockEntry>>;
+}
+
+// Code block entry in composerData.codeBlockData[fileUri][blockId]
+interface CodeBlockEntry {
+  diffId?: string;
+  uri?: { fsPath?: string; path?: string };
+  bubbleId?: string;
+  languageId?: string;
+  status?: string;
+}
+
+// Mapping from diffId to file path and bubble
+interface CodeBlockMapping {
+  diffId: string;
+  filePath: string;
+  bubbleId: string;
+  languageId?: string;
+}
+
+// Diff entry structure from codeBlockDiff entries
+interface DiffEntry {
+  original: {
+    startLineNumber: number;
+    endLineNumberExclusive: number;
+  };
+  modified: string[];
 }
 
 // Map numeric bubble type to role
@@ -199,6 +242,93 @@ function collectFiles(
   return Array.from(filesMap.values());
 }
 
+// Build a mapping from diffId to file path and bubble info
+function buildDiffToFileMapping(codeBlockData: Record<string, Record<string, CodeBlockEntry>> | undefined): Map<string, CodeBlockMapping> {
+  const mapping = new Map<string, CodeBlockMapping>();
+
+  if (!codeBlockData) return mapping;
+
+  for (const [fileUri, blocks] of Object.entries(codeBlockData)) {
+    // Extract file path from file:///path/to/file
+    const filePath = fileUri.startsWith('file://')
+      ? fileUri.replace('file://', '')
+      : fileUri;
+
+    for (const [, blockData] of Object.entries(blocks)) {
+      if (blockData.diffId) {
+        mapping.set(blockData.diffId, {
+          diffId: blockData.diffId,
+          filePath: blockData.uri?.fsPath || blockData.uri?.path || filePath,
+          bubbleId: blockData.bubbleId || '',
+          languageId: blockData.languageId,
+        });
+      }
+    }
+  }
+
+  return mapping;
+}
+
+// Extract code block diffs from database and convert to file edits
+function extractCodeBlockDiffs(
+  db: BetterSqliteDatabase,
+  composerId: string,
+  diffMapping: Map<string, CodeBlockMapping>
+): RawFileEdit[] {
+  const edits: RawFileEdit[] = [];
+
+  // Query all codeBlockDiff entries for this composer
+  const diffRows = db
+    .prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE ?")
+    .all(`codeBlockDiff:${composerId}:%`) as Array<{ key: string; value: Buffer | string }>;
+
+  for (const row of diffRows) {
+    // Extract diffId from key: codeBlockDiff:{composerId}:{diffId}
+    const keyParts = row.key.split(':');
+    const diffId = keyParts[2];
+    if (!diffId) continue;
+
+    const mapping = diffMapping.get(diffId);
+    if (!mapping) continue; // Skip orphaned diffs without file mapping
+
+    // Parse the diff value
+    let valueStr: string;
+    if (Buffer.isBuffer(row.value)) {
+      valueStr = row.value.toString('utf-8');
+    } else {
+      valueStr = row.value;
+    }
+
+    try {
+      const parsed = JSON.parse(valueStr) as { newModelDiffWrtV0?: DiffEntry[] };
+
+      // Extract individual diff hunks
+      if (parsed.newModelDiffWrtV0 && Array.isArray(parsed.newModelDiffWrtV0)) {
+        for (const diff of parsed.newModelDiffWrtV0) {
+          const startLine = diff.original?.startLineNumber ?? 0;
+          const endLine = diff.original?.endLineNumberExclusive ?? 0;
+          const linesRemoved = endLine - startLine;
+          const linesAdded = diff.modified?.length ?? 0;
+
+          edits.push({
+            filePath: mapping.filePath,
+            editType: linesRemoved === 0 ? 'create' : 'modify',
+            linesAdded,
+            linesRemoved,
+            startLine: startLine > 0 ? startLine : undefined,
+            endLine: endLine > 0 ? endLine : undefined,
+            bubbleId: mapping.bubbleId,
+          });
+        }
+      }
+    } catch {
+      // Skip malformed diff entries
+    }
+  }
+
+  return edits;
+}
+
 export function extractConversations(dbPath: string): RawConversation[] {
   const db = new Database(dbPath, { readonly: true });
   const conversations: RawConversation[] = [];
@@ -242,6 +372,7 @@ export function extractConversations(dbPath: string): RawConversation[] {
               type: mapBubbleType(item.type),
               text: item.text,
               files: bubbleFiles,
+              fileEdits: [], // Will be populated after diff extraction
               inputTokens: item.tokenCount?.inputTokens,
               outputTokens: item.tokenCount?.outputTokens,
             });
@@ -262,6 +393,7 @@ export function extractConversations(dbPath: string): RawConversation[] {
                 type: mapBubbleType(header.type ?? bubbleData.type),
                 text: bubbleData.text,
                 files: bubbleFiles,
+                fileEdits: [], // Will be populated after diff extraction
                 inputTokens: bubbleData.tokenCount?.inputTokens,
                 outputTokens: bubbleData.tokenCount?.outputTokens,
               });
@@ -299,6 +431,7 @@ export function extractConversations(dbPath: string): RawConversation[] {
                     type: mapBubbleType(header.type ?? bubbleData.type),
                     text: bubbleData.text,
                     files: bubbleFiles,
+                    fileEdits: [], // Will be populated after diff extraction
                     inputTokens: bubbleData.tokenCount?.inputTokens,
                     outputTokens: bubbleData.tokenCount?.outputTokens,
                   });
@@ -314,6 +447,37 @@ export function extractConversations(dbPath: string): RawConversation[] {
 
       // Skip empty conversations
       if (bubbles.length === 0) continue;
+
+      // Extract file edits from codeBlockDiff entries
+      const diffMapping = buildDiffToFileMapping(data.codeBlockData);
+      const allFileEdits = extractCodeBlockDiffs(db, composerId, diffMapping);
+
+      // Associate edits with bubbles by bubbleId
+      const bubbleIdToIndex = new Map<string, number>();
+      for (let i = 0; i < bubbles.length; i++) {
+        bubbleIdToIndex.set(bubbles[i]!.bubbleId, i);
+      }
+
+      for (const edit of allFileEdits) {
+        if (edit.bubbleId) {
+          const bubbleIndex = bubbleIdToIndex.get(edit.bubbleId);
+          if (bubbleIndex !== undefined) {
+            bubbles[bubbleIndex]!.fileEdits.push(edit);
+          }
+        }
+      }
+
+      // Calculate per-bubble line totals
+      for (const bubble of bubbles) {
+        const totalAdded = bubble.fileEdits.reduce((sum, e) => sum + e.linesAdded, 0);
+        const totalRemoved = bubble.fileEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
+        bubble.totalLinesAdded = totalAdded > 0 ? totalAdded : undefined;
+        bubble.totalLinesRemoved = totalRemoved > 0 ? totalRemoved : undefined;
+      }
+
+      // Calculate conversation-level totals
+      const totalLinesAdded = allFileEdits.reduce((sum, e) => sum + e.linesAdded, 0);
+      const totalLinesRemoved = allFileEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
 
       // Collect files from context and bubbles
       const files = collectFiles(data.context, bubbleDataList);
@@ -338,8 +502,11 @@ export function extractConversations(dbPath: string): RawConversation[] {
         mode: data.forceMode,
         model: data.modelConfig?.modelName,
         files,
+        fileEdits: allFileEdits,
         totalInputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
         totalOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
+        totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
+        totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
       });
     }
   } finally {

@@ -12,6 +12,7 @@ let toolCallsTable: Table | null = null;
 let syncStateTable: Table | null = null;
 let filesTable: Table | null = null;
 let messageFilesTable: Table | null = null;
+let fileEditsTable: Table | null = null;
 
 export async function connect(): Promise<lancedb.Connection> {
   if (db) return db;
@@ -66,6 +67,13 @@ export async function getMessageFilesTable(): Promise<Table> {
   return messageFilesTable!;
 }
 
+export async function getFileEditsTable(): Promise<Table> {
+  if (!fileEditsTable) {
+    await connect();
+  }
+  return fileEditsTable!;
+}
+
 async function ensureTables(): Promise<void> {
   if (!db) throw new Error('Database not connected');
 
@@ -92,6 +100,8 @@ async function ensureTables(): Promise<void> {
         totalOutputTokens: 0,
         totalCacheCreationTokens: 0,
         totalCacheReadTokens: 0,
+        totalLinesAdded: 0,
+        totalLinesRemoved: 0,
       },
     ]);
     // Delete placeholder row
@@ -115,6 +125,8 @@ async function ensureTables(): Promise<void> {
         outputTokens: 0,
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
+        totalLinesAdded: 0,
+        totalLinesRemoved: 0,
       },
     ]);
     await messagesTable.delete("id = '_placeholder_'");
@@ -187,6 +199,26 @@ async function ensureTables(): Promise<void> {
   } else {
     messageFilesTable = await db.openTable('message_files');
   }
+
+  // File edits table (individual line-level edits)
+  if (!existingTables.includes('file_edits')) {
+    fileEditsTable = await db.createTable('file_edits', [
+      {
+        id: '_placeholder_',
+        messageId: '',
+        conversationId: '',
+        filePath: '',
+        editType: 'modify',
+        linesAdded: 0,
+        linesRemoved: 0,
+        startLine: 0,  // 0 = not available
+        endLine: 0,    // 0 = not available
+      },
+    ]);
+    await fileEditsTable.delete("id = '_placeholder_'");
+  } else {
+    fileEditsTable = await db.openTable('file_edits');
+  }
 }
 
 export async function closeConnection(): Promise<void> {
@@ -197,6 +229,7 @@ export async function closeConnection(): Promise<void> {
   syncStateTable = null;
   filesTable = null;
   messageFilesTable = null;
+  fileEditsTable = null;
 }
 
 export async function rebuildFtsIndex(): Promise<void> {
@@ -268,6 +301,8 @@ export async function recreateMessagesTable(): Promise<void> {
       outputTokens: 0,
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
+      totalLinesAdded: 0,
+      totalLinesRemoved: 0,
     },
   ]);
   await messagesTable.delete("id = '_placeholder_'");

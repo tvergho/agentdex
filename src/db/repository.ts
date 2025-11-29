@@ -5,6 +5,7 @@ import {
   getSyncStateTable,
   getFilesTable,
   getMessageFilesTable,
+  getFileEditsTable,
 } from './index';
 import type {
   Conversation,
@@ -17,6 +18,7 @@ import type {
   SearchResponse,
   ConversationFile,
   MessageFile,
+  FileEdit,
 } from '../schema/index';
 import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
 
@@ -127,6 +129,8 @@ export const conversationRepo = {
       totalOutputTokens: conv.totalOutputTokens ?? 0,
       totalCacheCreationTokens: conv.totalCacheCreationTokens ?? 0,
       totalCacheReadTokens: conv.totalCacheReadTokens ?? 0,
+      totalLinesAdded: conv.totalLinesAdded ?? 0,
+      totalLinesRemoved: conv.totalLinesRemoved ?? 0,
     };
 
     if (existing.length > 0) {
@@ -159,6 +163,8 @@ export const conversationRepo = {
       totalOutputTokens: (row.totalOutputTokens as number) || undefined,
       totalCacheCreationTokens: (row.totalCacheCreationTokens as number) || undefined,
       totalCacheReadTokens: (row.totalCacheReadTokens as number) || undefined,
+      totalLinesAdded: (row.totalLinesAdded as number) || undefined,
+      totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
     };
   },
 
@@ -193,6 +199,8 @@ export const conversationRepo = {
       totalOutputTokens: (row.totalOutputTokens as number) || undefined,
       totalCacheCreationTokens: (row.totalCacheCreationTokens as number) || undefined,
       totalCacheReadTokens: (row.totalCacheReadTokens as number) || undefined,
+      totalLinesAdded: (row.totalLinesAdded as number) || undefined,
+      totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
     }));
   },
 
@@ -239,6 +247,8 @@ export const messageRepo = {
       outputTokens: msg.outputTokens ?? 0,
       cacheCreationTokens: msg.cacheCreationTokens ?? 0,
       cacheReadTokens: msg.cacheReadTokens ?? 0,
+      totalLinesAdded: msg.totalLinesAdded ?? 0,
+      totalLinesRemoved: msg.totalLinesRemoved ?? 0,
     }));
 
     await table.add(rows);
@@ -261,6 +271,8 @@ export const messageRepo = {
       outputTokens: msg.outputTokens ?? 0,
       cacheCreationTokens: msg.cacheCreationTokens ?? 0,
       cacheReadTokens: msg.cacheReadTokens ?? 0,
+      totalLinesAdded: msg.totalLinesAdded ?? 0,
+      totalLinesRemoved: msg.totalLinesRemoved ?? 0,
     }));
 
     await table.add(rows);
@@ -297,6 +309,8 @@ export const messageRepo = {
         outputTokens: (row.outputTokens as number) || undefined,
         cacheCreationTokens: (row.cacheCreationTokens as number) || undefined,
         cacheReadTokens: (row.cacheReadTokens as number) || undefined,
+        totalLinesAdded: (row.totalLinesAdded as number) || undefined,
+        totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
       }))
       .sort((a, b) => a.messageIndex - b.messageIndex);
   },
@@ -591,6 +605,74 @@ export const messageFilesRepo = {
 
   async deleteByConversation(conversationId: string): Promise<void> {
     const table = await getMessageFilesTable();
+    await table.delete(`"conversationId" = '${conversationId}'`);
+  },
+};
+
+// ============ File Edits Repository ============
+
+export const fileEditsRepo = {
+  async bulkInsert(edits: FileEdit[]): Promise<void> {
+    if (edits.length === 0) return;
+
+    const table = await getFileEditsTable();
+    const rows = edits.map((e) => ({
+      id: e.id,
+      messageId: e.messageId,
+      conversationId: e.conversationId,
+      filePath: e.filePath,
+      editType: e.editType,
+      linesAdded: e.linesAdded,
+      linesRemoved: e.linesRemoved,
+      startLine: e.startLine ?? 0,
+      endLine: e.endLine ?? 0,
+    }));
+
+    await table.add(rows);
+  },
+
+  async findByMessage(messageId: string): Promise<FileEdit[]> {
+    const table = await getFileEditsTable();
+    const allResults = await table.query().toArray();
+    const results = allResults.filter(
+      (row) => (row.messageId as string) === messageId
+    );
+
+    return results.map((row) => ({
+      id: row.id as string,
+      messageId: row.messageId as string,
+      conversationId: row.conversationId as string,
+      filePath: row.filePath as string,
+      editType: row.editType as FileEdit['editType'],
+      linesAdded: row.linesAdded as number,
+      linesRemoved: row.linesRemoved as number,
+      startLine: (row.startLine as number) || undefined,
+      endLine: (row.endLine as number) || undefined,
+    }));
+  },
+
+  async findByConversation(conversationId: string): Promise<FileEdit[]> {
+    const table = await getFileEditsTable();
+    const allResults = await table.query().toArray();
+    const results = allResults.filter(
+      (row) => (row.conversationId as string) === conversationId
+    );
+
+    return results.map((row) => ({
+      id: row.id as string,
+      messageId: row.messageId as string,
+      conversationId: row.conversationId as string,
+      filePath: row.filePath as string,
+      editType: row.editType as FileEdit['editType'],
+      linesAdded: row.linesAdded as number,
+      linesRemoved: row.linesRemoved as number,
+      startLine: (row.startLine as number) || undefined,
+      endLine: (row.endLine as number) || undefined,
+    }));
+  },
+
+  async deleteByConversation(conversationId: string): Promise<void> {
+    const table = await getFileEditsTable();
     await table.delete(`"conversationId" = '${conversationId}'`);
   },
 };

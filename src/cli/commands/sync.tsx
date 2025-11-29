@@ -25,6 +25,7 @@ import {
   syncStateRepo,
   filesRepo,
   messageFilesRepo,
+  fileEditsRepo,
 } from '../../db/repository';
 import {
   setEmbeddingProgress,
@@ -272,6 +273,7 @@ async function runSync(
           await toolCallRepo.deleteByConversation(normalized.conversation.id);
           await filesRepo.deleteByConversation(normalized.conversation.id);
           await messageFilesRepo.deleteByConversation(normalized.conversation.id);
+          await fileEditsRepo.deleteByConversation(normalized.conversation.id);
 
           // Insert conversation
           await conversationRepo.upsert(normalized.conversation);
@@ -296,6 +298,11 @@ async function runSync(
           // Insert message files
           if (normalized.messageFiles && normalized.messageFiles.length > 0) {
             await messageFilesRepo.bulkInsert(normalized.messageFiles);
+          }
+
+          // Insert file edits
+          if (normalized.fileEdits && normalized.fileEdits.length > 0) {
+            await fileEditsRepo.bulkInsert(normalized.fileEdits);
           }
         } else {
           // Incremental mode: Only insert new data, preserve existing embeddings
@@ -331,6 +338,10 @@ async function runSync(
 
             if (normalized.messageFiles && normalized.messageFiles.length > 0) {
               await messageFilesRepo.bulkInsert(normalized.messageFiles);
+            }
+
+            if (normalized.fileEdits && normalized.fileEdits.length > 0) {
+              await fileEditsRepo.bulkInsert(normalized.fileEdits);
             }
           }
         }

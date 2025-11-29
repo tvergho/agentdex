@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { detectCodex, discoverSessions } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
-import type { Conversation, Message, SourceRef, ToolCall, ConversationFile, MessageFile } from '../../schema/index.js';
+import type { Conversation, Message, SourceRef, ToolCall, ConversationFile, MessageFile, FileEdit } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types.js';
 
 export class CodexAdapter implements SourceAdapter {
@@ -88,6 +88,8 @@ export class CodexAdapter implements SourceAdapter {
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
       totalCacheReadTokens: raw.totalCacheReadTokens,
+      totalLinesAdded: raw.totalLinesAdded,
+      totalLinesRemoved: raw.totalLinesRemoved,
     };
 
     // Build messages
@@ -99,6 +101,8 @@ export class CodexAdapter implements SourceAdapter {
       timestamp: msg.timestamp,
       messageIndex: msg.index,
       // Codex only has session-level token counts, not per-message
+      totalLinesAdded: msg.totalLinesAdded,
+      totalLinesRemoved: msg.totalLinesRemoved,
     }));
 
     // Build conversation files
@@ -145,12 +149,40 @@ export class CodexAdapter implements SourceAdapter {
       }
     }
 
+    // Build file edits
+    const fileEdits: FileEdit[] = [];
+    for (const msg of raw.messages) {
+      const messageId = `${conversationId}:${msg.index}`;
+
+      for (let j = 0; j < msg.fileEdits.length; j++) {
+        const edit = msg.fileEdits[j];
+        if (!edit) continue;
+
+        // Create deterministic ID from edit properties
+        const editId = createHash('sha256')
+          .update(`${messageId}:edit:${j}:${edit.filePath}`)
+          .digest('hex')
+          .slice(0, 32);
+
+        fileEdits.push({
+          id: editId,
+          messageId,
+          conversationId,
+          filePath: edit.filePath,
+          editType: edit.editType,
+          linesAdded: edit.linesAdded,
+          linesRemoved: edit.linesRemoved,
+        });
+      }
+    }
+
     return {
       conversation,
       messages,
       toolCalls,
       files,
       messageFiles,
+      fileEdits,
     };
   }
 

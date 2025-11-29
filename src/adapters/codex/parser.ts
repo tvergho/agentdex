@@ -76,6 +76,9 @@ export interface RawMessage {
   timestamp: string | undefined;
   toolCalls: RawToolCall[];
   files: RawFile[];
+  fileEdits: RawFileEdit[];
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
 }
 
 export interface RawToolCall {
@@ -91,6 +94,13 @@ export interface RawFile {
   role: 'context' | 'edited' | 'mentioned';
 }
 
+export interface RawFileEdit {
+  filePath: string;
+  editType: 'create' | 'modify' | 'delete';
+  linesAdded: number;
+  linesRemoved: number;
+}
+
 export interface RawConversation {
   sessionId: string;
   title: string;
@@ -102,9 +112,12 @@ export interface RawConversation {
   updatedAt?: string;
   messages: RawMessage[];
   files: RawFile[];
+  fileEdits: RawFileEdit[];
   totalInputTokens?: number;
   totalOutputTokens?: number;
   totalCacheReadTokens?: number;
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
 }
 
 /**
@@ -174,7 +187,7 @@ function extractFilePath(toolName: string, argsJson: string): string | undefined
  */
 function getFileRole(toolName: string): RawFile['role'] {
   const readTools = ['read_file', 'list_directory', 'glob', 'grep', 'search'];
-  const writeTools = ['write_file', 'apply_diff', 'create_file', 'edit_file'];
+  const writeTools = ['write_file', 'apply_diff', 'apply_patch', 'create_file', 'edit_file'];
 
   const lowerName = toolName.toLowerCase();
 
@@ -185,6 +198,109 @@ function getFileRole(toolName: string): RawFile['role'] {
     return 'edited';
   }
   return 'mentioned';
+}
+
+/**
+ * Count lines in a string, handling edge cases.
+ */
+function countLines(str: string): number {
+  if (!str) return 0;
+  return str.split('\n').length;
+}
+
+/**
+ * Parse apply_patch unified diff format to extract file edits.
+ * Format:
+ * *** Begin Patch
+ * *** Add File: path/to/new-file.ts
+ * +line 1
+ * +line 2
+ * *** End Patch
+ * *** Begin Patch
+ * *** Update File: path/to/existing.ts
+ * @@
+ * -old line
+ * +new line
+ * @@
+ * *** End Patch
+ */
+function parseApplyPatch(patchInput: string): RawFileEdit[] {
+  const edits: RawFileEdit[] = [];
+  const lines = patchInput.split('\n');
+  let currentFile: RawFileEdit | null = null;
+
+  for (const line of lines) {
+    if (line.startsWith('*** Add File:')) {
+      currentFile = {
+        filePath: line.replace('*** Add File:', '').trim(),
+        editType: 'create',
+        linesAdded: 0,
+        linesRemoved: 0,
+      };
+      edits.push(currentFile);
+    } else if (line.startsWith('*** Update File:')) {
+      currentFile = {
+        filePath: line.replace('*** Update File:', '').trim(),
+        editType: 'modify',
+        linesAdded: 0,
+        linesRemoved: 0,
+      };
+      edits.push(currentFile);
+    } else if (line.startsWith('*** Delete File:')) {
+      currentFile = {
+        filePath: line.replace('*** Delete File:', '').trim(),
+        editType: 'delete',
+        linesAdded: 0,
+        linesRemoved: 0,
+      };
+      edits.push(currentFile);
+    } else if (currentFile) {
+      // Count line additions and removals
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        currentFile.linesAdded++;
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        currentFile.linesRemoved++;
+      }
+    }
+  }
+
+  return edits;
+}
+
+/**
+ * Extract file edits from tool calls (apply_patch and write_file).
+ */
+function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] {
+  const edits: RawFileEdit[] = [];
+
+  for (const tc of toolCalls) {
+    const lowerName = tc.name.toLowerCase();
+
+    if (lowerName === 'apply_patch') {
+      // The input is the patch content directly
+      const patchEdits = parseApplyPatch(tc.input);
+      edits.push(...patchEdits);
+    } else if (lowerName === 'write_file' || lowerName === 'create_file') {
+      try {
+        const args = JSON.parse(tc.input);
+        const filePath = args.path || args.filePath || args.file;
+        const content = args.content || '';
+
+        if (filePath) {
+          edits.push({
+            filePath,
+            editType: 'create',
+            linesAdded: countLines(content),
+            linesRemoved: 0,
+          });
+        }
+      } catch {
+        // Skip malformed input
+      }
+    }
+  }
+
+  return edits;
 }
 
 /**
@@ -225,15 +341,17 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
   // Extract messages and tool calls
   const messages: RawMessage[] = [];
   const allFiles: RawFile[] = [];
+  const allEdits: RawFileEdit[] = [];
   const seenPaths = new Set<string>();
   let messageIndex = 0;
   let createdAt: string | undefined;
   let updatedAt: string | undefined;
   let title = 'Untitled';
 
-  // Track current message's tool calls
+  // Track current message's tool calls and edits
   let currentToolCalls: RawToolCall[] = [];
   let currentFiles: RawFile[] = [];
+  let currentEdits: RawFileEdit[] = [];
 
   for (const entry of entries) {
     // Track timestamps
@@ -263,9 +381,14 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
           title = content.slice(0, 100).split('\n')[0] || 'Untitled';
         }
 
-        // If this is an assistant message, attach any pending tool calls
+        // If this is an assistant message, attach any pending tool calls and edits
         const toolCalls = msg.role === 'assistant' ? currentToolCalls : [];
         const files = msg.role === 'assistant' ? currentFiles : [];
+        const fileEdits = msg.role === 'assistant' ? currentEdits : [];
+
+        // Calculate per-message line totals
+        const totalLinesAdded = fileEdits.reduce((sum, e) => sum + e.linesAdded, 0);
+        const totalLinesRemoved = fileEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
 
         messages.push({
           index: messageIndex++,
@@ -274,25 +397,37 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
           timestamp: entry.timestamp,
           toolCalls,
           files,
+          fileEdits,
+          totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
+          totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
         });
 
-        // Reset tool call tracking after attaching to assistant message
+        // Add edits to conversation-level list
+        allEdits.push(...fileEdits);
+
+        // Reset tool call and edit tracking after attaching to assistant message
         if (msg.role === 'assistant') {
           currentToolCalls = [];
           currentFiles = [];
+          currentEdits = [];
         }
       } else if (payload.type === 'function_call') {
         const fc = payload as CodexFunctionCall;
         const output = toolOutputs.get(fc.call_id);
         const filePath = extractFilePath(fc.name, fc.arguments);
 
-        currentToolCalls.push({
+        const toolCall: RawToolCall = {
           id: fc.call_id,
           name: fc.name,
           input: fc.arguments,
           output,
           filePath,
-        });
+        };
+        currentToolCalls.push(toolCall);
+
+        // Extract file edits from this tool call
+        const editsFromCall = extractFileEditsFromToolCalls([toolCall]);
+        currentEdits.push(...editsFromCall);
 
         // Track files
         if (filePath && !seenPaths.has(filePath)) {
@@ -331,6 +466,10 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
     return null;
   }
 
+  // Calculate total line changes
+  const totalLinesAdded = allEdits.reduce((sum, e) => sum + e.linesAdded, 0);
+  const totalLinesRemoved = allEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
+
   return {
     sessionId,
     title,
@@ -342,8 +481,11 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
     updatedAt,
     messages,
     files: allFiles,
+    fileEdits: allEdits,
     totalInputTokens,
     totalOutputTokens,
     totalCacheReadTokens,
+    totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
+    totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
   };
 }

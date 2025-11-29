@@ -64,11 +64,14 @@ export interface RawMessage {
   timestamp: string | undefined;
   toolCalls: RawToolCall[];
   files: RawFile[];
+  fileEdits: RawFileEdit[];
   isSidechain: boolean;
   inputTokens?: number;
   outputTokens?: number;
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
 }
 
 export interface RawToolCall {
@@ -84,6 +87,13 @@ export interface RawFile {
   role: 'context' | 'edited' | 'mentioned';
 }
 
+export interface RawFileEdit {
+  filePath: string;
+  editType: 'create' | 'modify' | 'delete';
+  linesAdded: number;
+  linesRemoved: number;
+}
+
 export interface RawConversation {
   sessionId: string;
   title: string;
@@ -95,10 +105,13 @@ export interface RawConversation {
   updatedAt?: string;
   messages: RawMessage[];
   files: RawFile[];
+  fileEdits: RawFileEdit[];
   totalInputTokens?: number;
   totalOutputTokens?: number;
   totalCacheCreationTokens?: number;
   totalCacheReadTokens?: number;
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
 }
 
 /**
@@ -195,6 +208,63 @@ function extractFilesFromToolCalls(toolCalls: RawToolCall[]): RawFile[] {
 }
 
 /**
+ * Count lines in a string, handling edge cases.
+ */
+function countLines(str: string): number {
+  if (!str) return 0;
+  // A string with no newlines is still 1 line
+  return str.split('\n').length;
+}
+
+/**
+ * Extract file edits from tool calls (Edit and Write tools).
+ */
+function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] {
+  const edits: RawFileEdit[] = [];
+
+  for (const tc of toolCalls) {
+    if (tc.name === 'Edit') {
+      try {
+        const input = typeof tc.input === 'string' ? JSON.parse(tc.input) : tc.input;
+        const filePath = input?.file_path;
+        const oldString = input?.old_string ?? '';
+        const newString = input?.new_string ?? '';
+
+        if (filePath) {
+          edits.push({
+            filePath,
+            editType: 'modify',
+            linesRemoved: countLines(oldString),
+            linesAdded: countLines(newString),
+          });
+        }
+      } catch {
+        // Skip malformed Edit tool input
+      }
+    } else if (tc.name === 'Write') {
+      try {
+        const input = typeof tc.input === 'string' ? JSON.parse(tc.input) : tc.input;
+        const filePath = input?.file_path;
+        const content = input?.content ?? '';
+
+        if (filePath) {
+          edits.push({
+            filePath,
+            editType: 'create',
+            linesRemoved: 0,
+            linesAdded: countLines(content),
+          });
+        }
+      } catch {
+        // Skip malformed Write tool input
+      }
+    }
+  }
+
+  return edits;
+}
+
+/**
  * Extract all conversations from a project's sessions directory.
  */
 export function extractConversations(project: ClaudeCodeProject): RawConversation[] {
@@ -269,6 +339,7 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
     // Convert entries to messages
     const messages: RawMessage[] = [];
     const allFiles: RawFile[] = [];
+    const allEdits: RawFileEdit[] = [];
     const seenPaths = new Set<string>();
     let createdAt: string | undefined;
     let updatedAt: string | undefined;
@@ -289,6 +360,7 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
       const content = extractTextContent(entry.message.content);
       const toolCalls = extractToolCalls(entry.message.content, toolResults);
       const files = extractFilesFromToolCalls(toolCalls);
+      const fileEdits = extractFileEditsFromToolCalls(toolCalls);
 
       // Add files to conversation-level list
       for (const file of files) {
@@ -297,6 +369,13 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
           allFiles.push(file);
         }
       }
+
+      // Add edits to conversation-level list
+      allEdits.push(...fileEdits);
+
+      // Calculate per-message line totals
+      const totalLinesAdded = fileEdits.reduce((sum, e) => sum + e.linesAdded, 0);
+      const totalLinesRemoved = fileEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
 
       // Extract token usage from message
       const usage = entry.message.usage;
@@ -309,11 +388,14 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
         timestamp: entry.timestamp,
         toolCalls,
         files,
+        fileEdits,
         isSidechain: entry.isSidechain ?? false,
         inputTokens: usage?.input_tokens,
         outputTokens: usage?.output_tokens,
         cacheCreationTokens: usage?.cache_creation_input_tokens,
         cacheReadTokens: usage?.cache_read_input_tokens,
+        totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
+        totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
       });
     }
 
@@ -324,6 +406,10 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
     const totalOutputTokens = messages.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
     const totalCacheCreationTokens = messages.reduce((sum, m) => sum + (m.cacheCreationTokens || 0), 0);
     const totalCacheReadTokens = messages.reduce((sum, m) => sum + (m.cacheReadTokens || 0), 0);
+
+    // Calculate total line changes
+    const totalLinesAdded = allEdits.reduce((sum, e) => sum + e.linesAdded, 0);
+    const totalLinesRemoved = allEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
 
     conversations.push({
       sessionId,
@@ -336,10 +422,13 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
       updatedAt,
       messages,
       files: allFiles,
+      fileEdits: allEdits,
       totalInputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
       totalOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
       totalCacheCreationTokens: totalCacheCreationTokens > 0 ? totalCacheCreationTokens : undefined,
       totalCacheReadTokens: totalCacheReadTokens > 0 ? totalCacheReadTokens : undefined,
+      totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
+      totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
     });
   }
 

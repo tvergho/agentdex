@@ -19,6 +19,7 @@ import {
   truncatePath,
   formatMessageCount,
   formatTokenPair,
+  formatLineCounts,
 } from '../../utils/format';
 import type { Conversation } from '../../schema/index';
 
@@ -53,6 +54,10 @@ function ConversationRow({
     conversation.totalCacheCreationTokens,
     conversation.totalCacheReadTokens
   );
+  const lineCountStr = formatLineCounts(
+    conversation.totalLinesAdded,
+    conversation.totalLinesRemoved
+  );
 
   // Truncate workspace path if needed
   const maxPathWidth = width - 6 - sourceName.length - 3;
@@ -83,6 +88,12 @@ function ConversationRow({
           <>
             <Text dimColor> · </Text>
             <Text color="cyan" dimColor={!isSelected}>{tokenStr}</Text>
+          </>
+        )}
+        {lineCountStr && (
+          <>
+            <Text dimColor> · </Text>
+            <Text color="green" dimColor={!isSelected}>{lineCountStr}</Text>
           </>
         )}
       </Box>
@@ -262,8 +273,10 @@ async function plainList(limit: number, source?: string): Promise<void> {
       conv.totalCacheCreationTokens,
       conv.totalCacheReadTokens
     );
+    const lineCountStr = formatLineCounts(conv.totalLinesAdded, conv.totalLinesRemoved);
     const tokenInfo = tokenStr ? ` · ${tokenStr}` : '';
-    console.log(`   ${formatMessageCount(conv.messageCount)} · ${formatRelativeTime(conv.updatedAt)}${tokenInfo}`);
+    const lineInfo = lineCountStr ? ` · ${lineCountStr}` : '';
+    console.log(`   ${formatMessageCount(conv.messageCount)} · ${formatRelativeTime(conv.updatedAt)}${tokenInfo}${lineInfo}`);
     console.log(`   ID: ${conv.id}`);
     console.log('');
   }

@@ -26,6 +26,9 @@ export const Message = z.object({
   outputTokens: z.number().optional(),
   cacheCreationTokens: z.number().optional(), // Claude Code only
   cacheReadTokens: z.number().optional(), // Claude Code only
+  // Line edit tracking (aggregated from file_edits)
+  totalLinesAdded: z.number().optional(),
+  totalLinesRemoved: z.number().optional(),
 });
 export type Message = z.infer<typeof Message>;
 
@@ -60,6 +63,9 @@ export const Conversation = z.object({
   totalOutputTokens: z.number().optional(),
   totalCacheCreationTokens: z.number().optional(),
   totalCacheReadTokens: z.number().optional(),
+  // Line edit tracking (aggregated from file_edits)
+  totalLinesAdded: z.number().optional(),
+  totalLinesRemoved: z.number().optional(),
 });
 export type Conversation = z.infer<typeof Conversation>;
 
@@ -81,6 +87,20 @@ export const MessageFile = z.object({
   role: z.enum(['context', 'edited', 'mentioned']), // how the file was involved in this message
 });
 export type MessageFile = z.infer<typeof MessageFile>;
+
+// Individual file edit tracked per message
+export const FileEdit = z.object({
+  id: z.string(), // SHA256 hash for deduplication
+  messageId: z.string(),
+  conversationId: z.string(),
+  filePath: z.string(),
+  editType: z.enum(['create', 'modify', 'delete']),
+  linesAdded: z.number(),
+  linesRemoved: z.number(),
+  startLine: z.number().optional(), // Only available for Cursor
+  endLine: z.number().optional(), // Only available for Cursor
+});
+export type FileEdit = z.infer<typeof FileEdit>;
 
 // Sync state for incremental updates
 export const SyncState = z.object({
