@@ -275,42 +275,41 @@ function ActivityTab({
   const { daily, hourly, weekly, streak } = data;
   const weeks = Math.ceil(period / 7);
 
+  // Calculate widths for side-by-side layout
+  const halfWidth = Math.floor((width - 4) / 2);
+
   return (
     <Box flexDirection="column">
-      {/* Streak info */}
+      {/* Compact streak summary line */}
       <Box marginBottom={1}>
-        <Text bold color="white">Activity Streaks</Text>
-      </Box>
-      <Box marginBottom={1}>
-        <Box width={20}>
-          <Text dimColor>Current: </Text>
-          <Text color="yellow" bold>{streak.current} days</Text>
-        </Box>
-        <Box>
-          <Text dimColor>Longest: </Text>
-          <Text color="green" bold>{streak.longest} days</Text>
-          {streak.longestStart && (
-            <Text dimColor> ({streak.longestStart} - {streak.longestEnd})</Text>
-          )}
-        </Box>
+        <Text color="yellow" bold>{streak.current} day streak</Text>
+        <Text color="gray"> · </Text>
+        <Text color="gray">Longest: </Text>
+        <Text color="green" bold>{streak.longest} days</Text>
+        {streak.longestStart && (
+          <Text color="gray"> ({streak.longestStart} – {streak.longestEnd})</Text>
+        )}
       </Box>
 
-      {/* Activity heatmap */}
+      {/* Activity heatmap - hero visual */}
       <Box flexDirection="column" marginBottom={1}>
         <Text bold color="white">Activity Heatmap</Text>
         <ActivityHeatmap data={daily} weeks={weeks} width={width} metric="conversations" />
       </Box>
 
-      {/* Hourly distribution */}
-      <Box flexDirection="column" marginBottom={1}>
-        <Text bold color="white">Activity by Hour</Text>
-        <HourlyActivity data={hourly} width={width} />
-      </Box>
+      {/* Hour and Day charts side-by-side */}
+      <Box>
+        {/* Hourly distribution */}
+        <Box flexDirection="column" width={halfWidth} marginRight={2}>
+          <Text bold color="white">By Hour</Text>
+          <HourlyActivity data={hourly} width={halfWidth} />
+        </Box>
 
-      {/* Weekly distribution */}
-      <Box flexDirection="column">
-        <Text bold color="white">Activity by Day of Week</Text>
-        <WeeklyActivity data={weekly} width={Math.min(width, 40)} />
+        {/* Weekly distribution */}
+        <Box flexDirection="column" width={halfWidth}>
+          <Text bold color="white">By Day of Week</Text>
+          <WeeklyActivity data={weekly} width={halfWidth} />
+        </Box>
       </Box>
     </Box>
   );
