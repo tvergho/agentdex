@@ -26,6 +26,8 @@ import {
   formatSourceName,
   formatConversationCount,
   formatMessageCount,
+  combineConsecutiveMessages,
+  type CombinedMessage,
 } from '../../utils/format.js';
 import type { SearchResponse, Message, ConversationFile, MessageFile } from '../../schema/index.js';
 
@@ -58,7 +60,8 @@ function SearchApp({
   const [expandedSelectedMatch, setExpandedSelectedMatch] = useState(0);
 
   // Conversation view state
-  const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
+  const [combinedMessages, setCombinedMessages] = useState<CombinedMessage[]>([]);
+  const [messageIndexMap, setMessageIndexMap] = useState<Map<number, number>>(new Map());
   const [conversationFiles, setConversationFiles] = useState<ConversationFile[]>([]);
   const [conversationMessageFiles, setConversationMessageFiles] = useState<MessageFile[]>([]);
   const [conversationScrollOffset, setConversationScrollOffset] = useState(0);
@@ -83,15 +86,23 @@ function SearchApp({
     runSearch();
   }, [query, limit]);
 
-  // Load files when expanding a conversation
+  // Load files and compute combined messages when expanding a conversation
   useEffect(() => {
     if (expandedIndex !== null && response?.results[expandedIndex]) {
       const convId = response.results[expandedIndex]!.conversation.id;
       filesRepo.findByConversation(convId).then(setConversationFiles);
       messageFilesRepo.findByConversation(convId).then(setConversationMessageFiles);
+      // Pre-compute combined messages for index mapping in matches view
+      messageRepo.findByConversation(convId).then((msgs) => {
+        const { messages: combined, indexMap } = combineConsecutiveMessages(msgs);
+        setCombinedMessages(combined);
+        setMessageIndexMap(indexMap);
+      });
     } else {
       setConversationFiles([]);
       setConversationMessageFiles([]);
+      setCombinedMessages([]);
+      setMessageIndexMap(new Map());
     }
   }, [expandedIndex, response]);
 
@@ -118,15 +129,19 @@ function SearchApp({
   // Load conversation messages when entering conversation view
   const loadConversation = async (conversationId: string, targetMessageIndex?: number) => {
     const msgs = await messageRepo.findByConversation(conversationId);
-    setConversationMessages(msgs);
+    const { messages: combined, indexMap } = combineConsecutiveMessages(msgs);
+    setCombinedMessages(combined);
+    setMessageIndexMap(indexMap);
 
     // Scroll to show the highlighted message and select it
     if (targetMessageIndex !== undefined) {
+      // Convert original messageIndex to combined index
+      const combinedIdx = indexMap.get(targetMessageIndex) ?? 0;
       const messagesPerPage = Math.max(1, Math.floor((height - 6) / 3));
-      const targetScroll = Math.max(0, targetMessageIndex - Math.floor(messagesPerPage / 2));
-      setConversationScrollOffset(Math.min(targetScroll, Math.max(0, msgs.length - messagesPerPage)));
-      setHighlightMessageIndex(targetMessageIndex);
-      setSelectedMessageIndex(targetMessageIndex);
+      const targetScroll = Math.max(0, combinedIdx - Math.floor(messagesPerPage / 2));
+      setConversationScrollOffset(Math.min(targetScroll, Math.max(0, combined.length - messagesPerPage)));
+      setHighlightMessageIndex(combinedIdx);
+      setSelectedMessageIndex(combinedIdx);
     } else {
       setConversationScrollOffset(0);
       setHighlightMessageIndex(undefined);
@@ -142,9 +157,9 @@ function SearchApp({
 
     if (!response || response.results.length === 0) return;
 
-    if (viewMode === 'message' && conversationMessages.length > 0) {
+    if (viewMode === 'message' && combinedMessages.length > 0) {
       // Message detail view navigation
-      const currentMessage = conversationMessages[selectedMessageIndex];
+      const currentMessage = combinedMessages[selectedMessageIndex];
       if (key.escape || key.backspace || key.delete) {
         setViewMode('conversation');
         setMessageScrollOffset(0);
@@ -161,7 +176,7 @@ function SearchApp({
         setMessageScrollOffset(Math.max(0, lines.length - (height - 5)));
       } else if (input === 'n') {
         // Next message
-        if (selectedMessageIndex < conversationMessages.length - 1) {
+        if (selectedMessageIndex < combinedMessages.length - 1) {
           setSelectedMessageIndex((i) => i + 1);
           setMessageScrollOffset(0);
         }
@@ -176,17 +191,18 @@ function SearchApp({
       // Conversation view navigation
       if (key.escape || key.backspace || key.delete) {
         setViewMode('matches');
-        setConversationMessages([]);
+        setCombinedMessages([]);
+        setMessageIndexMap(new Map());
         setHighlightMessageIndex(undefined);
         setSelectedMessageIndex(0);
       } else if (input === 'j' || key.downArrow) {
-        setSelectedMessageIndex((i) => Math.min(i + 1, conversationMessages.length - 1));
+        setSelectedMessageIndex((i) => Math.min(i + 1, combinedMessages.length - 1));
         // Adjust scroll to keep selected message visible
         const messagesPerPage = Math.max(1, Math.floor((height - 6) / 3));
         setConversationScrollOffset((o) => {
-          const newIdx = Math.min(selectedMessageIndex + 1, conversationMessages.length - 1);
+          const newIdx = Math.min(selectedMessageIndex + 1, combinedMessages.length - 1);
           if (newIdx >= o + messagesPerPage) {
-            return Math.min(o + 1, Math.max(0, conversationMessages.length - messagesPerPage));
+            return Math.min(o + 1, Math.max(0, combinedMessages.length - messagesPerPage));
           }
           return o;
         });
@@ -204,8 +220,8 @@ function SearchApp({
         setSelectedMessageIndex(0);
       } else if (input === 'G') {
         const messagesPerPage = Math.max(1, Math.floor((height - 6) / 3));
-        setConversationScrollOffset(Math.max(0, conversationMessages.length - messagesPerPage));
-        setSelectedMessageIndex(conversationMessages.length - 1);
+        setConversationScrollOffset(Math.max(0, combinedMessages.length - messagesPerPage));
+        setSelectedMessageIndex(combinedMessages.length - 1);
       } else if (key.return) {
         // Open message detail view
         setViewMode('message');
@@ -316,10 +332,10 @@ function SearchApp({
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
         {response.results.length === 0 ? (
           <Text dimColor>No results found.</Text>
-        ) : viewMode === 'message' && conversationMessages[selectedMessageIndex] ? (
+        ) : viewMode === 'message' && combinedMessages[selectedMessageIndex] ? (
           <MessageDetailView
-            message={conversationMessages[selectedMessageIndex]!}
-            messageFiles={conversationMessageFiles.filter((f) => f.messageId === conversationMessages[selectedMessageIndex]!.id)}
+            message={combinedMessages[selectedMessageIndex]!}
+            messageFiles={conversationMessageFiles}
             height={availableHeight}
             scrollOffset={messageScrollOffset}
             query={query}
@@ -327,7 +343,7 @@ function SearchApp({
         ) : viewMode === 'conversation' && expandedResult ? (
           <ConversationView
             conversation={expandedResult.conversation}
-            messages={conversationMessages}
+            messages={combinedMessages}
             files={conversationFiles}
             messageFiles={conversationMessageFiles}
             width={width - 2}
@@ -346,6 +362,8 @@ function SearchApp({
             scrollOffset={expandedScrollOffset}
             selectedMatchIndex={expandedSelectedMatch}
             query={query}
+            indexMap={messageIndexMap}
+            combinedMessageCount={combinedMessages.length}
           />
         ) : (
           visibleResults.map((result, idx) => {

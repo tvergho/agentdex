@@ -130,3 +130,98 @@ export function formatFilesDisplay(
   const remaining = totalCount - maxShow;
   return remaining > 0 ? `Files: ${shown} (+${remaining} more)` : `Files: ${shown}`;
 }
+
+/**
+ * Combined message that groups consecutive messages from the same role
+ */
+export interface CombinedMessage {
+  /** IDs of all original messages in this group */
+  messageIds: string[];
+  /** Combined content from all messages */
+  content: string;
+  /** Role (user, assistant, system) */
+  role: 'user' | 'assistant' | 'system';
+  /** Index of this combined message (0-based) */
+  combinedIndex: number;
+  /** Original message indices included in this group */
+  originalIndices: number[];
+  /** Timestamp from first message */
+  timestamp?: string;
+}
+
+/**
+ * Result of combining messages
+ */
+export interface CombinedMessagesResult {
+  /** Combined messages */
+  messages: CombinedMessage[];
+  /** Map from original messageIndex to combined index */
+  indexMap: Map<number, number>;
+}
+
+/**
+ * Combine consecutive messages from the same role (especially assistant messages
+ * that are split by tool calls) into single logical messages.
+ */
+export function combineConsecutiveMessages<T extends {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  messageIndex: number;
+  timestamp?: string;
+}>(messages: T[]): CombinedMessagesResult {
+  if (messages.length === 0) {
+    return { messages: [], indexMap: new Map() };
+  }
+
+  const combined: CombinedMessage[] = [];
+  const indexMap = new Map<number, number>();
+
+  let currentGroup: T[] = [];
+  let currentRole: string | null = null;
+
+  for (const msg of messages) {
+    if (msg.role === currentRole && currentRole === 'assistant') {
+      // Continue grouping consecutive assistant messages
+      currentGroup.push(msg);
+    } else {
+      // Flush current group if any
+      if (currentGroup.length > 0) {
+        const combinedIdx = combined.length;
+        combined.push({
+          messageIds: currentGroup.map(m => m.id),
+          content: currentGroup.map(m => m.content).join('\n\n'),
+          role: currentGroup[0]!.role,
+          combinedIndex: combinedIdx,
+          originalIndices: currentGroup.map(m => m.messageIndex),
+          timestamp: currentGroup[0]!.timestamp,
+        });
+        // Map all original indices to this combined index
+        for (const m of currentGroup) {
+          indexMap.set(m.messageIndex, combinedIdx);
+        }
+      }
+      // Start new group
+      currentGroup = [msg];
+      currentRole = msg.role;
+    }
+  }
+
+  // Flush final group
+  if (currentGroup.length > 0) {
+    const combinedIdx = combined.length;
+    combined.push({
+      messageIds: currentGroup.map(m => m.id),
+      content: currentGroup.map(m => m.content).join('\n\n'),
+      role: currentGroup[0]!.role,
+      combinedIndex: combinedIdx,
+      originalIndices: currentGroup.map(m => m.messageIndex),
+      timestamp: currentGroup[0]!.timestamp,
+    });
+    for (const m of currentGroup) {
+      indexMap.set(m.messageIndex, combinedIdx);
+    }
+  }
+
+  return { messages: combined, indexMap };
+}

@@ -10,12 +10,13 @@ import {
   formatFileList,
   getRoleColor,
   getRoleLabel,
+  type CombinedMessage,
 } from '../../utils/format.js';
-import type { Conversation, Message, ConversationFile, MessageFile } from '../../schema/index.js';
+import type { Conversation, ConversationFile, MessageFile } from '../../schema/index.js';
 
 export interface ConversationViewProps {
   conversation: Conversation;
-  messages: Message[];
+  messages: CombinedMessage[];
   files: ConversationFile[];
   messageFiles: MessageFile[];
   width: number;
@@ -87,8 +88,8 @@ export function ConversationView({
           const roleLabel = getRoleLabel(msg.role);
           const roleColor = getRoleColor(msg.role);
 
-          // Get files for this message
-          const msgFiles = messageFiles.filter((f) => f.messageId === msg.id);
+          // Get files for all messages in this combined group
+          const msgFiles = messageFiles.filter((f) => msg.messageIds.includes(f.messageId));
           const msgFileNames = msgFiles.map((f) => getFileName(f.filePath));
 
           const filesDisplay = formatFileList(msgFileNames, 2);
@@ -104,7 +105,7 @@ export function ConversationView({
 
           return (
             <Box
-              key={msg.id}
+              key={msg.messageIds[0]}
               flexDirection="column"
               height={3}
             >

@@ -23,6 +23,10 @@ export interface MatchesViewProps {
   scrollOffset: number;
   selectedMatchIndex: number;
   query: string;
+  /** Map from original messageIndex to combined message index */
+  indexMap?: Map<number, number>;
+  /** Total number of combined messages */
+  combinedMessageCount?: number;
 }
 
 /**
@@ -37,6 +41,8 @@ export function MatchesView({
   scrollOffset,
   selectedMatchIndex,
   query,
+  indexMap,
+  combinedMessageCount,
 }: MatchesViewProps) {
   const { conversation, matches } = result;
 
@@ -91,6 +97,9 @@ export function MatchesView({
 
           const filesDisplay = formatFileList(msgFileNames, 2);
 
+          // Use combined message index if available, otherwise use original
+          const displayIndex = indexMap?.get(match.messageIndex) ?? match.messageIndex;
+
           return (
             <Box
               key={match.messageId}
@@ -105,7 +114,7 @@ export function MatchesView({
                   <Text color={roleColor} bold={isSelected}>
                     {roleLabel}
                   </Text>
-                  <Text dimColor> #{match.messageIndex + 1}</Text>
+                  <Text dimColor> #{displayIndex + 1}</Text>
                 </Box>
                 {filesDisplay && (
                   <Text dimColor wrap="truncate"> ({filesDisplay})</Text>

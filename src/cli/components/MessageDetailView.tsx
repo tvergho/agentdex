@@ -6,11 +6,12 @@ import {
   getFileName,
   getRoleColor,
   getRoleLabel,
+  type CombinedMessage,
 } from '../../utils/format.js';
-import type { Message, MessageFile } from '../../schema/index.js';
+import type { MessageFile } from '../../schema/index.js';
 
 export interface MessageDetailViewProps {
-  message: Message;
+  message: CombinedMessage;
   messageFiles: MessageFile[];
   height: number;
   scrollOffset: number;
@@ -30,8 +31,10 @@ export function MessageDetailView({
   const roleLabel = getRoleLabel(message.role);
   const roleColor = getRoleColor(message.role);
 
-  // Get file names for this message
-  const fileNames = messageFiles.map((f) => getFileName(f.filePath));
+  // Get file names for all messages in this combined group
+  const fileNames = messageFiles
+    .filter((f) => message.messageIds.includes(f.messageId))
+    .map((f) => getFileName(f.filePath));
 
   // Split content into lines for scrolling
   const lines = message.content.split('\n');
@@ -47,7 +50,7 @@ export function MessageDetailView({
       <Box flexDirection="column" marginBottom={1}>
         <Box>
           <Text color={roleColor} bold>[{roleLabel}]</Text>
-          <Text dimColor> · Message {message.messageIndex + 1}</Text>
+          <Text dimColor> · Message {message.combinedIndex + 1}</Text>
           {fileNames.length > 0 && (
             <Text dimColor> · Files: {fileNames.join(', ')}</Text>
           )}
