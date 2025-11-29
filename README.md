@@ -17,7 +17,7 @@ Dex indexes conversations from AI coding assistants (Cursor, Claude Code, Codex)
 | Source | Status |
 |--------|--------|
 | Cursor | ✅ Supported |
-| Claude Code | 🚧 Coming soon |
+| Claude Code | ✅ Supported |
 | Codex CLI | 🚧 Coming soon |
 
 ## Installation
