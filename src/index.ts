@@ -5,6 +5,7 @@ import { searchCommand } from './cli/commands/search';
 import { listCommand } from './cli/commands/list';
 import { showCommand } from './cli/commands/show';
 import { statusCommand } from './cli/commands/status';
+import { statsCommand } from './cli/commands/stats';
 
 const program = new Command()
   .name('dex')
@@ -39,5 +40,12 @@ program
   .command('status')
   .description('Check embedding generation progress')
   .action(statusCommand);
+
+program
+  .command('stats')
+  .description('View usage analytics and statistics')
+  .option('-p, --period <days>', 'Time period in days', '30')
+  .option('-s, --summary', 'Print quick summary (non-interactive)')
+  .action(statsCommand);
 
 program.parse();

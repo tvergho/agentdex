@@ -32,6 +32,7 @@ import {
   clearEmbeddingProgress,
   isEmbeddingInProgress,
 } from '../../embeddings/index';
+import { printRichSummary } from './stats';
 
 interface SyncProgress {
   phase:
@@ -411,4 +412,7 @@ function SyncApp({ options }: { options: SyncOptions }) {
 export async function syncCommand(options: SyncOptions): Promise<void> {
   const { waitUntilExit } = render(<SyncApp options={options} />);
   await waitUntilExit();
+
+  // Show summary stats after sync completes
+  await printRichSummary(7);
 }
