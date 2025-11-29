@@ -75,10 +75,10 @@ export function MatchesView({
           {workspaceDisplay && <Text dimColor> · </Text>}
           <Text color="magenta">{workspaceDisplay}</Text>
         </Text>
-        <Text dimColor>
+        <Text color="gray">
           {formatFilesDisplay(fileNames, files.length)}
         </Text>
-        <Text dimColor>{formatMatchCount(matches.length)} · {paginationInfo}</Text>
+        <Text color="gray">{formatMatchCount(matches.length)} · {paginationInfo}</Text>
         <Text color="gray">{'─'.repeat(Math.max(0, width))}</Text>
       </Box>
 

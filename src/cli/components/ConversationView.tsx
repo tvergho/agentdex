@@ -88,17 +88,17 @@ export function ConversationView({
           {workspaceDisplay && <Text dimColor> · </Text>}
           <Text color="magenta">{workspaceDisplay}</Text>
         </Text>
-        <Text dimColor>
+        <Text color="gray">
           {formatFilesDisplay(fileNames, files.length)}
         </Text>
-        <Text dimColor>
-          {formatMessageCount(messages.length)} · {paginationInfo}
+        <Text>
+          <Text color="gray">{formatMessageCount(messages.length)} · {paginationInfo}</Text>
           {tokenTotals && <Text color="cyan"> · {tokenTotals}</Text>}
           {lineCountTotals && (
             <>
-              <Text> · </Text>
+              <Text color="gray"> · </Text>
               <Text color="green">{lineCountTotals.added}</Text>
-              <Text> / </Text>
+              <Text color="gray"> / </Text>
               <Text color="red">{lineCountTotals.removed}</Text>
             </>
           )}
@@ -160,10 +160,10 @@ export function ConversationView({
                   <Text color="gray" wrap="truncate"> ({filesDisplay})</Text>
                 )}
                 {msgTokens && (
-                  <Text color="cyan" dimColor> · {msgTokens}</Text>
+                  <Text color="cyan"> · {msgTokens}</Text>
                 )}
                 {msgLineParts && (
-                  <Text dimColor> · <Text color="green">{msgLineParts.added}</Text> / <Text color="red">{msgLineParts.removed}</Text></Text>
+                  <Text color="gray"> · <Text color="green">{msgLineParts.added}</Text> / <Text color="red">{msgLineParts.removed}</Text></Text>
                 )}
                 {isHighlighted && !isSelected && (
                   <Text color="yellow"> matched</Text>
