@@ -262,11 +262,16 @@ function SearchApp({
         const maxIdx = expandedResult.matches.length - 1;
         setExpandedSelectedMatch((i) => {
           const newIdx = Math.min(findNextDistinctMatch(i, 1), maxIdx);
-          // Adjust scroll if needed
           const matchesPerPage = Math.max(1, Math.floor((height - 8) / 4));
           const maxOffset = Math.max(0, expandedResult.matches.length - matchesPerPage);
-          const desiredOffset = Math.min(Math.max(newIdx - matchesPerPage + 1, 0), maxOffset);
-          setExpandedScrollOffset((o) => Math.min(Math.max(o, desiredOffset), maxOffset));
+          let offset = expandedScrollOffset;
+          if (newIdx < offset) {
+            offset = newIdx;
+          } else if (newIdx >= offset + matchesPerPage) {
+            offset = newIdx - matchesPerPage + 1;
+          }
+          offset = Math.min(Math.max(offset, 0), maxOffset);
+          setExpandedScrollOffset(offset);
           return newIdx;
         });
       } else if (input === 'k' || key.upArrow) {
@@ -274,8 +279,14 @@ function SearchApp({
           const newIdx = Math.max(findNextDistinctMatch(i, -1), 0);
           const matchesPerPage = Math.max(1, Math.floor((height - 8) / 4));
           const maxOffset = Math.max(0, expandedResult.matches.length - matchesPerPage);
-          const desiredOffset = Math.min(Math.max(newIdx, 0), maxOffset);
-          setExpandedScrollOffset((o) => Math.min(Math.max(desiredOffset, 0), maxOffset));
+          let offset = expandedScrollOffset;
+          if (newIdx < offset) {
+            offset = newIdx;
+          } else if (newIdx >= offset + matchesPerPage) {
+            offset = newIdx - matchesPerPage + 1;
+          }
+          offset = Math.min(Math.max(offset, 0), maxOffset);
+          setExpandedScrollOffset(offset);
           return newIdx;
         });
       } else if (key.return) {
