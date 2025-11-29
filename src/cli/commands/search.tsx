@@ -220,25 +220,19 @@ function SearchApp({
         setHighlightMessageIndex(undefined);
         setSelectedMessageIndex(0);
       } else if (input === 'j' || key.downArrow) {
-        setSelectedMessageIndex((i) => Math.min(i + 1, combinedMessages.length - 1));
+        const newIdx = Math.min(selectedMessageIndex + 1, combinedMessages.length - 1);
+        setSelectedMessageIndex(newIdx);
         // Adjust scroll to keep selected message visible
         const messagesPerPage = Math.max(1, Math.floor((height - 6) / 3));
-        setConversationScrollOffset((o) => {
-          const newIdx = Math.min(selectedMessageIndex + 1, combinedMessages.length - 1);
-          if (newIdx >= o + messagesPerPage) {
-            return Math.min(o + 1, Math.max(0, combinedMessages.length - messagesPerPage));
-          }
-          return o;
-        });
+        if (newIdx >= conversationScrollOffset + messagesPerPage) {
+          setConversationScrollOffset(Math.min(newIdx - messagesPerPage + 1, Math.max(0, combinedMessages.length - messagesPerPage)));
+        }
       } else if (input === 'k' || key.upArrow) {
-        setSelectedMessageIndex((i) => Math.max(i - 1, 0));
-        setConversationScrollOffset((o) => {
-          const newIdx = Math.max(selectedMessageIndex - 1, 0);
-          if (newIdx < o) {
-            return Math.max(o - 1, 0);
-          }
-          return o;
-        });
+        const newIdx = Math.max(selectedMessageIndex - 1, 0);
+        setSelectedMessageIndex(newIdx);
+        if (newIdx < conversationScrollOffset) {
+          setConversationScrollOffset(newIdx);
+        }
       } else if (input === 'g') {
         setConversationScrollOffset(0);
         setSelectedMessageIndex(0);
