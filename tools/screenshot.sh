@@ -48,8 +48,8 @@ set -e
 # Configuration defaults
 DEX_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEFAULT_OUTPUT="/tmp/dex-screenshot.png"
-WAIT_TIME=10
-KEY_WAIT="3s"
+WAIT_TIME=15
+KEY_WAIT="4s"
 WIDTH=1200
 HEIGHT=800
 FONT_SIZE=14
@@ -122,9 +122,25 @@ if ! command -v vhs &> /dev/null; then
     exit 1
 fi
 
-# Create temporary tape file
-TAPE=$(mktemp /tmp/dex-tape-XXXXXX.tape)
-GIF_OUTPUT=$(mktemp /tmp/dex-gif-XXXXXX.gif)
+# Remove existing output file to prevent vhs errors
+if [ -f "$OUTPUT" ]; then
+    rm -f "$OUTPUT"
+fi
+
+# Clean up any stale temp files from previous runs (use find to avoid zsh glob errors)
+find /tmp -maxdepth 1 -name "dex-tape-*.tape" -delete 2>/dev/null || true
+find /tmp -maxdepth 1 -name "dex-gif-*.gif" -delete 2>/dev/null || true
+
+# Create temporary tape file with unique suffix
+TAPE=$(mktemp /tmp/dex-tape-XXXXXX.tape) || {
+    # Fallback if mktemp fails
+    TAPE="/tmp/dex-tape-$$.tape"
+    touch "$TAPE"
+}
+GIF_OUTPUT=$(mktemp /tmp/dex-gif-XXXXXX.gif) || {
+    GIF_OUTPUT="/tmp/dex-gif-$$.gif"
+    touch "$GIF_OUTPUT"
+}
 
 cleanup() {
     rm -f "$TAPE" "$GIF_OUTPUT"
@@ -187,6 +203,7 @@ fi
 
 # Add screenshot and quit
 cat >> "$TAPE" << EOF
+Sleep 1s
 Screenshot "$OUTPUT"
 Type "q"
 Sleep 500ms
@@ -197,17 +214,37 @@ echo "Capturing: bun run dev $COMMAND"
 echo "Output: $OUTPUT"
 echo ""
 
-vhs "$TAPE" 2>&1 | grep -v "^Host your GIF" || true
+# Run vhs with retry logic for failed captures
+MAX_RETRIES=3
+for attempt in $(seq 1 $MAX_RETRIES); do
+    vhs "$TAPE" 2>&1 | grep -v "^Host your GIF" || true
+    
+    # Check if screenshot exists and is large enough (> 50KB indicates content rendered)
+    if [ -f "$OUTPUT" ]; then
+        FILE_SIZE=$(stat -f%z "$OUTPUT" 2>/dev/null || stat -c%s "$OUTPUT" 2>/dev/null || echo "0")
+        if [ "$FILE_SIZE" -gt 50000 ]; then
+            break  # Success
+        else
+            echo "Retry $attempt/$MAX_RETRIES: Screenshot too small (${FILE_SIZE} bytes), content may not have rendered"
+            rm -f "$OUTPUT"
+        fi
+    fi
+    
+    if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+        sleep 1
+    fi
+done
 
 if [ -f "$OUTPUT" ]; then
+    FILE_SIZE=$(stat -f%z "$OUTPUT" 2>/dev/null || stat -c%s "$OUTPUT" 2>/dev/null || echo "0")
     echo ""
-    echo "Screenshot saved: $OUTPUT"
+    echo "Screenshot saved: $OUTPUT (${FILE_SIZE} bytes)"
 
     # Open in Preview on macOS
     if [ "$OPEN_AFTER" = true ] && [ "$(uname)" = "Darwin" ]; then
         open "$OUTPUT" 2>/dev/null || true
     fi
 else
-    echo "Error: Failed to create screenshot"
+    echo "Error: Failed to create screenshot after $MAX_RETRIES attempts"
     exit 1
 fi
