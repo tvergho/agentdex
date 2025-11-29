@@ -1,3 +1,15 @@
+/**
+ * Search command - full-text search across all indexed conversations
+ *
+ * Usage: dex search <query> [--limit <n>]
+ *
+ * Interactive TUI with 4-level navigation:
+ * 1. List view - search results with j/k navigation
+ * 2. Matches view - all matches in a conversation
+ * 3. Conversation view - full conversation with highlighted message
+ * 4. Message view - single message with full content
+ */
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';

@@ -1,3 +1,12 @@
+/**
+ * List command - displays all indexed conversations
+ *
+ * Usage: dex list [--limit <n>] [--source <name>]
+ *
+ * Interactive TUI with scrolling, or plain text output when piped
+ * Navigate with j/k, select with Enter to get conversation ID
+ */
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';

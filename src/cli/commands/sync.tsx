@@ -1,3 +1,12 @@
+/**
+ * Sync command - indexes conversations from AI coding tools into the local database
+ *
+ * Usage: dex sync [--force] [--source <name>]
+ *
+ * Detects and syncs from: Cursor, Claude Code, Codex
+ * Spawns background embedding worker after sync completes
+ */
+
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text } from 'ink';
 import { spawn } from 'child_process';

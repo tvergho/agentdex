@@ -1,3 +1,11 @@
+/**
+ * Status command - shows embedding progress and model status
+ *
+ * Usage: dex status
+ *
+ * Displays: embedding progress, model download status, and processing stats
+ */
+
 import React from 'react';
 import { render, Box, Text } from 'ink';
 import { getEmbeddingProgress, getModelPath, type EmbeddingProgress } from '../../embeddings/index.js';

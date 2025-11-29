@@ -1,3 +1,12 @@
+/**
+ * Show command - displays a single conversation with full message content
+ *
+ * Usage: dex show <conversation-id>
+ *
+ * Interactive TUI with scrolling, or plain text output when piped
+ * Navigate with j/k, view full messages with Enter
+ */
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
