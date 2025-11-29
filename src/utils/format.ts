@@ -150,6 +150,20 @@ export function formatLineCounts(
 }
 
 /**
+ * Get line count parts for separate colored display
+ * Returns null if no changes, otherwise { added: "+N", removed: "-M" }
+ */
+export function getLineCountParts(
+  linesAdded: number | undefined,
+  linesRemoved: number | undefined
+): { added: string; removed: string } | null {
+  const added = linesAdded || 0;
+  const removed = linesRemoved || 0;
+  if (added === 0 && removed === 0) return null;
+  return { added: `+${added}`, removed: `-${removed}` };
+}
+
+/**
  * Truncate a list of file names for display
  */
 export function formatFileList(

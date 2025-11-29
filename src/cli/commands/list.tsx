@@ -20,6 +20,7 @@ import {
   formatMessageCount,
   formatTokenPair,
   formatLineCounts,
+  getLineCountParts,
 } from '../../utils/format';
 import type { Conversation } from '../../schema/index';
 
@@ -54,7 +55,7 @@ function ConversationRow({
     conversation.totalCacheCreationTokens,
     conversation.totalCacheReadTokens
   );
-  const lineCountStr = formatLineCounts(
+  const lineParts = getLineCountParts(
     conversation.totalLinesAdded,
     conversation.totalLinesRemoved
   );
@@ -90,10 +91,12 @@ function ConversationRow({
             <Text color="cyan" dimColor={!isSelected}>{tokenStr}</Text>
           </>
         )}
-        {lineCountStr && (
+        {lineParts && (
           <>
             <Text dimColor> · </Text>
-            <Text color="green" dimColor={!isSelected}>{lineCountStr}</Text>
+            <Text color="green" dimColor={!isSelected}>{lineParts.added}</Text>
+            <Text dimColor> / </Text>
+            <Text color="red" dimColor={!isSelected}>{lineParts.removed}</Text>
           </>
         )}
       </Box>

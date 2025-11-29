@@ -11,7 +11,7 @@ import {
   getRoleColor,
   getRoleLabel,
   formatTokenPair,
-  formatLineCounts,
+  getLineCountParts,
   type CombinedMessage,
 } from '../../utils/format';
 import type { Conversation, ConversationFile, MessageFile } from '../../schema/index';
@@ -73,7 +73,7 @@ export function ConversationView({
   );
 
   // Format conversation-level line counts
-  const lineCountTotals = formatLineCounts(
+  const lineCountTotals = getLineCountParts(
     conversation.totalLinesAdded,
     conversation.totalLinesRemoved
   );
@@ -94,7 +94,14 @@ export function ConversationView({
         <Text dimColor>
           {formatMessageCount(messages.length)} · {paginationInfo}
           {tokenTotals && <Text color="cyan"> · {tokenTotals}</Text>}
-          {lineCountTotals && <Text color="green"> · {lineCountTotals}</Text>}
+          {lineCountTotals && (
+            <>
+              <Text> · </Text>
+              <Text color="green">{lineCountTotals.added}</Text>
+              <Text> / </Text>
+              <Text color="red">{lineCountTotals.removed}</Text>
+            </>
+          )}
         </Text>
         <Text dimColor>{'─'.repeat(Math.max(0, width))}</Text>
       </Box>
@@ -120,9 +127,9 @@ export function ConversationView({
             : '';
 
           // Format per-message line counts (only show for assistant messages with edits)
-          const msgLineCounts = msg.role === 'assistant'
-            ? formatLineCounts(msg.totalLinesAdded, msg.totalLinesRemoved)
-            : '';
+          const msgLineParts = msg.role === 'assistant'
+            ? getLineCountParts(msg.totalLinesAdded, msg.totalLinesRemoved)
+            : null;
 
           // Truncate messages to ~1 line for readable view
           const maxLen = width - 14;
@@ -143,10 +150,11 @@ export function ConversationView({
                 <Text backgroundColor={isSelected ? 'cyan' : isHighlighted ? 'yellow' : undefined} color={showIndicator ? 'black' : 'gray'}>
                   {isSelected ? ' ▸ ' : isHighlighted ? ' ★ ' : '   '}
                 </Text>
-                <Box width={9}>
+                <Box width={14}>
                   <Text color={roleColor} bold={isSelected || isHighlighted}>
                     {roleLabel}
                   </Text>
+                  <Text dimColor> #{msg.combinedIndex + 1}</Text>
                 </Box>
                 {filesDisplay && (
                   <Text dimColor wrap="truncate"> ({filesDisplay})</Text>
@@ -154,8 +162,8 @@ export function ConversationView({
                 {msgTokens && (
                   <Text color="cyan" dimColor> [{msgTokens}]</Text>
                 )}
-                {msgLineCounts && (
-                  <Text color="green" dimColor> [{msgLineCounts}]</Text>
+                {msgLineParts && (
+                  <Text dimColor> [<Text color="green">{msgLineParts.added}</Text> / <Text color="red">{msgLineParts.removed}</Text>]</Text>
                 )}
                 {isHighlighted && !isSelected && (
                   <Text color="yellow" dimColor> matched</Text>
