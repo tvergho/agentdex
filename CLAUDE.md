@@ -43,7 +43,8 @@ src/
 │       └── MessageDetailView.tsx
 ├── db/
 │   ├── index.ts        # LanceDB connection & table setup
-│   └── repository.ts   # Data access layer
+│   ├── repository.ts   # Data access layer
+│   └── analytics.ts    # Stats/analytics queries
 ├── schema/
 │   └── index.ts        # Zod schemas for all entities
 ├── utils/
@@ -60,18 +61,20 @@ src/
 ## Key Commands
 
 ```bash
-bun run dev sync        # Index conversations from all sources
-bun run dev search "query"  # Search conversations
-bun run dev list        # List all conversations
-bun run dev show <id>   # Show a specific conversation
-bun run dev status      # Check embedding progress
-bun run dev stats       # View usage analytics dashboard
-bun run dev export      # Export conversations as markdown
-bun run dev backup      # Full database backup (JSON)
-bun run dev import <file>  # Import from backup
-bun run typecheck       # Run TypeScript type checking
-bun run lint            # Run ESLint
-bun run lint:fix        # Auto-fix lint issues
+bun run dev sync                    # Index conversations from all sources
+bun run dev search "query"          # Search conversations by content
+bun run dev search --file auth.ts   # Search by file path
+bun run dev search "bug" --file auth.ts  # Combined content + file search
+bun run dev list                    # List all conversations
+bun run dev show <id>               # Show a specific conversation
+bun run dev status                  # Check embedding progress
+bun run dev stats                   # View usage analytics dashboard
+bun run dev export                  # Export conversations as markdown
+bun run dev backup                  # Full database backup (JSON)
+bun run dev import <file>           # Import from backup
+bun run typecheck                   # Run TypeScript type checking
+bun run lint                        # Run ESLint
+bun run lint:fix                    # Auto-fix lint issues
 ```
 
 ## Architecture Patterns
@@ -84,10 +87,12 @@ Each source (Cursor, Claude Code, etc.) implements `SourceAdapter`:
 - `normalize()` - Convert to unified schema
 
 ### Database Schema
-- **conversations** - Top-level conversation metadata (title, source, timestamps, project context)
-- **messages** - Individual messages with FTS index on content
+- **conversations** - Top-level conversation metadata (title, source, timestamps, project context, token usage)
+- **messages** - Individual messages with FTS index on content and vector embeddings
 - **tool_calls** - Tool invocations (file edits, commands)
-- **conversation_files** - Files associated with conversations
+- **conversation_files** - Files associated with conversations (role: context/edited/mentioned)
+- **message_files** - Files associated with specific messages
+- **file_edits** - Individual file edit records with lines added/removed
 - **sync_state** - Incremental sync tracking
 
 ### UI Navigation (Search)
@@ -187,6 +192,24 @@ dex import backup.json              # Import all conversations
 dex import backup.json --dry-run    # Preview what would be imported
 dex import backup.json --force      # Overwrite existing conversations
 ```
+
+## File Search
+
+The `--file` flag enables searching by file path across all file tables:
+
+```bash
+dex search --file auth.ts              # Find conversations involving auth.ts
+dex search --file src/components       # Find conversations in components/
+dex search "fix bug" --file auth.ts    # Combined: content + file filter
+```
+
+**How it works:**
+- Searches `file_edits`, `conversation_files`, and `message_files` tables
+- Case-insensitive substring matching on file paths
+- Results ranked by file role: edited (1.0) > context (0.5) > mentioned (0.3)
+- Combined search filters content results to only conversations with matching files
+
+**Implementation:** `searchByFilePath()` and `getFileMatchesForConversations()` in `src/db/repository.ts`
 
 ## Embeddings
 

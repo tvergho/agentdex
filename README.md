@@ -7,6 +7,7 @@ Dex indexes conversations from AI coding assistants (Cursor, Claude Code, Codex,
 ## Features
 
 - 🔍 **Full-text search** across all your AI conversations
+- 📄 **File path search** - find conversations by file (e.g., `--file auth.ts`)
 - 🖥️ **Interactive TUI** with vim-style navigation (j/k, Enter, Esc)
 - 📁 **Project context** - see which files were discussed
 - 🔄 **Incremental sync** - only indexes new conversations
@@ -58,7 +59,15 @@ bun run dev show <conversation-id>
 ### Search
 
 ```bash
+# Search by content
 bun run dev search "your query"
+
+# Search by file path
+bun run dev search --file auth.ts
+bun run dev search --file src/components
+
+# Combined: content + file filter
+bun run dev search "authentication bug" --file auth.ts
 ```
 
 Navigate the interactive TUI:
