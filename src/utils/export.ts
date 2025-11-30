@@ -37,7 +37,9 @@ export function generateFilename(conv: Conversation): string {
  */
 export function getProjectName(workspacePath: string | undefined): string {
   if (!workspacePath) return '';
-  const parts = workspacePath.split('/');
+  // Remove trailing slashes before splitting
+  const normalized = workspacePath.replace(/\/+$/, '');
+  const parts = normalized.split('/');
   return parts[parts.length - 1] || workspacePath;
 }
 

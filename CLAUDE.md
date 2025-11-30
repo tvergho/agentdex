@@ -227,7 +227,79 @@ Stores conversations in JSON files with a hierarchical structure:
   - `part/{messageId}/{partId}.json` - Message content parts (text, tool calls)
 - Fields: `worktree` (project path), `title`, `tokens` (input/output/cache), tool `state` (input/output)
 
-## Testing Changes
+## Testing
+
+### Running Tests
+
+```bash
+bun test                    # Run all tests
+bun test --watch            # Watch mode
+bun test --coverage         # With coverage report
+bun test tests/unit/        # Run only unit tests
+bun test --grep "export"    # Run tests matching pattern
+```
+
+### Test Structure
+
+```
+tests/
+├── fixtures/               # Test data factories
+│   └── index.ts            # createConversation, createMessage, etc.
+├── helpers/                # Shared test utilities
+│   ├── db.ts               # TestDatabase for isolated DB tests
+│   ├── temp.ts             # Temporary directory management
+│   ├── cli.ts              # Console/process mocking
+│   ├── assertions.ts       # Custom file assertions
+│   └── time.ts             # Date utilities
+├── unit/                   # Pure function tests
+│   └── utils/
+│       └── export.test.ts
+└── integration/            # Tests with I/O
+    └── commands/
+        └── export.test.ts
+```
+
+### Writing Tests
+
+**Unit tests** - Test pure functions:
+```typescript
+import { describe, it, expect } from 'bun:test';
+import { generateFilename } from '../../../src/utils/export';
+import { createConversation } from '../../fixtures';
+
+it('generates filename', () => {
+  const conv = createConversation({ title: 'Test' });
+  expect(generateFilename(conv)).toContain('test.md');
+});
+```
+
+**Integration tests** - Test with database/filesystem:
+```typescript
+import { TestDatabase, TempDir, mockConsole } from '../../helpers';
+import { createConversation, createMessage } from '../../fixtures';
+
+let db: TestDatabase;
+let temp: TempDir;
+
+beforeEach(async () => {
+  db = new TestDatabase();
+  temp = new TempDir();
+  await db.setup();
+});
+
+afterEach(async () => {
+  await temp.cleanupAll();
+  await db.teardown();
+});
+
+it('exports conversations', async () => {
+  await db.seed({ conversations: [createConversation()] });
+  const outputDir = await temp.create();
+  // ... test export ...
+});
+```
+
+### Manual Testing
 
 1. Delete old database: `rm -rf ~/.dex/lancedb`
 2. Re-sync: `bun run dev sync --force`

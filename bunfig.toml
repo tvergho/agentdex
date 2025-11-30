@@ -5,3 +5,7 @@ exact = true
 [run]
 # Enable source maps for better error traces
 sourcemap = "inline"
+
+[test]
+# Test configuration
+timeout = 30000

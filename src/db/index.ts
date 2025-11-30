@@ -25,6 +25,21 @@ export async function connect(): Promise<lancedb.Connection> {
   return db;
 }
 
+/**
+ * Reset the database connection (for testing)
+ * This clears all cached table references so a fresh connection will be created
+ */
+export function resetConnection(): void {
+  db = null;
+  conversationsTable = null;
+  messagesTable = null;
+  toolCallsTable = null;
+  syncStateTable = null;
+  filesTable = null;
+  messageFilesTable = null;
+  fileEditsTable = null;
+}
+
 export async function getConversationsTable(): Promise<Table> {
   if (!conversationsTable) {
     await connect();
