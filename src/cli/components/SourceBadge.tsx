@@ -1,5 +1,6 @@
 import React from 'react';
 import { Text } from 'ink';
+import { getSourceInfo } from '../../schema/index';
 
 export interface SourceBadgeProps {
   source: string;
@@ -10,39 +11,11 @@ export interface SourceBadgeProps {
  * Shows full source name with source-specific color.
  */
 export function SourceBadge({ source }: SourceBadgeProps) {
-  const { name, color } = getSourceInfo(source);
+  const info = getSourceInfo(source);
 
   return (
-    <Text color={color}>{name}</Text>
+    <Text color={info.color}>{info.name}</Text>
   );
-}
-
-/**
- * Get source display name and color.
- * Colors are consistent throughout the app:
- * - Cursor: cyan
- * - Claude Code: magenta
- * - Codex: yellow
- * - OpenCode: green
- */
-function getSourceInfo(source: string): { name: string; color: string } {
-  const normalized = source.toLowerCase();
-
-  if (normalized === 'cursor') {
-    return { name: 'Cursor', color: 'cyan' };
-  }
-  if (normalized === 'claude-code') {
-    return { name: 'Claude Code', color: 'magenta' };
-  }
-  if (normalized === 'codex') {
-    return { name: 'Codex', color: 'yellow' };
-  }
-  if (normalized === 'opencode') {
-    return { name: 'OpenCode', color: 'green' };
-  }
-
-  // Unknown source - capitalize first letter
-  return { name: source.charAt(0).toUpperCase() + source.slice(1), color: 'white' };
 }
 
 /**

@@ -4,6 +4,47 @@ import { z } from 'zod';
 export const SourceType = z.enum(['cursor', 'claude-code', 'codex', 'opencode']);
 export type SourceType = z.infer<typeof SourceType>;
 
+// Source type constants for type-safe usage
+export const Source = {
+  Cursor: 'cursor' as const,
+  ClaudeCode: 'claude-code' as const,
+  Codex: 'codex' as const,
+  OpenCode: 'opencode' as const,
+} as const;
+
+// All valid source values
+export const ALL_SOURCES: readonly SourceType[] = SourceType.options;
+
+// Source display information
+export interface SourceInfo {
+  id: SourceType;
+  name: string;
+  color: string;
+}
+
+export const SOURCE_INFO: Record<SourceType, SourceInfo> = {
+  [Source.Cursor]: { id: Source.Cursor, name: 'Cursor', color: 'cyan' },
+  [Source.ClaudeCode]: { id: Source.ClaudeCode, name: 'Claude Code', color: 'magenta' },
+  [Source.Codex]: { id: Source.Codex, name: 'Codex', color: 'yellow' },
+  [Source.OpenCode]: { id: Source.OpenCode, name: 'OpenCode', color: 'green' },
+};
+
+/**
+ * Get display info for a source
+ */
+export function getSourceInfo(source: string): SourceInfo {
+  const normalized = source.toLowerCase() as SourceType;
+  if (normalized in SOURCE_INFO) {
+    return SOURCE_INFO[normalized];
+  }
+  // Fallback for unknown sources
+  return {
+    id: normalized,
+    name: source.charAt(0).toUpperCase() + source.slice(1),
+    color: 'white',
+  };
+}
+
 // Reference back to original source for deep linking
 export const SourceRef = z.object({
   source: SourceType,

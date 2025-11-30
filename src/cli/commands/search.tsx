@@ -47,7 +47,7 @@ import {
   exportConversationsToClipboard,
   generatePreviewContent,
 } from '../../utils/export-actions';
-import type { SearchResponse, ConversationFile, MessageFile, Conversation } from '../../schema/index';
+import { type SearchResponse, type ConversationFile, type MessageFile, type Conversation, type SourceType } from '../../schema/index';
 
 interface SearchOptions {
   limit?: string;
@@ -898,7 +898,7 @@ async function plainSearch(query: string, limit: number, filePattern?: string): 
 
   for (const r of results) {
     console.log(`${r.conversation.title}`);
-    const sourceName = formatSourceName(r.conversation.source as 'cursor' | 'claude-code' | 'codex' | 'opencode');
+    const sourceName = formatSourceName(r.conversation.source);
     console.log(`   ${sourceName}`);
     if (r.conversation.workspacePath) {
       console.log(`   ${r.conversation.workspacePath}`);

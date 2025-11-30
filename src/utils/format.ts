@@ -2,6 +2,8 @@
  * Shared formatting utilities for consistent display across the CLI
  */
 
+import { getSourceInfo } from '../schema/index';
+
 /**
  * Format a date as a human-readable relative time string
  */
@@ -33,11 +35,7 @@ export function formatSourceName(source: string): string {
  * (e.g., "claude-code" -> "Claude Code", "codex" -> "Codex")
  */
 export function formatSourceLabel(source: string): string {
-  if (source === 'claude-code') return 'Claude Code';
-  if (source === 'codex') return 'Codex';
-  if (source === 'cursor') return 'Cursor';
-  if (source === 'opencode') return 'OpenCode';
-  return formatSourceName(source);
+  return getSourceInfo(source).name;
 }
 
 /**

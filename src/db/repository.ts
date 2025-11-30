@@ -7,17 +7,18 @@ import {
   getMessageFilesTable,
   getFileEditsTable,
 } from './index';
-import type {
-  Conversation,
-  Message,
-  ToolCall,
-  SyncState,
-  SourceRef,
-  MessageMatch,
-  ConversationResult,
-  SearchResponse,
-  ConversationFile,
-  MessageFile,
+import {
+  Source,
+  type Conversation,
+  type Message,
+  type ToolCall,
+  type SyncState,
+  type SourceRef,
+  type MessageMatch,
+  type ConversationResult,
+  type SearchResponse,
+  type ConversationFile,
+  type MessageFile,
   FileEdit,
 } from '../schema/index';
 import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
@@ -36,7 +37,7 @@ function safeJsonParse<T>(value: unknown, fallback: T): T {
 
 // Default SourceRef for missing/corrupt data
 const defaultSourceRef: SourceRef = {
-  source: 'cursor',
+  source: Source.Cursor,
   originalId: '',
   dbPath: '',
 };

@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text } from 'ink';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { adapters } from '../../adapters/index';
@@ -33,6 +33,22 @@ import {
   isEmbeddingInProgress,
 } from '../../embeddings/index';
 import { printRichSummary } from './stats';
+
+/**
+ * Kill any running embedding processes to prevent LanceDB commit conflicts.
+ * The embedding worker will be restarted after sync completes.
+ */
+function killEmbeddingProcesses(): void {
+  try {
+    // Find and kill any bun processes running embed.ts
+    // This is platform-specific but works on macOS/Linux
+    if (process.platform !== 'win32') {
+      execSync('pkill -f "bun.*embed\\.ts" 2>/dev/null || true', { stdio: 'ignore' });
+    }
+  } catch {
+    // Ignore errors - process may not exist
+  }
+}
 
 export interface SyncProgress {
   phase:
@@ -177,6 +193,10 @@ export async function runSync(
   };
 
   try {
+    // Kill any running embedding processes to prevent LanceDB commit conflicts
+    // They will be restarted after sync completes
+    killEmbeddingProcesses();
+
     // Connect to database
     await connect();
 

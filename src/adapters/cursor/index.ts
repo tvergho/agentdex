@@ -1,11 +1,11 @@
 import { createHash } from 'crypto';
 import { getGlobalDatabase } from './paths';
 import { extractConversations, type RawConversation } from './parser';
-import type { Conversation, Message, SourceRef, ToolCall, ConversationFile, MessageFile, FileEdit } from '../../schema/index';
+import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index';
 import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types';
 
 export class CursorAdapter implements SourceAdapter {
-  name = 'cursor' as const;
+  name = Source.Cursor;
 
   async detect(): Promise<boolean> {
     const globalDb = getGlobalDatabase();
@@ -18,7 +18,7 @@ export class CursorAdapter implements SourceAdapter {
 
     // Cursor stores all conversations in a single global database
     return [{
-      source: 'cursor' as const,
+      source: Source.Cursor,
       workspacePath: 'global',
       dbPath: globalDb.dbPath,
       mtime: globalDb.mtime,
@@ -37,7 +37,7 @@ export class CursorAdapter implements SourceAdapter {
       .slice(0, 32);
 
     const sourceRef: SourceRef = {
-      source: 'cursor',
+      source: Source.Cursor,
       workspacePath: undefined,
       originalId: raw.composerId,
       dbPath: location.dbPath,
@@ -66,7 +66,7 @@ export class CursorAdapter implements SourceAdapter {
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
-      source: 'cursor',
+      source: Source.Cursor,
       title: raw.name || 'Untitled',
       subtitle: undefined,
       workspacePath: raw.workspacePath,

@@ -2,6 +2,7 @@ import * as lancedb from '@lancedb/lancedb';
 import { getLanceDBPath } from '../utils/config';
 import type { Table } from '@lancedb/lancedb';
 import { EMBEDDING_DIMENSIONS } from '../embeddings/index';
+import { Source } from '../schema/index';
 
 let db: lancedb.Connection | null = null;
 
@@ -100,7 +101,7 @@ async function ensureTables(): Promise<void> {
     conversationsTable = await db.createTable('conversations', [
       {
         id: '_placeholder_',
-        source: 'cursor',
+        source: Source.Cursor,
         title: '',
         subtitle: '',
         workspace_path: '',
@@ -172,7 +173,7 @@ async function ensureTables(): Promise<void> {
   if (!existingTables.includes('sync_state')) {
     syncStateTable = await db.createTable('sync_state', [
       {
-        source: 'cursor',
+        source: Source.Cursor,
         workspace_path: '_placeholder_',
         db_path: '',
         last_synced_at: new Date().toISOString(),

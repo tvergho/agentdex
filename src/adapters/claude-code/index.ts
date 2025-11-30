@@ -1,11 +1,11 @@
 import { createHash } from 'crypto';
 import { detectClaudeCode, discoverProjects } from './paths.js';
 import { extractConversations, type RawConversation } from './parser.js';
-import type { Conversation, Message, SourceRef, ToolCall, ConversationFile, MessageFile, FileEdit } from '../../schema/index.js';
+import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types.js';
 
 export class ClaudeCodeAdapter implements SourceAdapter {
-  name = 'claude-code' as const;
+  name = Source.ClaudeCode;
 
   async detect(): Promise<boolean> {
     return detectClaudeCode();
@@ -15,7 +15,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     const projects = discoverProjects();
 
     return projects.map((project) => ({
-      source: 'claude-code' as const,
+      source: Source.ClaudeCode,
       workspacePath: project.workspacePath,
       dbPath: project.sessionsDir,
       mtime: project.mtime,
@@ -42,7 +42,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       .slice(0, 32);
 
     const sourceRef: SourceRef = {
-      source: 'claude-code',
+      source: Source.ClaudeCode,
       workspacePath: location.workspacePath,
       originalId: raw.sessionId,
       dbPath: location.dbPath,
@@ -71,7 +71,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
-      source: 'claude-code',
+      source: Source.ClaudeCode,
       title: raw.title,
       subtitle: raw.gitBranch ? `branch: ${raw.gitBranch}` : undefined,
       workspacePath: raw.workspacePath || raw.cwd,

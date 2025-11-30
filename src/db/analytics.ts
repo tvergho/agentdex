@@ -3,7 +3,7 @@
  */
 
 import { connect, getConversationsTable, getFilesTable, getFileEditsTable } from './index';
-import type { Conversation } from '../schema/index';
+import { Source, type Conversation } from '../schema/index';
 
 // --- Types ---
 
@@ -338,7 +338,7 @@ export async function getCacheStats(period: PeriodFilter): Promise<CacheStats> {
   // Only include Claude Code and Codex sources (which have cache data)
   const filtered = rows.filter(
     r => isInPeriod(r.created_at as string, period) &&
-         (r.source === 'claude-code' || r.source === 'codex')
+         (r.source === Source.ClaudeCode || r.source === Source.Codex)
   );
 
   let totalInput = 0;

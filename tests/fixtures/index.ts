@@ -2,13 +2,14 @@
  * Test fixture factories for creating consistent test data
  */
 
-import type {
-  Conversation,
-  Message,
-  ConversationFile,
-  ToolCall,
-  FileEdit,
-  SourceRef,
+import {
+  Source,
+  type Conversation,
+  type Message,
+  type ConversationFile,
+  type ToolCall,
+  type FileEdit,
+  type SourceRef,
 } from '../../src/schema/index';
 
 // Generate a random ID suffix
@@ -21,7 +22,7 @@ function randomId(): string {
  */
 export function createConversation(overrides?: Partial<Conversation>): Conversation {
   const id = `conv-${randomId()}`;
-  const source = overrides?.source ?? 'cursor';
+  const source = overrides?.source ?? Source.Cursor;
 
   return {
     id,

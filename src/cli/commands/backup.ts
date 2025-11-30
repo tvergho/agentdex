@@ -23,7 +23,7 @@ import {
   fileEditsRepo,
 } from '../../db/repository';
 import { isValidDate } from '../../utils/export';
-import type { ExportArchive, ExportedConversation } from '../../schema/index';
+import { ALL_SOURCES, type ExportArchive, type ExportedConversation } from '../../schema/index';
 
 interface BackupOptions {
   output?: string;
@@ -47,10 +47,9 @@ export async function backupCommand(options: BackupOptions): Promise<void> {
   }
 
   // Validate source option if provided
-  const validSources = ['cursor', 'claude-code', 'codex', 'opencode'];
-  if (options.source && !validSources.includes(options.source)) {
+  if (options.source && !ALL_SOURCES.includes(options.source as any)) {
     console.error(`Invalid --source: ${options.source}`);
-    console.error(`Valid sources: ${validSources.join(', ')}`);
+    console.error(`Valid sources: ${ALL_SOURCES.join(', ')}`);
     process.exit(1);
   }
 

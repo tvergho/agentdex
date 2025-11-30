@@ -1,11 +1,11 @@
 import { createHash } from 'crypto';
 import { detectCodex, discoverSessions } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
-import type { Conversation, Message, SourceRef, ToolCall, ConversationFile, MessageFile, FileEdit } from '../../schema/index.js';
+import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types.js';
 
 export class CodexAdapter implements SourceAdapter {
-  name = 'codex' as const;
+  name = Source.Codex;
 
   async detect(): Promise<boolean> {
     return detectCodex();
@@ -18,7 +18,7 @@ export class CodexAdapter implements SourceAdapter {
     // For Codex, each session file is a separate conversation, but we can group by workspace
     // For now, return each session as a separate location since we need to read the file to know the cwd
     return sessions.map((session) => ({
-      source: 'codex' as const,
+      source: Source.Codex,
       workspacePath: session.workspacePath || 'unknown', // Will be updated after extraction
       dbPath: session.filePath, // Use the JSONL file path as dbPath
       mtime: session.mtime,
@@ -47,7 +47,7 @@ export class CodexAdapter implements SourceAdapter {
     const projectName = raw.projectName || (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : undefined);
 
     const sourceRef: SourceRef = {
-      source: 'codex',
+      source: Source.Codex,
       workspacePath,
       originalId: raw.sessionId,
       dbPath: location.dbPath,
@@ -76,7 +76,7 @@ export class CodexAdapter implements SourceAdapter {
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
-      source: 'codex',
+      source: Source.Codex,
       title: raw.title,
       subtitle: raw.gitBranch ? `branch: ${raw.gitBranch}` : undefined,
       workspacePath,

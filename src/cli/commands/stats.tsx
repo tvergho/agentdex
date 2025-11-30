@@ -58,7 +58,7 @@ import { ActivityHeatmap, HourlyActivity, WeeklyActivity } from '../components/A
 import { ConversationView } from '../components/ConversationView';
 import { MessageDetailView } from '../components/MessageDetailView';
 import { formatSourceLabel, combineConsecutiveMessages, type CombinedMessage } from '../../utils/format';
-import type { Conversation, ConversationFile, MessageFile } from '../../schema/index';
+import { Source, type Conversation, type ConversationFile, type MessageFile } from '../../schema/index';
 
 interface StatsOptions {
   period?: string;
@@ -320,7 +320,7 @@ function TokensTab({
   const tokenTrend = daily.map(d => d.tokens);
 
   // Check if we have any Claude Code/Codex sources for cache stats
-  const hasCacheData = sources.some(s => s.source === 'claude-code' || s.source === 'codex');
+  const hasCacheData = sources.some(s => s.source === Source.ClaudeCode || s.source === Source.Codex);
 
   // Calculate widths for two-column layout
   const halfWidth = Math.floor((width - 4) / 2);

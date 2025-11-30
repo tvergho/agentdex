@@ -23,6 +23,7 @@ import {
   conversationToMarkdown,
   isValidDate,
 } from '../../utils/export';
+import { ALL_SOURCES } from '../../schema/index';
 
 
 interface ExportOptions {
@@ -48,10 +49,9 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
   }
 
   // Validate source option if provided
-  const validSources = ['cursor', 'claude-code', 'codex', 'opencode'];
-  if (options.source && !validSources.includes(options.source)) {
+  if (options.source && !ALL_SOURCES.includes(options.source as any)) {
     console.error(`Invalid --source: ${options.source}`);
-    console.error(`Valid sources: ${validSources.join(', ')}`);
+    console.error(`Valid sources: ${ALL_SOURCES.join(', ')}`);
     process.exit(1);
   }
 

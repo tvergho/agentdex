@@ -1,19 +1,20 @@
 import { createHash } from 'crypto';
 import { detectOpenCode, discoverProjects, discoverSessions } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
-import type {
-  Conversation,
-  Message,
-  SourceRef,
-  ToolCall,
-  ConversationFile,
-  MessageFile,
-  FileEdit,
+import {
+  Source,
+  type Conversation,
+  type Message,
+  type SourceRef,
+  type ToolCall,
+  type ConversationFile,
+  type MessageFile,
+  type FileEdit,
 } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types.js';
 
 export class OpenCodeAdapter implements SourceAdapter {
-  name = 'opencode' as const;
+  name = Source.OpenCode;
 
   async detect(): Promise<boolean> {
     return detectOpenCode();
@@ -25,7 +26,7 @@ export class OpenCodeAdapter implements SourceAdapter {
 
     for (const project of projects) {
       locations.push({
-        source: 'opencode' as const,
+        source: Source.OpenCode,
         workspacePath: project.workspacePath,
         dbPath: project.projectDir,
         mtime: project.mtime,
@@ -66,7 +67,7 @@ export class OpenCodeAdapter implements SourceAdapter {
       .slice(0, 32);
 
     const sourceRef: SourceRef = {
-      source: 'opencode',
+      source: Source.OpenCode,
       workspacePath: location.workspacePath,
       originalId: raw.sessionId,
       dbPath: location.dbPath,
@@ -95,7 +96,7 @@ export class OpenCodeAdapter implements SourceAdapter {
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
-      source: 'opencode',
+      source: Source.OpenCode,
       title: raw.title,
       subtitle: raw.mode ? `mode: ${raw.mode}` : undefined,
       workspacePath: raw.workspacePath || raw.directory,
