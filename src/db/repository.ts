@@ -612,6 +612,15 @@ export const messageFilesRepo = {
 // ============ File Edits Repository ============
 
 export const fileEditsRepo = {
+  async getExistingIds(conversationId: string): Promise<Set<string>> {
+    const table = await getFileEditsTable();
+    const allResults = await table.query().toArray();
+    const ids = allResults
+      .filter((row) => (row.conversationId as string) === conversationId)
+      .map((row) => row.id as string);
+    return new Set(ids);
+  },
+
   async bulkInsert(edits: FileEdit[]): Promise<void> {
     if (edits.length === 0) return;
 
@@ -629,6 +638,27 @@ export const fileEditsRepo = {
     }));
 
     await table.add(rows);
+  },
+
+  async bulkInsertNew(edits: FileEdit[], existingIds: Set<string>): Promise<number> {
+    const newEdits = edits.filter((e) => !existingIds.has(e.id));
+    if (newEdits.length === 0) return 0;
+
+    const table = await getFileEditsTable();
+    const rows = newEdits.map((e) => ({
+      id: e.id,
+      messageId: e.messageId,
+      conversationId: e.conversationId,
+      filePath: e.filePath,
+      editType: e.editType,
+      linesAdded: e.linesAdded,
+      linesRemoved: e.linesRemoved,
+      startLine: e.startLine ?? 0,
+      endLine: e.endLine ?? 0,
+    }));
+
+    await table.add(rows);
+    return newEdits.length;
   },
 
   async findByMessage(messageId: string): Promise<FileEdit[]> {

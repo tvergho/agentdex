@@ -314,13 +314,19 @@ async function runSync(
           progress.conversationsIndexed++;
 
           if (conversationExists) {
-            // Get existing message IDs to avoid duplicates
+            // Get existing IDs to avoid duplicates
             const existingMessageIds = await messageRepo.getExistingIds(normalized.conversation.id);
+            const existingEditIds = await fileEditsRepo.getExistingIds(normalized.conversation.id);
 
             // Only insert new messages
             if (normalized.messages.length > 0) {
               const newCount = await messageRepo.bulkInsertNew(normalized.messages, existingMessageIds);
               progress.messagesIndexed += newCount;
+            }
+
+            // Insert new file edits
+            if (normalized.fileEdits && normalized.fileEdits.length > 0) {
+              await fileEditsRepo.bulkInsertNew(normalized.fileEdits, existingEditIds);
             }
           } else {
             // New conversation: insert everything

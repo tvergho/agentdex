@@ -70,7 +70,7 @@ export class CursorAdapter implements SourceAdapter {
       title: raw.name || 'Untitled',
       subtitle: undefined,
       workspacePath: raw.workspacePath,
-      projectName: raw.projectName,
+      projectName: raw.projectName || (raw.workspacePath ? undefined : '(cursor)'),
       model: raw.model,
       mode: raw.mode,
       createdAt,
