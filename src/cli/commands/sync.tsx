@@ -296,12 +296,38 @@ export async function runSync(
     }
 
     // ========== PHASE 3: Bulk delete (force mode) ==========
+    // In force mode, delete all existing data for the affected sources/workspaces
+    // Also collect conversation IDs to delete messages, etc. even in non-force mode
+    // This prevents duplicates when syncing the same conversations again
+    const conversationIdsToDelete = new Set<string>();
+
     if (options.force) {
       for (const [source, workspacePaths] of deleteBySource) {
         for (const workspacePath of workspacePaths) {
           await conversationRepo.deleteBySource(source, workspacePath);
         }
       }
+      // In force mode, we delete by source - add all conversation IDs we're about to insert
+      for (const { normalized } of allConversations) {
+        conversationIdsToDelete.add(normalized.conversation.id);
+      }
+    } else {
+      // In non-force mode, just collect IDs of conversations we're going to update
+      for (const { normalized } of allConversations) {
+        conversationIdsToDelete.add(normalized.conversation.id);
+      }
+    }
+
+    // Delete existing messages/toolcalls/files for conversations we're about to update
+    // This prevents duplicate rows since LanceDB doesn't enforce unique constraints
+    for (const convId of conversationIdsToDelete) {
+      await Promise.all([
+        messageRepo.deleteByConversation(convId),
+        toolCallRepo.deleteByConversation(convId),
+        filesRepo.deleteByConversation(convId),
+        messageFilesRepo.deleteByConversation(convId),
+        fileEditsRepo.deleteByConversation(convId),
+      ]);
     }
 
     // ========== PHASE 4: Bulk insert all data ==========

@@ -135,7 +135,7 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   let messages = 0;
   let totalInputTokens = 0;
@@ -144,13 +144,13 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
   let totalLinesRemoved = 0;
 
   for (const conv of filtered) {
-    messages += conv.messageCount || 0;
+    messages += (conv.message_count as number) || 0;
     // Include cache tokens in input for consistency with other stats functions
-    totalInputTokens += (conv.totalInputTokens || 0) +
-      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0);
-    totalOutputTokens += conv.totalOutputTokens || 0;
-    totalLinesAdded += conv.totalLinesAdded || 0;
-    totalLinesRemoved += conv.totalLinesRemoved || 0;
+    totalInputTokens += ((conv.total_input_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    totalOutputTokens += (conv.total_output_tokens as number) || 0;
+    totalLinesAdded += (conv.total_lines_added as number) || 0;
+    totalLinesRemoved += (conv.total_lines_removed as number) || 0;
   }
 
   return {
@@ -168,13 +168,14 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Group by date
   const byDate = new Map<string, DayActivity>();
 
   for (const conv of filtered) {
-    const date = conv.createdAt?.split('T')[0];
+    const createdAt = conv.created_at as string;
+    const date = createdAt?.split('T')[0];
     if (!date) continue;
 
     const existing = byDate.get(date) || {
@@ -187,12 +188,12 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
     };
 
     existing.conversations += 1;
-    existing.messages += conv.messageCount || 0;
+    existing.messages += (conv.message_count as number) || 0;
     // Include cache tokens for total context processed
-    existing.tokens += (conv.totalInputTokens || 0) + (conv.totalOutputTokens || 0) +
-      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0);
-    existing.linesAdded += conv.totalLinesAdded || 0;
-    existing.linesRemoved += conv.totalLinesRemoved || 0;
+    existing.tokens += ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    existing.linesAdded += (conv.total_lines_added as number) || 0;
+    existing.linesRemoved += (conv.total_lines_removed as number) || 0;
 
     byDate.set(date, existing);
   }
@@ -206,12 +207,12 @@ export async function getStatsBySource(period: PeriodFilter): Promise<SourceStat
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   const bySource = new Map<string, SourceStats>();
 
   for (const conv of filtered) {
-    const source = conv.source || 'unknown';
+    const source = (conv.source as string) || 'unknown';
     const existing = bySource.get(source) || {
       source,
       conversations: 0,
@@ -220,10 +221,10 @@ export async function getStatsBySource(period: PeriodFilter): Promise<SourceStat
     };
 
     existing.conversations += 1;
-    existing.messages += conv.messageCount || 0;
+    existing.messages += (conv.message_count as number) || 0;
     // Include cache tokens for total context processed
-    existing.tokens += (conv.totalInputTokens || 0) + (conv.totalOutputTokens || 0) +
-      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0);
+    existing.tokens += ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
 
     bySource.set(source, existing);
   }
@@ -237,14 +238,14 @@ export async function getStatsByModel(period: PeriodFilter): Promise<ModelStats[
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Group by model+source combination
   const byModelSource = new Map<string, ModelStats>();
 
   for (const conv of filtered) {
-    const model = conv.model || '(unknown)';
-    const source = conv.source || 'unknown';
+    const model = (conv.model as string) || '(unknown)';
+    const source = (conv.source as string) || 'unknown';
     const key = `${model}::${source}`;
     const existing = byModelSource.get(key) || {
       model,
@@ -256,9 +257,9 @@ export async function getStatsByModel(period: PeriodFilter): Promise<ModelStats[
 
     existing.conversations += 1;
     // Include cache tokens in input for total context processed
-    existing.inputTokens += (conv.totalInputTokens || 0) +
-      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0);
-    existing.outputTokens += conv.totalOutputTokens || 0;
+    existing.inputTokens += ((conv.total_input_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    existing.outputTokens += (conv.total_output_tokens as number) || 0;
 
     byModelSource.set(key, existing);
   }
@@ -277,14 +278,14 @@ export async function getTopConversationsByTokens(
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Sort by total tokens descending (including cache tokens)
   filtered.sort((a, b) => {
-    const aTokens = (a.totalInputTokens || 0) + (a.totalOutputTokens || 0) +
-      (a.totalCacheCreationTokens || 0) + (a.totalCacheReadTokens || 0);
-    const bTokens = (b.totalInputTokens || 0) + (b.totalOutputTokens || 0) +
-      (b.totalCacheCreationTokens || 0) + (b.totalCacheReadTokens || 0);
+    const aTokens = ((a.total_input_tokens as number) || 0) + ((a.total_output_tokens as number) || 0) +
+      ((a.total_cache_creation_tokens as number) || 0) + ((a.total_cache_read_tokens as number) || 0);
+    const bTokens = ((b.total_input_tokens as number) || 0) + ((b.total_output_tokens as number) || 0) +
+      ((b.total_cache_creation_tokens as number) || 0) + ((b.total_cache_read_tokens as number) || 0);
     return bTokens - aTokens;
   });
 
@@ -299,26 +300,26 @@ export async function getLinesGeneratedStats(
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   let totalLinesAdded = 0;
   let totalLinesRemoved = 0;
 
   for (const conv of filtered) {
-    totalLinesAdded += conv.totalLinesAdded || 0;
-    totalLinesRemoved += conv.totalLinesRemoved || 0;
+    totalLinesAdded += (conv.total_lines_added as number) || 0;
+    totalLinesRemoved += (conv.total_lines_removed as number) || 0;
   }
 
   // Sort by lines added descending
   const sorted = [...filtered].sort(
-    (a, b) => (b.totalLinesAdded || 0) - (a.totalLinesAdded || 0)
+    (a, b) => ((b.total_lines_added as number) || 0) - ((a.total_lines_added as number) || 0)
   );
 
   const topConversationsByLines = sorted.slice(0, limit).map(conv => ({
-    id: conv.id,
-    title: conv.title || '(untitled)',
-    linesAdded: conv.totalLinesAdded || 0,
-    linesRemoved: conv.totalLinesRemoved || 0,
+    id: conv.id as string,
+    title: (conv.title as string) || '(untitled)',
+    linesAdded: (conv.total_lines_added as number) || 0,
+    linesRemoved: (conv.total_lines_removed as number) || 0,
   }));
 
   return {
@@ -336,7 +337,7 @@ export async function getCacheStats(period: PeriodFilter): Promise<CacheStats> {
 
   // Only include Claude Code and Codex sources (which have cache data)
   const filtered = rows.filter(
-    r => isInPeriod(r.createdAt, period) &&
+    r => isInPeriod(r.created_at as string, period) &&
          (r.source === 'claude-code' || r.source === 'codex')
   );
 
@@ -346,10 +347,10 @@ export async function getCacheStats(period: PeriodFilter): Promise<CacheStats> {
   let cacheRead = 0;
 
   for (const conv of filtered) {
-    totalInput += conv.totalInputTokens || 0;
-    totalOutput += conv.totalOutputTokens || 0;
-    cacheCreation += conv.totalCacheCreationTokens || 0;
-    cacheRead += conv.totalCacheReadTokens || 0;
+    totalInput += (conv.total_input_tokens as number) || 0;
+    totalOutput += (conv.total_output_tokens as number) || 0;
+    cacheCreation += (conv.total_cache_creation_tokens as number) || 0;
+    cacheRead += (conv.total_cache_read_tokens as number) || 0;
   }
 
   // Hit rate = cache_read / (cache_read + cache_creation + regular_input)
@@ -370,14 +371,15 @@ export async function getActivityByHour(period: PeriodFilter): Promise<number[]>
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Initialize 24-hour array
   const byHour = new Array(24).fill(0);
 
   for (const conv of filtered) {
-    if (!conv.createdAt) continue;
-    const hour = new Date(conv.createdAt).getHours();
+    const createdAt = conv.created_at as string;
+    if (!createdAt) continue;
+    const hour = new Date(createdAt).getHours();
     byHour[hour] += 1;
   }
 
@@ -389,14 +391,15 @@ export async function getActivityByDayOfWeek(period: PeriodFilter): Promise<numb
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Initialize 7-day array (0 = Sunday, 6 = Saturday)
   const byDay = new Array(7).fill(0);
 
   for (const conv of filtered) {
-    if (!conv.createdAt) continue;
-    const day = new Date(conv.createdAt).getDay();
+    const createdAt = conv.created_at as string;
+    if (!createdAt) continue;
+    const day = new Date(createdAt).getDay();
     byDay[day] += 1;
   }
 
@@ -411,8 +414,9 @@ export async function getStreakInfo(): Promise<StreakInfo> {
   // Get all unique dates with activity
   const datesSet = new Set<string>();
   for (const conv of rows) {
-    if (conv.createdAt) {
-      datesSet.add(conv.createdAt.split('T')[0]!);
+    const createdAt = conv.created_at as string;
+    if (createdAt) {
+      datesSet.add(createdAt.split('T')[0]!);
     }
   }
 
@@ -502,31 +506,31 @@ const UNHELPFUL_PROJECT_NAMES = ['(cursor)', '(no project)', '(codex)', '(claude
 
 /**
  * Determine the best project name for a conversation.
- * Tries: projectName -> workspacePath -> file edits -> fallback
+ * Tries: project_name -> workspace_path -> file edits -> fallback
  */
 function resolveProjectName(
-  conv: { projectName?: string; workspacePath?: string; id: string },
-  editsByConvId: Map<string, Array<{ filePath: string }>>
+  conv: { project_name?: string; workspace_path?: string; id: string },
+  editsByConvId: Map<string, Array<{ file_path: string }>>
 ): string {
   // If conversation has a useful project name, use it
-  if (conv.projectName && !UNHELPFUL_PROJECT_NAMES.includes(conv.projectName)) {
-    return conv.projectName;
+  if (conv.project_name && !UNHELPFUL_PROJECT_NAMES.includes(conv.project_name)) {
+    return conv.project_name;
   }
 
   // Try extracting from workspace path
-  if (conv.workspacePath) {
-    const extracted = extractProjectName(conv.workspacePath);
+  if (conv.workspace_path) {
+    const extracted = extractProjectName(conv.workspace_path);
     if (!UNHELPFUL_PROJECT_NAMES.includes(extracted)) {
       return extracted;
     }
   }
 
   // Try to infer from file edits
-  const edits = editsByConvId.get(conv.id);
+  const edits = editsByConvId.get(conv.id as string);
   if (edits && edits.length > 0) {
     // Try to extract project from the first file path
     for (const edit of edits) {
-      const extracted = extractProjectFromPath(edit.filePath);
+      const extracted = extractProjectFromPath(edit.file_path);
       if (extracted) {
         return extracted.projectName;
       }
@@ -534,7 +538,7 @@ function resolveProjectName(
   }
 
   // Fallback to unhelpful name or generic
-  return conv.projectName || '(no project)';
+  return conv.project_name || '(no project)';
 }
 
 export async function getProjectStats(period: PeriodFilter): Promise<ProjectStats[]> {
@@ -547,23 +551,23 @@ export async function getProjectStats(period: PeriodFilter): Promise<ProjectStat
   const allEdits = await editsTable.query().toArray();
 
   // Group edits by conversation ID
-  const editsByConvId = new Map<string, Array<{ filePath: string }>>();
+  const editsByConvId = new Map<string, Array<{ file_path: string }>>();
   for (const edit of allEdits) {
-    const existing = editsByConvId.get(edit.conversationId) || [];
-    existing.push({ filePath: edit.filePath });
-    editsByConvId.set(edit.conversationId, existing);
+    const existing = editsByConvId.get(edit.conversation_id as string) || [];
+    existing.push({ file_path: edit.file_path as string });
+    editsByConvId.set(edit.conversation_id as string, existing);
   }
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
-  // Group by project name (use projectName if available, otherwise extract from workspacePath or file edits)
+  // Group by project name (use project_name if available, otherwise extract from workspace_path or file edits)
   const byProject = new Map<string, ProjectStats>();
 
   for (const conv of filtered) {
-    const projectName = resolveProjectName(conv, editsByConvId);
+    const projectName = resolveProjectName(conv as any, editsByConvId);
     const existing = byProject.get(projectName) || {
       projectName,
-      workspacePath: conv.workspacePath || '',
+      workspacePath: (conv.workspace_path as string) || '',
       conversations: 0,
       messages: 0,
       inputTokens: 0,
@@ -574,17 +578,18 @@ export async function getProjectStats(period: PeriodFilter): Promise<ProjectStat
     };
 
     existing.conversations += 1;
-    existing.messages += conv.messageCount || 0;
-    existing.inputTokens += (conv.totalInputTokens || 0) +
-      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0);
-    existing.outputTokens += conv.totalOutputTokens || 0;
-    existing.linesAdded += conv.totalLinesAdded || 0;
-    existing.linesRemoved += conv.totalLinesRemoved || 0;
+    existing.messages += (conv.message_count as number) || 0;
+    existing.inputTokens += ((conv.total_input_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    existing.outputTokens += (conv.total_output_tokens as number) || 0;
+    existing.linesAdded += (conv.total_lines_added as number) || 0;
+    existing.linesRemoved += (conv.total_lines_removed as number) || 0;
 
     // Track most recent activity
-    if (conv.createdAt && (!existing.lastActivity || conv.createdAt > existing.lastActivity)) {
-      existing.lastActivity = conv.createdAt;
-      existing.workspacePath = conv.workspacePath || existing.workspacePath;
+    const createdAt = conv.created_at as string;
+    if (createdAt && (!existing.lastActivity || createdAt > existing.lastActivity)) {
+      existing.lastActivity = createdAt;
+      existing.workspacePath = (conv.workspace_path as string) || existing.workspacePath;
     }
 
     byProject.set(projectName, existing);
@@ -609,23 +614,23 @@ export async function getConversationsByProject(
   const allEdits = await editsTable.query().toArray();
 
   // Group edits by conversation ID
-  const editsByConvId = new Map<string, Array<{ filePath: string }>>();
+  const editsByConvId = new Map<string, Array<{ file_path: string }>>();
   for (const edit of allEdits) {
-    const existing = editsByConvId.get(edit.conversationId) || [];
-    existing.push({ filePath: edit.filePath });
-    editsByConvId.set(edit.conversationId, existing);
+    const existing = editsByConvId.get(edit.conversation_id as string) || [];
+    existing.push({ file_path: edit.file_path as string });
+    editsByConvId.set(edit.conversation_id as string, existing);
   }
 
   const filtered = rows.filter(r => {
-    if (!isInPeriod(r.createdAt, period)) return false;
-    const convProjectName = resolveProjectName(r, editsByConvId);
+    if (!isInPeriod(r.created_at as string, period)) return false;
+    const convProjectName = resolveProjectName(r as any, editsByConvId);
     return convProjectName === projectName;
   });
 
-  // Sort by createdAt descending
+  // Sort by created_at descending
   filtered.sort((a, b) => {
-    const aDate = a.createdAt || '';
-    const bDate = b.createdAt || '';
+    const aDate = (a.created_at as string) || '';
+    const bDate = (b.created_at as string) || '';
     return bDate.localeCompare(aDate);
   });
 
@@ -792,15 +797,16 @@ export async function getCombinedFileStats(
 
   // Get conversations in period to filter files
   const convRows = await conversationsTable.query().toArray();
-  const convsInPeriod = convRows.filter(r => isInPeriod(r.createdAt, period));
-  const convInPeriodSet = new Set(convsInPeriod.map(r => r.id));
+  const convsInPeriod = convRows.filter(r => isInPeriod(r.created_at as string, period));
+  const convInPeriodSet = new Set(convsInPeriod.map(r => r.id as string));
 
   // Build workspace -> project mapping from conversations
   const workspaceMap = new Map<string, string>();
   for (const conv of convsInPeriod) {
-    if (conv.workspacePath) {
-      const projectName = conv.projectName || extractProjectName(conv.workspacePath);
-      workspaceMap.set(conv.workspacePath, projectName);
+    const workspacePath = conv.workspace_path as string;
+    if (workspacePath) {
+      const projectName = (conv.project_name as string) || extractProjectName(workspacePath);
+      workspaceMap.set(workspacePath, projectName);
     }
   }
 
@@ -809,9 +815,11 @@ export async function getCombinedFileStats(
   const editsByFile = new Map<string, { editCount: number; linesAdded: number; linesRemoved: number; conversations: Set<string> }>();
 
   for (const edit of editsRows) {
-    if (!convInPeriodSet.has(edit.conversationId)) continue;
+    const conversationId = edit.conversation_id as string;
+    if (!convInPeriodSet.has(conversationId)) continue;
 
-    const existing = editsByFile.get(edit.filePath) || {
+    const filePath = edit.file_path as string;
+    const existing = editsByFile.get(filePath) || {
       editCount: 0,
       linesAdded: 0,
       linesRemoved: 0,
@@ -819,11 +827,11 @@ export async function getCombinedFileStats(
     };
 
     existing.editCount += 1;
-    existing.linesAdded += edit.linesAdded || 0;
-    existing.linesRemoved += edit.linesRemoved || 0;
-    existing.conversations.add(edit.conversationId);
+    existing.linesAdded += (edit.lines_added as number) || 0;
+    existing.linesRemoved += (edit.lines_removed as number) || 0;
+    existing.conversations.add(conversationId);
 
-    editsByFile.set(edit.filePath, existing);
+    editsByFile.set(filePath, existing);
   }
 
   // Aggregate file mentions (from conversation_files)
@@ -831,17 +839,19 @@ export async function getCombinedFileStats(
   const mentionsByFile = new Map<string, { mentionCount: number; conversations: Set<string> }>();
 
   for (const file of filesRows) {
-    if (!convInPeriodSet.has(file.conversationId)) continue;
+    const conversationId = file.conversation_id as string;
+    if (!convInPeriodSet.has(conversationId)) continue;
 
-    const existing = mentionsByFile.get(file.filePath) || {
+    const filePath = file.file_path as string;
+    const existing = mentionsByFile.get(filePath) || {
       mentionCount: 0,
       conversations: new Set<string>(),
     };
 
     existing.mentionCount += 1;
-    existing.conversations.add(file.conversationId);
+    existing.conversations.add(conversationId);
 
-    mentionsByFile.set(file.filePath, existing);
+    mentionsByFile.set(filePath, existing);
   }
 
   // Combine into FileStats
@@ -888,8 +898,8 @@ export async function getEditTypeBreakdown(period: PeriodFilter): Promise<EditTy
   const convRows = await conversationsTable.query().toArray();
   const convInPeriod = new Set(
     convRows
-      .filter(r => isInPeriod(r.createdAt, period))
-      .map(r => r.id)
+      .filter(r => isInPeriod(r.created_at as string, period))
+      .map(r => r.id as string)
   );
 
   const editsRows = await fileEditsTable.query().toArray();
@@ -899,11 +909,12 @@ export async function getEditTypeBreakdown(period: PeriodFilter): Promise<EditTy
   let deleteCount = 0;
 
   for (const edit of editsRows) {
-    if (!convInPeriod.has(edit.conversationId)) continue;
+    if (!convInPeriod.has(edit.conversation_id as string)) continue;
 
-    if (edit.editType === 'create') create++;
-    else if (edit.editType === 'modify') modify++;
-    else if (edit.editType === 'delete') deleteCount++;
+    const editType = edit.edit_type as string;
+    if (editType === 'create') create++;
+    else if (editType === 'modify') modify++;
+    else if (editType === 'delete') deleteCount++;
   }
 
   return { create, modify, delete: deleteCount };
@@ -923,18 +934,19 @@ export async function getFileTypeStats(
   const convRows = await conversationsTable.query().toArray();
   const convInPeriod = new Set(
     convRows
-      .filter(r => isInPeriod(r.createdAt, period))
-      .map(r => r.id)
+      .filter(r => isInPeriod(r.created_at as string, period))
+      .map(r => r.id as string)
   );
 
   const editsRows = await fileEditsTable.query().toArray();
   const byExtension = new Map<string, FileTypeStats>();
 
   for (const edit of editsRows) {
-    if (!convInPeriod.has(edit.conversationId)) continue;
+    if (!convInPeriod.has(edit.conversation_id as string)) continue;
 
     // Extract file extension
-    const parts = edit.filePath.split('.');
+    const filePath = edit.file_path as string;
+    const parts = filePath.split('.');
     let extension = parts.length > 1 ? `.${parts[parts.length - 1]}` : '(no ext)';
 
     // Group .ts and .tsx together
@@ -949,7 +961,7 @@ export async function getFileTypeStats(
     };
 
     existing.editCount += 1;
-    existing.linesAdded += edit.linesAdded || 0;
+    existing.linesAdded += (edit.lines_added as number) || 0;
 
     byExtension.set(extension, existing);
   }
@@ -1006,21 +1018,21 @@ export async function getRecentConversations(
   const table = await getConversationsTable();
   const rows = await table.query().toArray();
 
-  const filtered = rows.filter(r => isInPeriod(r.createdAt, period));
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
-  // Sort by createdAt descending (most recent first)
+  // Sort by created_at descending (most recent first)
   filtered.sort((a, b) => {
-    const aDate = a.createdAt || '';
-    const bDate = b.createdAt || '';
+    const aDate = (a.created_at as string) || '';
+    const bDate = (b.created_at as string) || '';
     return bDate.localeCompare(aDate);
   });
 
   return filtered.slice(0, limit).map(conv => ({
-    id: conv.id,
-    title: conv.title || '(untitled)',
-    source: conv.source || 'unknown',
-    createdAt: conv.createdAt || '',
-    totalTokens: (conv.totalInputTokens || 0) + (conv.totalOutputTokens || 0) +
-      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0),
+    id: conv.id as string,
+    title: (conv.title as string) || '(untitled)',
+    source: (conv.source as string) || 'unknown',
+    createdAt: (conv.created_at as string) || '',
+    totalTokens: ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0),
   }));
 }

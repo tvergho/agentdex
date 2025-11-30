@@ -45,7 +45,8 @@ tests/
 │   │   ├── export.test.ts
 │   │   └── format.test.ts
 │   ├── db/
-│   │   └── repository.test.ts
+│   │   ├── repository.test.ts
+│   │   └── analytics.test.ts
 │   └── adapters/
 │       ├── claude-code.test.ts
 │       ├── codex.test.ts
