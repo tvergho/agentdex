@@ -6,6 +6,7 @@ import {
   getFilesTable,
   getMessageFilesTable,
   getFileEditsTable,
+  withRetry,
 } from './index';
 import {
   Source,
@@ -306,17 +307,21 @@ export const conversationRepo = {
   },
 
   async delete(id: string): Promise<void> {
-    const table = await getConversationsTable();
-    await table.delete(`id = '${id}'`);
+    await withRetry(async () => {
+      const table = await getConversationsTable();
+      await table.delete(`id = '${id}'`);
+    });
   },
 
   async deleteBySource(source: string, workspacePath?: string): Promise<void> {
-    const table = await getConversationsTable();
-    if (workspacePath) {
-      await table.delete(`source = '${source}' AND workspace_path = '${workspacePath}'`);
-    } else {
-      await table.delete(`source = '${source}'`);
-    }
+    await withRetry(async () => {
+      const table = await getConversationsTable();
+      if (workspacePath) {
+        await table.delete(`source = '${source}' AND workspace_path = '${workspacePath}'`);
+      } else {
+        await table.delete(`source = '${source}'`);
+      }
+    });
   },
 
   async findByFilters(opts: {
@@ -479,8 +484,10 @@ export const messageRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    const table = await getMessagesTable();
-    await table.delete(`conversation_id = '${conversationId}'`);
+    await withRetry(async () => {
+      const table = await getMessagesTable();
+      await table.delete(`conversation_id = '${conversationId}'`);
+    });
   },
 
   async search(query: string, limit = 50): Promise<MessageMatch[]> {
@@ -650,8 +657,10 @@ export const toolCallRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    const table = await getToolCallsTable();
-    await table.delete(`conversation_id = '${conversationId}'`);
+    await withRetry(async () => {
+      const table = await getToolCallsTable();
+      await table.delete(`conversation_id = '${conversationId}'`);
+    });
   },
 };
 
@@ -679,20 +688,23 @@ export const syncStateRepo = {
   },
 
   async set(state: SyncState): Promise<void> {
-    const table = await getSyncStateTable();
+    // Use retry logic to handle commit conflicts from concurrent operations
+    await withRetry(async () => {
+      const table = await getSyncStateTable();
 
-    // Delete existing if any
-    await table.delete(`source = '${state.source}' AND db_path = '${state.dbPath}'`);
+      // Delete existing if any
+      await table.delete(`source = '${state.source}' AND db_path = '${state.dbPath}'`);
 
-    await table.add([
-      {
-        source: state.source,
-        workspace_path: state.workspacePath,
-        db_path: state.dbPath,
-        last_synced_at: state.lastSyncedAt,
-        last_mtime: state.lastMtime,
-      },
-    ]);
+      await table.add([
+        {
+          source: state.source,
+          workspace_path: state.workspacePath,
+          db_path: state.dbPath,
+          last_synced_at: state.lastSyncedAt,
+          last_mtime: state.lastMtime,
+        },
+      ]);
+    });
   },
 };
 
@@ -729,8 +741,10 @@ export const filesRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    const table = await getFilesTable();
-    await table.delete(`conversation_id = '${conversationId}'`);
+    await withRetry(async () => {
+      const table = await getFilesTable();
+      await table.delete(`conversation_id = '${conversationId}'`);
+    });
   },
 };
 
@@ -785,8 +799,10 @@ export const messageFilesRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    const table = await getMessageFilesTable();
-    await table.delete(`conversation_id = '${conversationId}'`);
+    await withRetry(async () => {
+      const table = await getMessageFilesTable();
+      await table.delete(`conversation_id = '${conversationId}'`);
+    });
   },
 };
 
@@ -884,8 +900,10 @@ export const fileEditsRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    const table = await getFileEditsTable();
-    await table.delete(`conversation_id = '${conversationId}'`);
+    await withRetry(async () => {
+      const table = await getFileEditsTable();
+      await table.delete(`conversation_id = '${conversationId}'`);
+    });
   },
 };
 

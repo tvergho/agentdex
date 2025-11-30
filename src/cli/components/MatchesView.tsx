@@ -120,9 +120,9 @@ export function MatchesView({
                   <Text color="gray" wrap="truncate"> ({filesDisplay})</Text>
                 )}
               </Box>
-              <Box marginLeft={12}>
+              <Box marginLeft={3}>
                 <HighlightedText
-                  text={match.content.replace(/\n/g, ' ').slice(0, width - 14)}
+                  text={match.content.replace(/\n/g, ' ').slice(0, width * 2)}
                   query={query}
                   dimColor={false}
                 />

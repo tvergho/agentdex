@@ -1579,11 +1579,11 @@ function StatsApp({ period }: { period: number }) {
       const canExport = focusSection === 'recent' || focusSection === 'top';
       return (
         <Text>
-          {canExport && <><Text color="white">e</Text><Text dimColor>: export · </Text></>}
-          <Text color="white">j/k</Text><Text dimColor>: select · </Text>
-          <Text color="white">Enter</Text><Text dimColor>: view · </Text>
-          <Text color="white">esc</Text><Text dimColor>: back · </Text>
-          <Text color="white">q</Text><Text dimColor>: quit</Text>
+          {canExport && <><Text bold color="white">e</Text><Text color="gray"> export · </Text></>}
+          <Text bold color="white">j/k</Text><Text color="gray"> nav · </Text>
+          <Text bold color="white">Enter</Text><Text color="gray"> select · </Text>
+          <Text bold color="white">Esc</Text><Text color="gray"> home · </Text>
+          <Text bold color="white">q</Text><Text color="gray"> quit</Text>
         </Text>
       );
     }
@@ -1593,10 +1593,10 @@ function StatsApp({ period }: { period: number }) {
                            (activeTab === 'files' && data.fileStats.length > 0);
     return (
       <Text>
-        <Text color="white">1-5</Text><Text dimColor>: tabs · </Text>
-        <Text color="white">h/l</Text><Text dimColor>: navigate · </Text>
-        {hasInteraction && <><Text color="white">Enter/j</Text><Text dimColor>: browse · </Text></>}
-        <Text color="white">q</Text><Text dimColor>: quit</Text>
+        <Text bold color="white">j/k</Text><Text color="gray"> nav · </Text>
+        {hasInteraction && <><Text bold color="white">Enter</Text><Text color="gray"> select · </Text></>}
+        <Text bold color="white">Esc</Text><Text color="gray"> home · </Text>
+        <Text bold color="white">q</Text><Text color="gray"> quit</Text>
       </Text>
     );
   };

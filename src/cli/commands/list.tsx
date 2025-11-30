@@ -14,7 +14,7 @@ import { connect } from '../../db/index';
 import { conversationRepo } from '../../db/repository';
 import {
   formatRelativeTime,
-  formatSourceName,
+  formatSourceLabel,
   formatSourceInfo,
   truncatePath,
   formatMessageCount,
@@ -58,7 +58,7 @@ function ConversationRow({
 
   const timeStr = formatRelativeTime(conversation.updatedAt);
   const msgStr = `${conversation.messageCount} msg${conversation.messageCount !== 1 ? 's' : ''}`;
-  const sourceName = formatSourceName(conversation.source);
+  const sourceName = formatSourceLabel(conversation.source);
   const tokenStr = formatTokenPair(
     conversation.totalInputTokens,
     conversation.totalOutputTokens,

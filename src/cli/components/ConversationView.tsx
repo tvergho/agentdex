@@ -132,7 +132,7 @@ export function ConversationView({
             : null;
 
           // Truncate messages to ~1 line for readable view
-          const maxLen = width - 14;
+          const maxLen = width - 5;
           const truncatedContent = msg.content.replace(/\n/g, ' ').slice(0, maxLen);
           const isTruncated = msg.content.length > maxLen;
           const totalLines = msg.content.split('\n').length;
@@ -169,7 +169,7 @@ export function ConversationView({
                   <Text color="yellow"> matched</Text>
                 )}
               </Box>
-              <Box marginLeft={12}>
+              <Box marginLeft={3}>
                 <Text bold={isSelected || isHighlighted} wrap="truncate">
                   {truncatedContent}
                   {isTruncated && <Text color="gray"> ({totalLines} lines)</Text>}

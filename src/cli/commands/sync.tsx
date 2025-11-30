@@ -17,6 +17,8 @@ import type { SourceLocation, NormalizedConversation } from '../../adapters/type
 import {
   connect,
   rebuildFtsIndex,
+  acquireSyncLock,
+  releaseSyncLock,
 } from '../../db/index';
 import {
   conversationRepo,
@@ -77,6 +79,37 @@ export interface SyncProgress {
   messagesIndexed: number;
   error?: string;
   embeddingStarted?: boolean;
+}
+
+/**
+ * Quick check if any source has new data to sync.
+ * This is much faster than running full sync because it only checks mtimes.
+ * Returns true if sync is needed, false if everything is up to date.
+ */
+export async function needsSync(): Promise<boolean> {
+  try {
+    await connect();
+
+    for (const adapter of adapters) {
+      const available = await adapter.detect();
+      if (!available) continue;
+
+      const locations = await adapter.discover();
+
+      for (const location of locations) {
+        const syncState = await syncStateRepo.get(adapter.name, location.dbPath);
+        // If no sync state exists, or mtime has changed, sync is needed
+        if (!syncState || syncState.lastMtime < location.mtime) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  } catch {
+    // On error, assume sync is needed
+    return true;
+  }
 }
 
 interface SyncOptions {
@@ -200,6 +233,14 @@ export async function runSync(
     conversationsIndexed: 0,
     messagesIndexed: 0,
   };
+
+  // Try to acquire sync lock to prevent concurrent operations
+  if (!acquireSyncLock()) {
+    progress.phase = 'error';
+    progress.error = 'Another sync is already running. Please wait for it to complete.';
+    onProgress({ ...progress });
+    return;
+  }
 
   try {
     // Kill any running embedding processes to prevent conflicts during sync
@@ -428,6 +469,9 @@ export async function runSync(
     progress.error = error instanceof Error ? error.message : String(error);
     onProgress({ ...progress });
     throw error;
+  } finally {
+    // Always release the lock when sync completes or fails
+    releaseSyncLock();
   }
 }
 

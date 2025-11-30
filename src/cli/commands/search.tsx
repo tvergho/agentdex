@@ -34,7 +34,7 @@ import {
 } from '../components/index';
 import {
   formatRelativeTime,
-  formatSourceName,
+  formatSourceLabel,
   formatConversationCount,
   formatMessageCount,
   combineConsecutiveMessages,
@@ -859,7 +859,7 @@ async function plainSearch(query: string, limit: number, filePattern?: string): 
 
   for (const r of results) {
     console.log(`${r.conversation.title}`);
-    const sourceName = formatSourceName(r.conversation.source);
+    const sourceName = formatSourceLabel(r.conversation.source);
     console.log(`   ${sourceName}`);
     if (r.conversation.workspacePath) {
       console.log(`   ${r.conversation.workspacePath}`);

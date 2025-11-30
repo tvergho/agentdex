@@ -17,7 +17,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
 import { connect } from '../../db/index';
 import { conversationRepo, search, messageRepo, filesRepo, messageFilesRepo } from '../../db/repository';
-import { runSync, type SyncProgress } from './sync';
+import { runSync, needsSync, type SyncProgress } from './sync';
 import {
   ResultRow,
   MatchesView,
@@ -25,8 +25,11 @@ import {
   MessageDetailView,
   SelectionIndicator,
   SourceBadge,
+  ExportActionMenu,
+  StatusToast,
   type SyncStatus,
 } from '../components/index';
+import { useExport } from '../hooks/index';
 import {
   formatRelativeTime,
   truncatePath,
@@ -257,7 +260,17 @@ function UnifiedApp() {
         setConversationCount(count);
       }
 
-      // Run background sync
+      // Quick check if sync is needed (fast - just checks mtimes)
+      const syncNeeded = await needsSync();
+      if (cancelled) return;
+
+      if (!syncNeeded) {
+        // Nothing to sync - show "Synced" immediately
+        setSyncStatus({ phase: 'done', newConversations: 0 });
+        return;
+      }
+
+      // Run background sync only if needed
       setSyncStatus({ phase: 'syncing', message: 'Syncing...' });
       try {
         let initialCount = count;
@@ -453,7 +466,35 @@ function UnifiedApp() {
     setSelectedIndex(0);
   }, []);
 
+  // Get current conversation for export
+  const getCurrentConversation = useCallback((): Conversation[] => {
+    if (viewMode === 'conversation' || viewMode === 'message' || viewMode === 'matches') {
+      const conv = expandedResult?.conversation;
+      return conv ? [conv] : [];
+    }
+    if (viewMode === 'list' || viewMode === 'search') {
+      const conv = displayItems[selectedIndex]?.conversation;
+      return conv ? [conv] : [];
+    }
+    return [];
+  }, [viewMode, expandedResult, displayItems, selectedIndex]);
+
+  // Export hook
+  const {
+    exportMode,
+    exportActionIndex,
+    statusMessage,
+    statusType,
+    statusVisible,
+    openExportMenu,
+    handleExportInput,
+  } = useExport({ getConversations: getCurrentConversation });
+
   useInput((input, key) => {
+    // Handle export menu first
+    if (handleExportInput(input, key)) {
+      return;
+    }
     // Quit from home/list/search
     if (input === 'q' && (viewMode === 'home' || viewMode === 'list' || viewMode === 'search')) {
       exit();
@@ -625,6 +666,12 @@ function UnifiedApp() {
     if (viewMode === 'list' || viewMode === 'search') {
       if (displayItems.length === 0) return;
 
+      // Export trigger
+      if (input === 'e') {
+        openExportMenu();
+        return;
+      }
+
       if (input === 'j' || key.downArrow) {
         setSelectedIndex((i) => Math.min(i + 1, displayItems.length - 1));
       } else if (input === 'k' || key.upArrow) {
@@ -786,6 +833,8 @@ function UnifiedApp() {
           <Text color="gray">
             {viewMode === 'list' || viewMode === 'search' ? (
               <>
+                <Text color="white" bold>e</Text>
+                <Text color="gray"> export · </Text>
                 <Text color="white" bold>j</Text>
                 <Text color="gray">/</Text>
                 <Text color="white" bold>k</Text>
@@ -836,6 +885,26 @@ function UnifiedApp() {
           </Text>
         </Box>
       </Box>
+
+      {/* Export action menu overlay */}
+      {exportMode === 'action-menu' && (
+        <ExportActionMenu
+          selectedIndex={exportActionIndex}
+          conversationCount={1}
+          width={width}
+          height={height}
+        />
+      )}
+
+      {/* Status toast */}
+      {statusVisible && (
+        <StatusToast
+          message={statusMessage}
+          type={statusType}
+          width={width}
+          height={height}
+        />
+      )}
     </Box>
   );
 }

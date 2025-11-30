@@ -10,12 +10,12 @@ export interface ExportActionMenuProps {
 
 const ACTIONS = [
   { label: 'Export to file', description: 'Save as markdown' },
-  { label: 'Copy to clipboard', description: 'Copy markdown to clipboard' },
+  { label: 'Copy to clipboard', description: 'Copy markdown' },
 ];
 
 /**
  * Centered modal overlay for export action selection
- * Simplified 2-option design with improved spacing and contrast
+ * Uses gray background for better visibility against terminal backgrounds
  */
 export function ExportActionMenu({
   selectedIndex,
@@ -23,8 +23,8 @@ export function ExportActionMenu({
   width,
   height,
 }: ExportActionMenuProps) {
-  const menuWidth = Math.min(44, width - 4);
-  const menuHeight = 14; // Increased for better spacing
+  const menuWidth = Math.min(40, width - 4);
+  const menuHeight = 10;
 
   // Center the menu
   const leftPadding = Math.floor((width - menuWidth) / 2);
@@ -35,8 +35,19 @@ export function ExportActionMenu({
       ? 'Export conversation'
       : `Export ${conversationCount} conversations`;
 
-  // Helper to create a padded line
-  const pad = (content: string) => content.padEnd(menuWidth - 4);
+  const innerWidth = menuWidth - 2;
+
+  // Build each row as a complete string with consistent width
+  const buildRow = (content: string, bgColor: string = 'gray', fgColor: string = 'white') => {
+    const padded = content.padEnd(innerWidth);
+    return (
+      <Text>
+        <Text backgroundColor="gray" color="white">│</Text>
+        <Text backgroundColor={bgColor as any} color={fgColor as any}>{padded}</Text>
+        <Text backgroundColor="gray" color="white">│</Text>
+      </Text>
+    );
+  };
 
   return (
     <Box
@@ -47,101 +58,54 @@ export function ExportActionMenu({
       flexDirection="column"
     >
       {/* Top border */}
-      <Text color="cyan">{'╭' + '─'.repeat(menuWidth - 2) + '╮'}</Text>
-
-      {/* Empty line for top padding */}
-      <Text>
-        <Text color="cyan">│</Text>
-        <Text backgroundColor="black">{' '.repeat(menuWidth - 2)}</Text>
-        <Text color="cyan">│</Text>
+      <Text backgroundColor="gray" color="white">
+        {'┌' + '─'.repeat(innerWidth) + '┐'}
       </Text>
 
       {/* Title */}
-      <Text>
-        <Text color="cyan">│</Text>
-        <Text backgroundColor="black" color="white" bold>{' ' + pad(title) + ' '}</Text>
-        <Text color="cyan">│</Text>
+      {buildRow(' ' + title)}
+
+      {/* Divider */}
+      <Text backgroundColor="gray" color="white">
+        {'├' + '─'.repeat(innerWidth) + '┤'}
       </Text>
 
-      {/* Empty line after title */}
-      <Text>
-        <Text color="cyan">│</Text>
-        <Text backgroundColor="black">{' '.repeat(menuWidth - 2)}</Text>
-        <Text color="cyan">│</Text>
-      </Text>
-
-      {/* Actions with description on separate line */}
+      {/* Actions */}
       {ACTIONS.map((action, idx) => {
         const isSelected = idx === selectedIndex;
-        const prefix = isSelected ? '  ▸ ' : '    ';
+        const prefix = isSelected ? ' ▸ ' : '   ';
+        const label = prefix + action.label;
+        const desc = '     ' + action.description;
 
         return (
           <React.Fragment key={action.label}>
-            {/* Action label */}
-            <Text>
-              <Text color="cyan">│</Text>
-              <Text
-                backgroundColor={isSelected ? 'cyan' : 'black'}
-                color={isSelected ? 'black' : 'white'}
-                bold={isSelected}
-              >
-                {pad(prefix + action.label) + '  '}
-              </Text>
-              <Text color="cyan">│</Text>
-            </Text>
-            {/* Action description */}
-            <Text>
-              <Text color="cyan">│</Text>
-              <Text
-                backgroundColor={isSelected ? 'cyan' : 'black'}
-                color={isSelected ? 'black' : 'gray'}
-              >
-                {pad('      ' + action.description) + '  '}
-              </Text>
-              <Text color="cyan">│</Text>
-            </Text>
-            {/* Spacing between options */}
-            {idx < ACTIONS.length - 1 && (
-              <Text>
-                <Text color="cyan">│</Text>
-                <Text backgroundColor="black">{' '.repeat(menuWidth - 2)}</Text>
-                <Text color="cyan">│</Text>
-              </Text>
+            {isSelected ? (
+              <>
+                {buildRow(label, 'cyan', 'black')}
+                {buildRow(desc, 'cyan', 'black')}
+              </>
+            ) : (
+              <>
+                {buildRow(label, 'gray', 'white')}
+                {buildRow(desc, 'gray', 'white')}
+              </>
             )}
           </React.Fragment>
         );
       })}
 
-      {/* Empty line before footer */}
-      <Text>
-        <Text color="cyan">│</Text>
-        <Text backgroundColor="black">{' '.repeat(menuWidth - 2)}</Text>
-        <Text color="cyan">│</Text>
+      {/* Divider */}
+      <Text backgroundColor="gray" color="white">
+        {'├' + '─'.repeat(innerWidth) + '┤'}
       </Text>
 
-      {/* Footer */}
-      <Text>
-        <Text color="cyan">│</Text>
-        <Text backgroundColor="black">
-          {'  '}
-          <Text color="white">Enter</Text>
-          <Text color="gray"> select · </Text>
-          <Text color="white">Esc</Text>
-          <Text color="gray"> cancel</Text>
-          {' '.repeat(Math.max(0, menuWidth - 28))}
-        </Text>
-        <Text color="cyan">│</Text>
-      </Text>
-
-      {/* Empty line for bottom padding */}
-      <Text>
-        <Text color="cyan">│</Text>
-        <Text backgroundColor="black">{' '.repeat(menuWidth - 2)}</Text>
-        <Text color="cyan">│</Text>
-      </Text>
+      {/* Footer - simpler approach */}
+      {buildRow(' Enter select · Esc cancel')}
 
       {/* Bottom border */}
-      <Text color="cyan">{'╰' + '─'.repeat(menuWidth - 2) + '╯'}</Text>
+      <Text backgroundColor="gray" color="white">
+        {'└' + '─'.repeat(innerWidth) + '┘'}
+      </Text>
     </Box>
   );
 }

@@ -110,7 +110,7 @@ export function getRoleColor(role: string): string {
  * Format source info with optional model (e.g., "Cursor · gpt-4")
  */
 export function formatSourceInfo(source: string, model?: string | null): string {
-  const sourceName = formatSourceName(source);
+  const sourceName = formatSourceLabel(source);
   return model ? `${sourceName} · ${model}` : sourceName;
 }
 

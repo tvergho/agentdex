@@ -1,10 +1,128 @@
 import * as lancedb from '@lancedb/lancedb';
-import { getLanceDBPath } from '../utils/config';
+import { getLanceDBPath, getDataDir } from '../utils/config';
 import type { Table } from '@lancedb/lancedb';
 import { EMBEDDING_DIMENSIONS } from '../embeddings/index';
 import { Source } from '../schema/index';
+import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 let db: lancedb.Connection | null = null;
+
+// ============ Retry Logic for LanceDB Commit Conflicts ============
+
+/**
+ * Check if an error is a LanceDB commit conflict
+ */
+function isCommitConflict(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message.includes('Commit conflict') ||
+           error.message.includes('concurrent commit');
+  }
+  return false;
+}
+
+/**
+ * Retry a LanceDB operation with exponential backoff on commit conflicts.
+ * This handles the case where concurrent operations try to modify the same table version.
+ */
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries = 3,
+  baseDelayMs = 100
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (!isCommitConflict(error) || attempt === maxRetries) {
+        throw error;
+      }
+
+      // Exponential backoff with jitter
+      const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 50;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError;
+}
+
+// ============ Sync Lock to Prevent Concurrent Operations ============
+
+const LOCK_FILE = 'sync.lock';
+const LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes - stale lock threshold
+
+interface LockInfo {
+  pid: number;
+  startedAt: number;
+}
+
+/**
+ * Acquire a lock for sync operations.
+ * Returns true if lock acquired, false if another sync is running.
+ */
+export function acquireSyncLock(): boolean {
+  const lockPath = join(getDataDir(), LOCK_FILE);
+
+  // Check for existing lock
+  if (existsSync(lockPath)) {
+    try {
+      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as LockInfo;
+      const lockAge = Date.now() - lockData.startedAt;
+
+      // Check if lock is stale (process died without cleanup)
+      if (lockAge < LOCK_TIMEOUT_MS) {
+        // Check if process is still running
+        try {
+          process.kill(lockData.pid, 0); // Signal 0 = check if process exists
+          return false; // Process still running, lock is valid
+        } catch {
+          // Process is dead, lock is stale - fall through to acquire
+        }
+      }
+      // Lock is stale, remove it
+      unlinkSync(lockPath);
+    } catch {
+      // Corrupted lock file, remove it
+      try { unlinkSync(lockPath); } catch { /* ignore */ }
+    }
+  }
+
+  // Acquire lock
+  const lockInfo: LockInfo = {
+    pid: process.pid,
+    startedAt: Date.now(),
+  };
+
+  try {
+    writeFileSync(lockPath, JSON.stringify(lockInfo), { flag: 'wx' }); // wx = fail if exists
+    return true;
+  } catch {
+    return false; // Another process beat us to it
+  }
+}
+
+/**
+ * Release the sync lock.
+ */
+export function releaseSyncLock(): void {
+  const lockPath = join(getDataDir(), LOCK_FILE);
+  try {
+    if (existsSync(lockPath)) {
+      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as LockInfo;
+      // Only release if we own the lock
+      if (lockData.pid === process.pid) {
+        unlinkSync(lockPath);
+      }
+    }
+  } catch {
+    // Ignore errors during cleanup
+  }
+}
 
 // Table references
 let conversationsTable: Table | null = null;
