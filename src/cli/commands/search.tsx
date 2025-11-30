@@ -38,6 +38,7 @@ import {
   formatConversationCount,
   formatMessageCount,
   combineConsecutiveMessages,
+  getRenderedLineCount,
   type CombinedMessage,
 } from '../../utils/format';
 import {
@@ -405,16 +406,20 @@ function SearchApp({
         setViewMode('conversation');
         setMessageScrollOffset(0);
       } else if (input === 'j' || key.downArrow) {
-        const lines = currentMessage?.content.split('\n') || [];
-        const maxOffset = Math.max(0, lines.length - (height - 5));
+        // Use rendered line count and match MessageDetailView's visible height calculation
+        // MessageDetailView receives availableHeight and subtracts headerHeight=3 for visible lines
+        const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+        const visibleLines = availableHeight - 3; // matches MessageDetailView
+        const maxOffset = Math.max(0, lineCount - visibleLines);
         setMessageScrollOffset((o) => Math.min(o + 1, maxOffset));
       } else if (input === 'k' || key.upArrow) {
         setMessageScrollOffset((o) => Math.max(o - 1, 0));
       } else if (input === 'g') {
         setMessageScrollOffset(0);
       } else if (input === 'G') {
-        const lines = currentMessage?.content.split('\n') || [];
-        setMessageScrollOffset(Math.max(0, lines.length - (height - 5)));
+        const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+        const visibleLines = availableHeight - 3;
+        setMessageScrollOffset(Math.max(0, lineCount - visibleLines));
       } else if (input === 'n') {
         // Next message
         if (selectedMessageIndex < combinedMessages.length - 1) {

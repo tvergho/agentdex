@@ -3,6 +3,7 @@
  */
 
 import type { Conversation, Message, ConversationFile } from '../schema/index';
+import { combineConsecutiveMessages } from './format';
 
 /**
  * Generate a safe filename from conversation title and date
@@ -108,8 +109,11 @@ export function conversationToMarkdown(
   lines.push('---');
   lines.push('');
 
+  // Combine consecutive messages from the same role (matching UI display)
+  const { messages: combinedMessages } = combineConsecutiveMessages(messages);
+
   // Messages
-  for (const msg of messages) {
+  for (const msg of combinedMessages) {
     const roleLabel =
       msg.role === 'user' ? 'You' : msg.role === 'assistant' ? 'Assistant' : 'System';
 

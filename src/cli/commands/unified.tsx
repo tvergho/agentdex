@@ -37,6 +37,7 @@ import {
   formatTokenPair,
   getLineCountParts,
   combineConsecutiveMessages,
+  getRenderedLineCount,
   type CombinedMessage,
 } from '../../utils/format';
 import type { Conversation, ConversationFile, MessageFile, SearchResponse, ConversationResult } from '../../schema/index';
@@ -577,8 +578,11 @@ function UnifiedApp() {
         }
       } else if (key.downArrow) {
         // Down arrow = scroll within message
-        const lines = currentMessage?.content.split('\n') || [];
-        const maxOffset = Math.max(0, lines.length - (height - 5));
+        // Use rendered line count and match MessageDetailView's visible height calculation
+        // MessageDetailView receives availableHeight and subtracts headerHeight=3 for visible lines
+        const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+        const visibleLines = availableHeight - 3; // matches MessageDetailView
+        const maxOffset = Math.max(0, lineCount - visibleLines);
         setMessageScrollOffset((o) => Math.min(o + 1, maxOffset));
       } else if (key.upArrow) {
         // Up arrow = scroll within message
@@ -586,8 +590,9 @@ function UnifiedApp() {
       } else if (input === 'g') {
         setMessageScrollOffset(0);
       } else if (input === 'G') {
-        const lines = currentMessage?.content.split('\n') || [];
-        setMessageScrollOffset(Math.max(0, lines.length - (height - 5)));
+        const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+        const visibleLines = availableHeight - 3;
+        setMessageScrollOffset(Math.max(0, lineCount - visibleLines));
       }
       return;
     }

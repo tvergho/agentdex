@@ -56,7 +56,7 @@ import { ProgressBar } from '../components/HorizontalBar';
 import { ActivityHeatmap, HourlyActivity, WeeklyActivity } from '../components/ActivityHeatmap';
 import { ConversationView } from '../components/ConversationView';
 import { MessageDetailView } from '../components/MessageDetailView';
-import { formatSourceLabel, combineConsecutiveMessages, type CombinedMessage } from '../../utils/format';
+import { formatSourceLabel, combineConsecutiveMessages, getRenderedLineCount, type CombinedMessage } from '../../utils/format';
 import { Source, type Conversation, type ConversationFile, type MessageFile } from '../../schema/index';
 
 interface StatsOptions {
@@ -1139,16 +1139,20 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
       }
 
       if (input === 'j' || key.downArrow) {
-        const lines = currentMessage?.content.split('\n') || [];
-        const maxOffset = Math.max(0, lines.length - (height - 8));
+        // Use rendered line count and match MessageDetailView's visible height calculation
+        // MessageDetailView receives (height - 4) and subtracts headerHeight=3 for visible lines
+        const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+        const visibleLines = height - 7; // = (height - 4) - 3
+        const maxOffset = Math.max(0, lineCount - visibleLines);
         setMessageScrollOffset(o => Math.min(o + 1, maxOffset));
       } else if (input === 'k' || key.upArrow) {
         setMessageScrollOffset(o => Math.max(o - 1, 0));
       } else if (input === 'g') {
         setMessageScrollOffset(0);
       } else if (input === 'G') {
-        const lines = currentMessage?.content.split('\n') || [];
-        setMessageScrollOffset(Math.max(0, lines.length - (height - 8)));
+        const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+        const visibleLines = height - 7;
+        setMessageScrollOffset(Math.max(0, lineCount - visibleLines));
       } else if (input === 'n') {
         // Next message
         if (selectedMessageIndex < combinedMessages.length - 1) {

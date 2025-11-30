@@ -1,12 +1,11 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { marked, type MarkedExtension } from 'marked';
-import { markedTerminal } from 'marked-terminal';
 import {
   formatPaginationInfo,
   getFileName,
   getRoleColor,
   getRoleLabel,
+  renderMarkdownContent,
   type CombinedMessage,
 } from '../../utils/format';
 import type { MessageFile } from '../../schema/index';
@@ -39,21 +38,9 @@ export function MessageDetailView({
     .filter((f) => message.messageIds.includes(f.messageId))
     .map((f) => getFileName(f.filePath));
 
-  // Render markdown to terminal-formatted string
+  // Render markdown to terminal-formatted string using shared function
   const renderedContent = useMemo(() => {
-    // Configure marked-terminal for each render to use current width
-    marked.use(markedTerminal({
-      reflowText: true,
-      width: Math.max(40, width - 4), // Leave some margin
-      tab: 2,
-    }) as MarkedExtension);
-
-    try {
-      return marked.parse(message.content) as string;
-    } catch {
-      // Fallback to raw content if markdown parsing fails
-      return message.content;
-    }
+    return renderMarkdownContent(message.content, width);
   }, [message.content, width]);
 
   // Split rendered content into lines for scrolling
