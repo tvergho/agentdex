@@ -106,7 +106,9 @@ function formatRelativeTime(dateStr: string): string {
 function getSourceColor(source: string): string {
   if (source === 'cursor') return 'cyan';
   if (source === 'claude-code') return 'magenta';
-  return 'yellow'; // codex and others
+  if (source === 'opencode') return 'green';
+  if (source === 'codex') return 'yellow';
+  return 'white'; // unknown sources
 }
 
 type FocusSection = 'recent' | 'top' | 'projects' | 'files' | null;
@@ -241,7 +243,7 @@ function OverviewTab({
             <Text color="gray">{'Tokens'.padStart(10)}</Text>
           </Box>
           {/* Data rows */}
-          {sources.slice(0, 3).map((s, idx) => {
+          {sources.map((s, idx) => {
             const barWidth = Math.max(20, width - 50);
             const proportion = s.tokens / maxSourceTokens;
             const filledWidth = Math.max(1, Math.round(proportion * barWidth));

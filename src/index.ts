@@ -31,7 +31,7 @@ program
   .command('list')
   .description('Browse recent conversations')
   .option('-l, --limit <number>', 'Maximum number of conversations', '20')
-  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex)')
+  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex, opencode)')
   .action(listCommand);
 
 program
@@ -56,7 +56,7 @@ program
   .description('Export conversations as markdown files')
   .option('-o, --output <dir>', 'Output directory', './dex-export')
   .option('-p, --project <path>', 'Filter by project/workspace path')
-  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex)')
+  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex, opencode)')
   .option('--from <date>', 'Start date (YYYY-MM-DD)')
   .option('--to <date>', 'End date (YYYY-MM-DD)')
   .option('--id <id>', 'Export a single conversation by ID')
@@ -67,7 +67,7 @@ program
   .description('Export full database for backup/migration')
   .option('-o, --output <file>', 'Output file (default: dex-backup-TIMESTAMP.json)')
   .option('-p, --project <path>', 'Filter by project/workspace path')
-  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex)')
+  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex, opencode)')
   .option('--from <date>', 'Start date (YYYY-MM-DD)')
   .option('--to <date>', 'End date (YYYY-MM-DD)')
   .action(backupCommand);

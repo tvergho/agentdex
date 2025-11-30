@@ -36,6 +36,7 @@ export function formatSourceLabel(source: string): string {
   if (source === 'claude-code') return 'Claude Code';
   if (source === 'codex') return 'Codex';
   if (source === 'cursor') return 'Cursor';
+  if (source === 'opencode') return 'OpenCode';
   return formatSourceName(source);
 }
 

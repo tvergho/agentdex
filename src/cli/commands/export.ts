@@ -6,7 +6,7 @@
  * Options:
  *   -o, --output <dir>     Output directory (default: ./dex-export)
  *   -p, --project <path>   Filter by project/workspace path
- *   -s, --source <source>  Filter by source (cursor, claude-code, codex)
+ *   -s, --source <source>  Filter by source (cursor, claude-code, codex, opencode)
  *   --from <date>          Start date (ISO 8601 or YYYY-MM-DD)
  *   --to <date>            End date (ISO 8601 or YYYY-MM-DD)
  *   --id <id>              Export a single conversation by ID
@@ -48,7 +48,7 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
   }
 
   // Validate source option if provided
-  const validSources = ['cursor', 'claude-code', 'codex'];
+  const validSources = ['cursor', 'claude-code', 'codex', 'opencode'];
   if (options.source && !validSources.includes(options.source)) {
     console.error(`Invalid --source: ${options.source}`);
     console.error(`Valid sources: ${validSources.join(', ')}`);

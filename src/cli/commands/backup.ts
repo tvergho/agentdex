@@ -6,7 +6,7 @@
  * Options:
  *   -o, --output <file>    Output file (default: dex-backup-TIMESTAMP.json)
  *   -p, --project <path>   Filter by project/workspace path (optional)
- *   -s, --source <source>  Filter by source (cursor, claude-code, codex)
+ *   -s, --source <source>  Filter by source (cursor, claude-code, codex, opencode)
  *   --from <date>          Start date filter (optional)
  *   --to <date>            End date filter (optional)
  */
@@ -47,7 +47,7 @@ export async function backupCommand(options: BackupOptions): Promise<void> {
   }
 
   // Validate source option if provided
-  const validSources = ['cursor', 'claude-code', 'codex'];
+  const validSources = ['cursor', 'claude-code', 'codex', 'opencode'];
   if (options.source && !validSources.includes(options.source)) {
     console.error(`Invalid --source: ${options.source}`);
     console.error(`Valid sources: ${validSources.join(', ')}`);
