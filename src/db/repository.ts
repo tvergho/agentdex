@@ -22,6 +22,25 @@ import type {
 } from '../schema/index';
 import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
 
+// Helper to safely parse JSON with fallback
+function safeJsonParse<T>(value: unknown, fallback: T): T {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  try {
+    return JSON.parse(value as string) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+// Default SourceRef for missing/corrupt data
+const defaultSourceRef: SourceRef = {
+  source: 'cursor',
+  originalId: '',
+  dbPath: '',
+};
+
 // Helper to group array by key
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce(
@@ -205,8 +224,8 @@ export const conversationRepo = {
       mode: (row.mode as string) || undefined,
       createdAt: (row.created_at as string) || undefined,
       updatedAt: (row.updated_at as string) || undefined,
-      messageCount: row.message_count as number,
-      sourceRef: JSON.parse(row.source_ref_json as string) as SourceRef,
+      messageCount: (row.message_count as number) || 0,
+      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
       totalInputTokens: (row.total_input_tokens as number) || undefined,
       totalOutputTokens: (row.total_output_tokens as number) || undefined,
       totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
@@ -234,8 +253,8 @@ export const conversationRepo = {
 
     // Sort by updated_at descending (most recent first)
     filtered.sort((a, b) => {
-      const aDate = a.updated_at as string || '';
-      const bDate = b.updated_at as string || '';
+      const aDate = (a.updated_at as string) || '';
+      const bDate = (b.updated_at as string) || '';
       return bDate.localeCompare(aDate);
     });
 
@@ -253,8 +272,8 @@ export const conversationRepo = {
       mode: (row.mode as string) || undefined,
       createdAt: (row.created_at as string) || undefined,
       updatedAt: (row.updated_at as string) || undefined,
-      messageCount: row.message_count as number,
-      sourceRef: JSON.parse(row.source_ref_json as string) as SourceRef,
+      messageCount: (row.message_count as number) || 0,
+      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
       totalInputTokens: (row.total_input_tokens as number) || undefined,
       totalOutputTokens: (row.total_output_tokens as number) || undefined,
       totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
@@ -336,8 +355,8 @@ export const conversationRepo = {
       mode: (row.mode as string) || undefined,
       createdAt: (row.created_at as string) || undefined,
       updatedAt: (row.updated_at as string) || undefined,
-      messageCount: row.message_count as number,
-      sourceRef: JSON.parse(row.source_ref_json as string) as SourceRef,
+      messageCount: (row.message_count as number) || 0,
+      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
       totalInputTokens: (row.total_input_tokens as number) || undefined,
       totalOutputTokens: (row.total_output_tokens as number) || undefined,
       totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
@@ -432,7 +451,7 @@ export const messageRepo = {
         role: row.role as Message['role'],
         content: row.content as string,
         timestamp: (row.timestamp as string) || undefined,
-        messageIndex: row.message_index as number,
+        messageIndex: (row.message_index as number) || 0,
         inputTokens: (row.input_tokens as number) || undefined,
         outputTokens: (row.output_tokens as number) || undefined,
         cacheCreationTokens: (row.cache_creation_tokens as number) || undefined,
