@@ -128,7 +128,7 @@ Four-level navigation pattern:
 
 - FTS index must be created/rebuilt AFTER data is inserted
 - Use `replace: true` when recreating indexes
-- Column names with camelCase need quotes in SQL filters: `"conversationId"`
+- Column names use snake_case (e.g., `conversation_id`, `message_index`) for SQL compatibility
 - No `dropIndex` method - use `createIndex` with `replace: true`
 
 ### Schema Changes (Adding New Columns)

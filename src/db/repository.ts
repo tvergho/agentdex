@@ -117,20 +117,20 @@ export const conversationRepo = {
       source: conv.source,
       title: conv.title,
       subtitle: conv.subtitle ?? '',
-      workspacePath: conv.workspacePath ?? '',
-      projectName: conv.projectName ?? '',
+      workspace_path: conv.workspacePath ?? '',
+      project_name: conv.projectName ?? '',
       model: conv.model ?? '',
       mode: conv.mode ?? '',
-      createdAt: conv.createdAt ?? '',
-      updatedAt: conv.updatedAt ?? '',
-      messageCount: conv.messageCount,
-      sourceRefJson: JSON.stringify(conv.sourceRef),
-      totalInputTokens: conv.totalInputTokens ?? 0,
-      totalOutputTokens: conv.totalOutputTokens ?? 0,
-      totalCacheCreationTokens: conv.totalCacheCreationTokens ?? 0,
-      totalCacheReadTokens: conv.totalCacheReadTokens ?? 0,
-      totalLinesAdded: conv.totalLinesAdded ?? 0,
-      totalLinesRemoved: conv.totalLinesRemoved ?? 0,
+      created_at: conv.createdAt ?? '',
+      updated_at: conv.updatedAt ?? '',
+      message_count: conv.messageCount,
+      source_ref_json: JSON.stringify(conv.sourceRef),
+      total_input_tokens: conv.totalInputTokens ?? 0,
+      total_output_tokens: conv.totalOutputTokens ?? 0,
+      total_cache_creation_tokens: conv.totalCacheCreationTokens ?? 0,
+      total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
+      total_lines_added: conv.totalLinesAdded ?? 0,
+      total_lines_removed: conv.totalLinesRemoved ?? 0,
     };
 
     if (existing.length > 0) {
@@ -167,20 +167,20 @@ export const conversationRepo = {
       source: conv.source,
       title: conv.title,
       subtitle: conv.subtitle ?? '',
-      workspacePath: conv.workspacePath ?? '',
-      projectName: conv.projectName ?? '',
+      workspace_path: conv.workspacePath ?? '',
+      project_name: conv.projectName ?? '',
       model: conv.model ?? '',
       mode: conv.mode ?? '',
-      createdAt: conv.createdAt ?? '',
-      updatedAt: conv.updatedAt ?? '',
-      messageCount: conv.messageCount,
-      sourceRefJson: JSON.stringify(conv.sourceRef),
-      totalInputTokens: conv.totalInputTokens ?? 0,
-      totalOutputTokens: conv.totalOutputTokens ?? 0,
-      totalCacheCreationTokens: conv.totalCacheCreationTokens ?? 0,
-      totalCacheReadTokens: conv.totalCacheReadTokens ?? 0,
-      totalLinesAdded: conv.totalLinesAdded ?? 0,
-      totalLinesRemoved: conv.totalLinesRemoved ?? 0,
+      created_at: conv.createdAt ?? '',
+      updated_at: conv.updatedAt ?? '',
+      message_count: conv.messageCount,
+      source_ref_json: JSON.stringify(conv.sourceRef),
+      total_input_tokens: conv.totalInputTokens ?? 0,
+      total_output_tokens: conv.totalOutputTokens ?? 0,
+      total_cache_creation_tokens: conv.totalCacheCreationTokens ?? 0,
+      total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
+      total_lines_added: conv.totalLinesAdded ?? 0,
+      total_lines_removed: conv.totalLinesRemoved ?? 0,
     }));
 
     // Bulk insert all rows
@@ -199,20 +199,20 @@ export const conversationRepo = {
       source: row.source as Conversation['source'],
       title: row.title as string,
       subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspacePath as string) || undefined,
-      projectName: (row.projectName as string) || undefined,
+      workspacePath: (row.workspace_path as string) || undefined,
+      projectName: (row.project_name as string) || undefined,
       model: (row.model as string) || undefined,
       mode: (row.mode as string) || undefined,
-      createdAt: (row.createdAt as string) || undefined,
-      updatedAt: (row.updatedAt as string) || undefined,
-      messageCount: row.messageCount as number,
-      sourceRef: JSON.parse(row.sourceRefJson as string) as SourceRef,
-      totalInputTokens: (row.totalInputTokens as number) || undefined,
-      totalOutputTokens: (row.totalOutputTokens as number) || undefined,
-      totalCacheCreationTokens: (row.totalCacheCreationTokens as number) || undefined,
-      totalCacheReadTokens: (row.totalCacheReadTokens as number) || undefined,
-      totalLinesAdded: (row.totalLinesAdded as number) || undefined,
-      totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
+      createdAt: (row.created_at as string) || undefined,
+      updatedAt: (row.updated_at as string) || undefined,
+      messageCount: row.message_count as number,
+      sourceRef: JSON.parse(row.source_ref_json as string) as SourceRef,
+      totalInputTokens: (row.total_input_tokens as number) || undefined,
+      totalOutputTokens: (row.total_output_tokens as number) || undefined,
+      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+      totalLinesAdded: (row.total_lines_added as number) || undefined,
+      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
     };
   },
 
@@ -232,10 +232,10 @@ export const conversationRepo = {
       filtered = results.filter((row) => (row.source as string) === opts.source);
     }
 
-    // Sort by updatedAt descending (most recent first)
+    // Sort by updated_at descending (most recent first)
     filtered.sort((a, b) => {
-      const aDate = a.updatedAt as string || '';
-      const bDate = b.updatedAt as string || '';
+      const aDate = a.updated_at as string || '';
+      const bDate = b.updated_at as string || '';
       return bDate.localeCompare(aDate);
     });
 
@@ -247,20 +247,20 @@ export const conversationRepo = {
       source: row.source as Conversation['source'],
       title: row.title as string,
       subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspacePath as string) || undefined,
-      projectName: (row.projectName as string) || undefined,
+      workspacePath: (row.workspace_path as string) || undefined,
+      projectName: (row.project_name as string) || undefined,
       model: (row.model as string) || undefined,
       mode: (row.mode as string) || undefined,
-      createdAt: (row.createdAt as string) || undefined,
-      updatedAt: (row.updatedAt as string) || undefined,
-      messageCount: row.messageCount as number,
-      sourceRef: JSON.parse(row.sourceRefJson as string) as SourceRef,
-      totalInputTokens: (row.totalInputTokens as number) || undefined,
-      totalOutputTokens: (row.totalOutputTokens as number) || undefined,
-      totalCacheCreationTokens: (row.totalCacheCreationTokens as number) || undefined,
-      totalCacheReadTokens: (row.totalCacheReadTokens as number) || undefined,
-      totalLinesAdded: (row.totalLinesAdded as number) || undefined,
-      totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
+      createdAt: (row.created_at as string) || undefined,
+      updatedAt: (row.updated_at as string) || undefined,
+      messageCount: row.message_count as number,
+      sourceRef: JSON.parse(row.source_ref_json as string) as SourceRef,
+      totalInputTokens: (row.total_input_tokens as number) || undefined,
+      totalOutputTokens: (row.total_output_tokens as number) || undefined,
+      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+      totalLinesAdded: (row.total_lines_added as number) || undefined,
+      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
     }));
   },
 
@@ -278,7 +278,7 @@ export const conversationRepo = {
   async deleteBySource(source: string, workspacePath?: string): Promise<void> {
     const table = await getConversationsTable();
     if (workspacePath) {
-      await table.delete(`source = '${source}' AND "workspacePath" = '${workspacePath}'`);
+      await table.delete(`source = '${source}' AND workspace_path = '${workspacePath}'`);
     } else {
       await table.delete(`source = '${source}'`);
     }
@@ -302,21 +302,21 @@ export const conversationRepo = {
     }
     if (opts.workspacePath) {
       results = results.filter((row) => {
-        const wp = row.workspacePath as string;
+        const wp = row.workspace_path as string;
         return wp && wp.includes(opts.workspacePath!);
       });
     }
     if (opts.fromDate) {
       const from = new Date(opts.fromDate).getTime();
       results = results.filter((row) => {
-        const created = row.createdAt as string;
+        const created = row.created_at as string;
         return created && new Date(created).getTime() >= from;
       });
     }
     if (opts.toDate) {
       const to = new Date(opts.toDate).getTime();
       results = results.filter((row) => {
-        const created = row.createdAt as string;
+        const created = row.created_at as string;
         return created && new Date(created).getTime() <= to;
       });
     }
@@ -330,20 +330,20 @@ export const conversationRepo = {
       source: row.source as Conversation['source'],
       title: row.title as string,
       subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspacePath as string) || undefined,
-      projectName: (row.projectName as string) || undefined,
+      workspacePath: (row.workspace_path as string) || undefined,
+      projectName: (row.project_name as string) || undefined,
       model: (row.model as string) || undefined,
       mode: (row.mode as string) || undefined,
-      createdAt: (row.createdAt as string) || undefined,
-      updatedAt: (row.updatedAt as string) || undefined,
-      messageCount: row.messageCount as number,
-      sourceRef: JSON.parse(row.sourceRefJson as string) as SourceRef,
-      totalInputTokens: (row.totalInputTokens as number) || undefined,
-      totalOutputTokens: (row.totalOutputTokens as number) || undefined,
-      totalCacheCreationTokens: (row.totalCacheCreationTokens as number) || undefined,
-      totalCacheReadTokens: (row.totalCacheReadTokens as number) || undefined,
-      totalLinesAdded: (row.totalLinesAdded as number) || undefined,
-      totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
+      createdAt: (row.created_at as string) || undefined,
+      updatedAt: (row.updated_at as string) || undefined,
+      messageCount: row.message_count as number,
+      sourceRef: JSON.parse(row.source_ref_json as string) as SourceRef,
+      totalInputTokens: (row.total_input_tokens as number) || undefined,
+      totalOutputTokens: (row.total_output_tokens as number) || undefined,
+      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+      totalLinesAdded: (row.total_lines_added as number) || undefined,
+      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
     }));
   },
 };
@@ -355,7 +355,7 @@ export const messageRepo = {
     const table = await getMessagesTable();
     const allResults = await table.query().toArray();
     const ids = allResults
-      .filter((row) => (row.conversationId as string) === conversationId)
+      .filter((row) => (row.conversation_id as string) === conversationId)
       .map((row) => row.id as string);
     return new Set(ids);
   },
@@ -366,18 +366,18 @@ export const messageRepo = {
     const table = await getMessagesTable();
     const rows = messages.map((msg) => ({
       id: msg.id,
-      conversationId: msg.conversationId,
+      conversation_id: msg.conversationId,
       role: msg.role,
       content: msg.content,
       timestamp: msg.timestamp ?? '',
-      messageIndex: msg.messageIndex,
+      message_index: msg.messageIndex,
       vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings
-      inputTokens: msg.inputTokens ?? 0,
-      outputTokens: msg.outputTokens ?? 0,
-      cacheCreationTokens: msg.cacheCreationTokens ?? 0,
-      cacheReadTokens: msg.cacheReadTokens ?? 0,
-      totalLinesAdded: msg.totalLinesAdded ?? 0,
-      totalLinesRemoved: msg.totalLinesRemoved ?? 0,
+      input_tokens: msg.inputTokens ?? 0,
+      output_tokens: msg.outputTokens ?? 0,
+      cache_creation_tokens: msg.cacheCreationTokens ?? 0,
+      cache_read_tokens: msg.cacheReadTokens ?? 0,
+      total_lines_added: msg.totalLinesAdded ?? 0,
+      total_lines_removed: msg.totalLinesRemoved ?? 0,
     }));
 
     await table.add(rows);
@@ -390,18 +390,18 @@ export const messageRepo = {
     const table = await getMessagesTable();
     const rows = newMessages.map((msg) => ({
       id: msg.id,
-      conversationId: msg.conversationId,
+      conversation_id: msg.conversationId,
       role: msg.role,
       content: msg.content,
       timestamp: msg.timestamp ?? '',
-      messageIndex: msg.messageIndex,
+      message_index: msg.messageIndex,
       vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings
-      inputTokens: msg.inputTokens ?? 0,
-      outputTokens: msg.outputTokens ?? 0,
-      cacheCreationTokens: msg.cacheCreationTokens ?? 0,
-      cacheReadTokens: msg.cacheReadTokens ?? 0,
-      totalLinesAdded: msg.totalLinesAdded ?? 0,
-      totalLinesRemoved: msg.totalLinesRemoved ?? 0,
+      input_tokens: msg.inputTokens ?? 0,
+      output_tokens: msg.outputTokens ?? 0,
+      cache_creation_tokens: msg.cacheCreationTokens ?? 0,
+      cache_read_tokens: msg.cacheReadTokens ?? 0,
+      total_lines_added: msg.totalLinesAdded ?? 0,
+      total_lines_removed: msg.totalLinesRemoved ?? 0,
     }));
 
     await table.add(rows);
@@ -419,34 +419,33 @@ export const messageRepo = {
 
   async findByConversation(conversationId: string): Promise<Message[]> {
     const table = await getMessagesTable();
-    // Note: LanceDB has issues with camelCase column filtering
-    // Using post-query filter as workaround
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.conversationId as string) === conversationId
-    );
+    // With snake_case columns, we can use direct filtering
+    const results = await table
+      .query()
+      .filter(`conversation_id = '${conversationId}'`)
+      .toArray();
 
     return results
       .map((row) => ({
         id: row.id as string,
-        conversationId: row.conversationId as string,
+        conversationId: row.conversation_id as string,
         role: row.role as Message['role'],
         content: row.content as string,
         timestamp: (row.timestamp as string) || undefined,
-        messageIndex: row.messageIndex as number,
-        inputTokens: (row.inputTokens as number) || undefined,
-        outputTokens: (row.outputTokens as number) || undefined,
-        cacheCreationTokens: (row.cacheCreationTokens as number) || undefined,
-        cacheReadTokens: (row.cacheReadTokens as number) || undefined,
-        totalLinesAdded: (row.totalLinesAdded as number) || undefined,
-        totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
+        messageIndex: row.message_index as number,
+        inputTokens: (row.input_tokens as number) || undefined,
+        outputTokens: (row.output_tokens as number) || undefined,
+        cacheCreationTokens: (row.cache_creation_tokens as number) || undefined,
+        cacheReadTokens: (row.cache_read_tokens as number) || undefined,
+        totalLinesAdded: (row.total_lines_added as number) || undefined,
+        totalLinesRemoved: (row.total_lines_removed as number) || undefined,
       }))
       .sort((a, b) => a.messageIndex - b.messageIndex);
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
     const table = await getMessagesTable();
-    await table.delete(`"conversationId" = '${conversationId}'`);
+    await table.delete(`conversation_id = '${conversationId}'`);
   },
 
   async search(query: string, limit = 50): Promise<MessageMatch[]> {
@@ -461,13 +460,13 @@ export const messageRepo = {
       const [ftsResults, vectorResults] = await Promise.all([
         table
           .search(query, 'fts')
-          .select(['id', 'conversationId', 'role', 'content', 'messageIndex'])
+          .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
           .limit(limit * 2)
           .toArray(),
         table
           .query()
           .nearestTo(queryVector)
-          .select(['id', 'conversationId', 'role', 'content', 'messageIndex'])
+          .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
           .limit(limit * 2)
           .toArray(),
       ]);
@@ -517,20 +516,20 @@ export const messageRepo = {
 
           return {
             messageId: row.id as string,
-            conversationId: row.conversationId as string,
+            conversationId: row.conversation_id as string,
             role: row.role as MessageMatch['role'],
             content,
             snippet,
             highlightRanges,
             score,
-            messageIndex: row.messageIndex as number,
+            messageIndex: row.message_index as number,
           };
         });
     } catch {
       // Fallback to FTS-only if embedding model not available
       const results = await table
         .search(query, 'fts')
-        .select(['id', 'conversationId', 'role', 'content', 'messageIndex'])
+        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
         .limit(limit)
         .toArray();
 
@@ -546,13 +545,13 @@ export const messageRepo = {
 
           return {
             messageId: row.id as string,
-            conversationId: row.conversationId as string,
+            conversationId: row.conversation_id as string,
             role: row.role as MessageMatch['role'],
             content,
             snippet,
             highlightRanges,
             score: (row._score as number) ?? 0,
-            messageIndex: row.messageIndex as number,
+            messageIndex: row.message_index as number,
           };
         });
     }
@@ -568,12 +567,12 @@ export const toolCallRepo = {
     const table = await getToolCallsTable();
     const rows = toolCalls.map((tc) => ({
       id: tc.id,
-      messageId: tc.messageId,
-      conversationId: tc.conversationId,
+      message_id: tc.messageId,
+      conversation_id: tc.conversationId,
       type: tc.type,
       input: tc.input,
       output: tc.output ?? '',
-      filePath: tc.filePath ?? '',
+      file_path: tc.filePath ?? '',
     }));
 
     await table.add(rows);
@@ -583,41 +582,41 @@ export const toolCallRepo = {
     const table = await getToolCallsTable();
     const results = await table
       .query()
-      .where(`"filePath" = '${filePath}'`)
+      .filter(`file_path = '${filePath}'`)
       .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      messageId: row.messageId as string,
-      conversationId: row.conversationId as string,
+      messageId: row.message_id as string,
+      conversationId: row.conversation_id as string,
       type: row.type as string,
       input: row.input as string,
       output: (row.output as string) || undefined,
-      filePath: (row.filePath as string) || undefined,
+      filePath: (row.file_path as string) || undefined,
     }));
   },
 
   async findByConversation(conversationId: string): Promise<ToolCall[]> {
     const table = await getToolCallsTable();
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.conversationId as string) === conversationId
-    );
+    const results = await table
+      .query()
+      .filter(`conversation_id = '${conversationId}'`)
+      .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      messageId: row.messageId as string,
-      conversationId: row.conversationId as string,
+      messageId: row.message_id as string,
+      conversationId: row.conversation_id as string,
       type: row.type as string,
       input: row.input as string,
       output: (row.output as string) || undefined,
-      filePath: (row.filePath as string) || undefined,
+      filePath: (row.file_path as string) || undefined,
     }));
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
     const table = await getToolCallsTable();
-    await table.delete(`"conversationId" = '${conversationId}'`);
+    await table.delete(`conversation_id = '${conversationId}'`);
   },
 };
 
@@ -628,7 +627,7 @@ export const syncStateRepo = {
     const table = await getSyncStateTable();
     const results = await table
       .query()
-      .where(`source = '${source}' AND "dbPath" = '${dbPath}'`)
+      .filter(`source = '${source}' AND db_path = '${dbPath}'`)
       .limit(1)
       .toArray();
 
@@ -637,10 +636,10 @@ export const syncStateRepo = {
     const row = results[0]!;
     return {
       source: row.source as SyncState['source'],
-      workspacePath: row.workspacePath as string,
-      dbPath: row.dbPath as string,
-      lastSyncedAt: row.lastSyncedAt as string,
-      lastMtime: row.lastMtime as number,
+      workspacePath: row.workspace_path as string,
+      dbPath: row.db_path as string,
+      lastSyncedAt: row.last_synced_at as string,
+      lastMtime: row.last_mtime as number,
     };
   },
 
@@ -648,15 +647,15 @@ export const syncStateRepo = {
     const table = await getSyncStateTable();
 
     // Delete existing if any
-    await table.delete(`source = '${state.source}' AND "dbPath" = '${state.dbPath}'`);
+    await table.delete(`source = '${state.source}' AND db_path = '${state.dbPath}'`);
 
     await table.add([
       {
         source: state.source,
-        workspacePath: state.workspacePath,
-        dbPath: state.dbPath,
-        lastSyncedAt: state.lastSyncedAt,
-        lastMtime: state.lastMtime,
+        workspace_path: state.workspacePath,
+        db_path: state.dbPath,
+        last_synced_at: state.lastSyncedAt,
+        last_mtime: state.lastMtime,
       },
     ]);
   },
@@ -671,8 +670,8 @@ export const filesRepo = {
     const table = await getFilesTable();
     const rows = files.map((f) => ({
       id: f.id,
-      conversationId: f.conversationId,
-      filePath: f.filePath,
+      conversation_id: f.conversationId,
+      file_path: f.filePath,
       role: f.role,
     }));
 
@@ -681,22 +680,22 @@ export const filesRepo = {
 
   async findByConversation(conversationId: string): Promise<ConversationFile[]> {
     const table = await getFilesTable();
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.conversationId as string) === conversationId
-    );
+    const results = await table
+      .query()
+      .filter(`conversation_id = '${conversationId}'`)
+      .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      conversationId: row.conversationId as string,
-      filePath: row.filePath as string,
+      conversationId: row.conversation_id as string,
+      filePath: row.file_path as string,
       role: row.role as ConversationFile['role'],
     }));
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
     const table = await getFilesTable();
-    await table.delete(`"conversationId" = '${conversationId}'`);
+    await table.delete(`conversation_id = '${conversationId}'`);
   },
 };
 
@@ -709,9 +708,9 @@ export const messageFilesRepo = {
     const table = await getMessageFilesTable();
     const rows = files.map((f) => ({
       id: f.id,
-      messageId: f.messageId,
-      conversationId: f.conversationId,
-      filePath: f.filePath,
+      message_id: f.messageId,
+      conversation_id: f.conversationId,
+      file_path: f.filePath,
       role: f.role,
     }));
 
@@ -720,39 +719,39 @@ export const messageFilesRepo = {
 
   async findByMessage(messageId: string): Promise<MessageFile[]> {
     const table = await getMessageFilesTable();
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.messageId as string) === messageId
-    );
+    const results = await table
+      .query()
+      .filter(`message_id = '${messageId}'`)
+      .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      messageId: row.messageId as string,
-      conversationId: row.conversationId as string,
-      filePath: row.filePath as string,
+      messageId: row.message_id as string,
+      conversationId: row.conversation_id as string,
+      filePath: row.file_path as string,
       role: row.role as MessageFile['role'],
     }));
   },
 
   async findByConversation(conversationId: string): Promise<MessageFile[]> {
     const table = await getMessageFilesTable();
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.conversationId as string) === conversationId
-    );
+    const results = await table
+      .query()
+      .filter(`conversation_id = '${conversationId}'`)
+      .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      messageId: row.messageId as string,
-      conversationId: row.conversationId as string,
-      filePath: row.filePath as string,
+      messageId: row.message_id as string,
+      conversationId: row.conversation_id as string,
+      filePath: row.file_path as string,
       role: row.role as MessageFile['role'],
     }));
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
     const table = await getMessageFilesTable();
-    await table.delete(`"conversationId" = '${conversationId}'`);
+    await table.delete(`conversation_id = '${conversationId}'`);
   },
 };
 
@@ -761,10 +760,11 @@ export const messageFilesRepo = {
 export const fileEditsRepo = {
   async getExistingIds(conversationId: string): Promise<Set<string>> {
     const table = await getFileEditsTable();
-    const allResults = await table.query().toArray();
-    const ids = allResults
-      .filter((row) => (row.conversationId as string) === conversationId)
-      .map((row) => row.id as string);
+    const results = await table
+      .query()
+      .filter(`conversation_id = '${conversationId}'`)
+      .toArray();
+    const ids = results.map((row) => row.id as string);
     return new Set(ids);
   },
 
@@ -774,14 +774,14 @@ export const fileEditsRepo = {
     const table = await getFileEditsTable();
     const rows = edits.map((e) => ({
       id: e.id,
-      messageId: e.messageId,
-      conversationId: e.conversationId,
-      filePath: e.filePath,
-      editType: e.editType,
-      linesAdded: e.linesAdded,
-      linesRemoved: e.linesRemoved,
-      startLine: e.startLine ?? 0,
-      endLine: e.endLine ?? 0,
+      message_id: e.messageId,
+      conversation_id: e.conversationId,
+      file_path: e.filePath,
+      edit_type: e.editType,
+      lines_added: e.linesAdded,
+      lines_removed: e.linesRemoved,
+      start_line: e.startLine ?? 0,
+      end_line: e.endLine ?? 0,
     }));
 
     await table.add(rows);
@@ -794,14 +794,14 @@ export const fileEditsRepo = {
     const table = await getFileEditsTable();
     const rows = newEdits.map((e) => ({
       id: e.id,
-      messageId: e.messageId,
-      conversationId: e.conversationId,
-      filePath: e.filePath,
-      editType: e.editType,
-      linesAdded: e.linesAdded,
-      linesRemoved: e.linesRemoved,
-      startLine: e.startLine ?? 0,
-      endLine: e.endLine ?? 0,
+      message_id: e.messageId,
+      conversation_id: e.conversationId,
+      file_path: e.filePath,
+      edit_type: e.editType,
+      lines_added: e.linesAdded,
+      lines_removed: e.linesRemoved,
+      start_line: e.startLine ?? 0,
+      end_line: e.endLine ?? 0,
     }));
 
     await table.add(rows);
@@ -810,47 +810,47 @@ export const fileEditsRepo = {
 
   async findByMessage(messageId: string): Promise<FileEdit[]> {
     const table = await getFileEditsTable();
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.messageId as string) === messageId
-    );
+    const results = await table
+      .query()
+      .filter(`message_id = '${messageId}'`)
+      .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      messageId: row.messageId as string,
-      conversationId: row.conversationId as string,
-      filePath: row.filePath as string,
-      editType: row.editType as FileEdit['editType'],
-      linesAdded: row.linesAdded as number,
-      linesRemoved: row.linesRemoved as number,
-      startLine: (row.startLine as number) || undefined,
-      endLine: (row.endLine as number) || undefined,
+      messageId: row.message_id as string,
+      conversationId: row.conversation_id as string,
+      filePath: row.file_path as string,
+      editType: row.edit_type as FileEdit['editType'],
+      linesAdded: row.lines_added as number,
+      linesRemoved: row.lines_removed as number,
+      startLine: (row.start_line as number) || undefined,
+      endLine: (row.end_line as number) || undefined,
     }));
   },
 
   async findByConversation(conversationId: string): Promise<FileEdit[]> {
     const table = await getFileEditsTable();
-    const allResults = await table.query().toArray();
-    const results = allResults.filter(
-      (row) => (row.conversationId as string) === conversationId
-    );
+    const results = await table
+      .query()
+      .filter(`conversation_id = '${conversationId}'`)
+      .toArray();
 
     return results.map((row) => ({
       id: row.id as string,
-      messageId: row.messageId as string,
-      conversationId: row.conversationId as string,
-      filePath: row.filePath as string,
-      editType: row.editType as FileEdit['editType'],
-      linesAdded: row.linesAdded as number,
-      linesRemoved: row.linesRemoved as number,
-      startLine: (row.startLine as number) || undefined,
-      endLine: (row.endLine as number) || undefined,
+      messageId: row.message_id as string,
+      conversationId: row.conversation_id as string,
+      filePath: row.file_path as string,
+      editType: row.edit_type as FileEdit['editType'],
+      linesAdded: row.lines_added as number,
+      linesRemoved: row.lines_removed as number,
+      startLine: (row.start_line as number) || undefined,
+      endLine: (row.end_line as number) || undefined,
     }));
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
     const table = await getFileEditsTable();
-    await table.delete(`"conversationId" = '${conversationId}'`);
+    await table.delete(`conversation_id = '${conversationId}'`);
   },
 };
 
@@ -906,27 +906,27 @@ export async function searchByFilePath(
 
   // File edits (role = 'edited')
   for (const row of fileEdits) {
-    const filePath = row.filePath as string;
+    const filePath = row.file_path as string;
     if (filePath.toLowerCase().includes(lowerPattern)) {
-      addMatch(row.conversationId as string, filePath, 'edited');
+      addMatch(row.conversation_id as string, filePath, 'edited');
     }
   }
 
   // Conversation files (use stored role)
   for (const row of conversationFiles) {
-    const filePath = row.filePath as string;
+    const filePath = row.file_path as string;
     if (filePath.toLowerCase().includes(lowerPattern)) {
       const role = row.role as 'edited' | 'context' | 'mentioned';
-      addMatch(row.conversationId as string, filePath, role);
+      addMatch(row.conversation_id as string, filePath, role);
     }
   }
 
   // Message files (use stored role)
   for (const row of messageFiles) {
-    const filePath = row.filePath as string;
+    const filePath = row.file_path as string;
     if (filePath.toLowerCase().includes(lowerPattern)) {
       const role = row.role as 'edited' | 'context' | 'mentioned';
-      addMatch(row.conversationId as string, filePath, role);
+      addMatch(row.conversation_id as string, filePath, role);
     }
   }
 
@@ -986,9 +986,9 @@ export async function getFileMatchesForConversations(
 
   // File edits (role = 'edited')
   for (const row of fileEdits) {
-    const conversationId = row.conversationId as string;
+    const conversationId = row.conversation_id as string;
     if (!conversationIds.has(conversationId)) continue;
-    const filePath = row.filePath as string;
+    const filePath = row.file_path as string;
     if (filePath.toLowerCase().includes(lowerPattern)) {
       addMatch(conversationId, filePath, 'edited');
     }
@@ -996,9 +996,9 @@ export async function getFileMatchesForConversations(
 
   // Conversation files
   for (const row of conversationFiles) {
-    const conversationId = row.conversationId as string;
+    const conversationId = row.conversation_id as string;
     if (!conversationIds.has(conversationId)) continue;
-    const filePath = row.filePath as string;
+    const filePath = row.file_path as string;
     if (filePath.toLowerCase().includes(lowerPattern)) {
       addMatch(conversationId, filePath, row.role as 'edited' | 'context' | 'mentioned');
     }
@@ -1006,9 +1006,9 @@ export async function getFileMatchesForConversations(
 
   // Message files
   for (const row of messageFiles) {
-    const conversationId = row.conversationId as string;
+    const conversationId = row.conversation_id as string;
     if (!conversationIds.has(conversationId)) continue;
-    const filePath = row.filePath as string;
+    const filePath = row.file_path as string;
     if (filePath.toLowerCase().includes(lowerPattern)) {
       addMatch(conversationId, filePath, row.role as 'edited' | 'context' | 'mentioned');
     }

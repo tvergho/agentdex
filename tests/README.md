@@ -220,15 +220,4 @@ bun run test:all
 The Cursor tests exist in `cursor.node-test.ts` (note the hyphen) to prevent Bun
 from attempting to run them. They run with Node's native test runner via tsx.
 
-### LanceDB Delete Operations
-
-LanceDB has a known issue where delete operations on tables with vector columns
-may not reliably remove rows. This affects the `--force` flag in `dex import`,
-which attempts to delete existing conversations before re-importing. The delete
-operation returns successfully but rows may persist.
-
-For full overwrites, consider deleting the database and re-syncing instead:
-```bash
-rm -rf ~/.dex/lancedb && dex sync --force
-```
 

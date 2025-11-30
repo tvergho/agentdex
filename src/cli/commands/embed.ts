@@ -38,13 +38,14 @@ const INSTRUCTION_PREFIX = 'Instruct: Retrieve relevant code conversations\nQuer
 // Max characters per text (8192 tokens ~ 32K chars, but be conservative)
 const MAX_TEXT_CHARS = 8000;
 
+// Database row structure (snake_case column names)
 interface MessageRow {
   id: string;
-  conversationId: string;
+  conversation_id: string;
   role: string;
   content: string;
   timestamp: string;
-  messageIndex: number;
+  message_index: number;
   vector: number[] | Float32Array;
 }
 
@@ -116,11 +117,11 @@ async function runWithServer(
           if (!vec || vec.length !== EMBEDDING_DIMENSIONS) return null;
           return {
             id: msg.id,
-            conversationId: msg.conversationId,
+            conversation_id: msg.conversation_id,
             role: msg.role,
             content: msg.content,
             timestamp: msg.timestamp,
-            messageIndex: msg.messageIndex,
+            message_index: msg.message_index,
             vector: vec,
           };
         })
@@ -185,11 +186,11 @@ async function runWithNodeLlamaCpp(
         const vec = vectors[j];
         return {
           id: msg.id,
-          conversationId: msg.conversationId,
+          conversation_id: msg.conversation_id,
           role: msg.role,
           content: msg.content,
           timestamp: msg.timestamp,
-          messageIndex: msg.messageIndex,
+          message_index: msg.message_index,
           vector: vec ? Array.from(vec) : Array.from(msg.vector),
         };
       })
