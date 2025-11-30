@@ -326,9 +326,11 @@ function UnifiedApp() {
     if (expandedIndex !== null) {
       let conv: Conversation | undefined;
 
-      if (viewMode === 'search' && searchResults) {
+      // Check search results first
+      if (searchResults && searchResults.results[expandedIndex]) {
         conv = searchResults.results[expandedIndex]?.conversation;
-      } else if (viewMode === 'list') {
+      } else if (conversations[expandedIndex]) {
+        // Fall back to conversations list
         conv = conversations[expandedIndex];
       }
 
@@ -347,14 +349,18 @@ function UnifiedApp() {
       setCombinedMessages([]);
       setMessageIndexMap(new Map());
     }
-  }, [expandedIndex, viewMode, searchResults, conversations]);
+  }, [expandedIndex, searchResults, conversations]);
 
   // Display items for list/search views
+  // Note: We compute this independently of viewMode so that expandedResult
+  // remains valid when transitioning from list/search to conversation view
   const displayItems = useMemo((): ConversationResult[] => {
-    if (viewMode === 'search' && searchResults) {
+    // If we have search results, use those
+    if (searchResults) {
       return searchResults.results;
     }
-    if (viewMode === 'list') {
+    // Otherwise, use the conversations list (for recent/list view)
+    if (conversations.length > 0) {
       return conversations.map((conv) => ({
         conversation: conv,
         matches: [],
@@ -372,7 +378,7 @@ function UnifiedApp() {
       }));
     }
     return [];
-  }, [viewMode, searchResults, conversations]);
+  }, [searchResults, conversations]);
 
   const expandedResult = expandedIndex !== null ? displayItems[expandedIndex] : null;
 

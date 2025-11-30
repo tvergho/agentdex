@@ -42,7 +42,10 @@ tests/
 │   └── time.ts         # Date/time utilities
 ├── unit/               # Unit tests (pure functions)
 │   ├── utils/
-│   │   └── export.test.ts
+│   │   ├── export.test.ts
+│   │   └── format.test.ts
+│   ├── db/
+│   │   └── repository.test.ts
 │   └── adapters/
 │       ├── claude-code.test.ts
 │       ├── codex.test.ts

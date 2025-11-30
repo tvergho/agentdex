@@ -329,8 +329,16 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
     const model = firstAssistant?.message?.model;
 
     // Sort entries by timestamp to get correct ordering
+    // Deduplicate by UUID to avoid duplicates from main + agent files
+    const seenUuids = new Set<string>();
     const sortedEntries = entries
       .filter((e) => (e.type === 'user' || e.type === 'assistant') && e.message)
+      .filter((e) => {
+        if (!e.uuid) return true; // Keep entries without UUID
+        if (seenUuids.has(e.uuid)) return false;
+        seenUuids.add(e.uuid);
+        return true;
+      })
       .sort((a, b) => {
         if (!a.timestamp || !b.timestamp) return 0;
         return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
