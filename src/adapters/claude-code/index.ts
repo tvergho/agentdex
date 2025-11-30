@@ -93,38 +93,67 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     // Filter to main messages (non-sidechain with content)
     const mainMessages = raw.messages.filter((m) => !m.isSidechain && m.content.trim().length > 0);
 
-    // Propagate line counts from tool-only assistant messages to the nearest visible assistant message
-    // Tool-only messages (empty content but have fileEdits) get filtered out, but we want their line counts
-    // to show on the visible assistant message
+    // Propagate stats from tool-only assistant messages to the nearest visible assistant message
+    // Tool-only messages (empty content but have tokens/line edits) get filtered out, but we want
+    // their stats to show on the visible assistant message
     const mainMessageUuids = new Set(mainMessages.map((m) => m.uuid));
-    const lineCounts = new Map<string, { added: number; removed: number }>();
 
-    // Initialize line counts for main messages
+    // Track aggregated stats per visible message
+    interface AggregatedStats {
+      added: number;
+      removed: number;
+      outputTokens: number;
+      // For input, track peak context message
+      peakInputTokens: number;
+      peakCacheCreationTokens: number;
+      peakCacheReadTokens: number;
+      peakContext: number;
+    }
+    const aggregatedStats = new Map<string, AggregatedStats>();
+
+    // Initialize stats for main messages
     for (const msg of mainMessages) {
-      lineCounts.set(msg.uuid, {
+      const ctx = (msg.inputTokens ?? 0) + (msg.cacheCreationTokens ?? 0) + (msg.cacheReadTokens ?? 0);
+      aggregatedStats.set(msg.uuid, {
         added: msg.totalLinesAdded ?? 0,
         removed: msg.totalLinesRemoved ?? 0,
+        outputTokens: msg.outputTokens ?? 0,
+        peakInputTokens: msg.inputTokens ?? 0,
+        peakCacheCreationTokens: msg.cacheCreationTokens ?? 0,
+        peakCacheReadTokens: msg.cacheReadTokens ?? 0,
+        peakContext: ctx,
       });
     }
 
-    // For each tool-only message, find the nearest visible assistant message and add its line counts
+    // For each tool-only message, find the nearest visible assistant message and add its stats
     for (let i = 0; i < raw.messages.length; i++) {
       const msg = raw.messages[i];
       if (!msg || msg.isSidechain) continue;
 
-      // Skip if this is a main message (already has its own line counts)
+      // Skip if this is a main message (already has its own stats)
       if (mainMessageUuids.has(msg.uuid)) continue;
 
       // This is a tool-only message - find nearest visible assistant message
-      if (msg.role === 'assistant' && (msg.totalLinesAdded ?? 0) > 0) {
+      if (msg.role === 'assistant') {
         // Look backwards for the nearest visible assistant message
         for (let j = i - 1; j >= 0; j--) {
           const prev = raw.messages[j];
           if (prev && prev.role === 'assistant' && mainMessageUuids.has(prev.uuid)) {
-            const counts = lineCounts.get(prev.uuid);
-            if (counts) {
-              counts.added += msg.totalLinesAdded ?? 0;
-              counts.removed += msg.totalLinesRemoved ?? 0;
+            const stats = aggregatedStats.get(prev.uuid);
+            if (stats) {
+              // Sum line counts and output tokens
+              stats.added += msg.totalLinesAdded ?? 0;
+              stats.removed += msg.totalLinesRemoved ?? 0;
+              stats.outputTokens += msg.outputTokens ?? 0;
+
+              // For input, use peak context (each API call has full context)
+              const ctx = (msg.inputTokens ?? 0) + (msg.cacheCreationTokens ?? 0) + (msg.cacheReadTokens ?? 0);
+              if (ctx > stats.peakContext) {
+                stats.peakInputTokens = msg.inputTokens ?? 0;
+                stats.peakCacheCreationTokens = msg.cacheCreationTokens ?? 0;
+                stats.peakCacheReadTokens = msg.cacheReadTokens ?? 0;
+                stats.peakContext = ctx;
+              }
             }
             break;
           }
@@ -133,7 +162,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
     }
 
     const messages: Message[] = mainMessages.map((msg, index) => {
-      const counts = lineCounts.get(msg.uuid);
+      const stats = aggregatedStats.get(msg.uuid);
       return {
         id: `${conversationId}:${msg.uuid}`,
         conversationId,
@@ -141,12 +170,12 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         content: msg.content,
         timestamp: msg.timestamp,
         messageIndex: index,
-        inputTokens: msg.inputTokens,
-        outputTokens: msg.outputTokens,
-        cacheCreationTokens: msg.cacheCreationTokens,
-        cacheReadTokens: msg.cacheReadTokens,
-        totalLinesAdded: counts && counts.added > 0 ? counts.added : undefined,
-        totalLinesRemoved: counts && counts.removed > 0 ? counts.removed : undefined,
+        inputTokens: stats?.peakInputTokens,
+        outputTokens: stats && stats.outputTokens > 0 ? stats.outputTokens : undefined,
+        cacheCreationTokens: stats?.peakCacheCreationTokens,
+        cacheReadTokens: stats?.peakCacheReadTokens,
+        totalLinesAdded: stats && stats.added > 0 ? stats.added : undefined,
+        totalLinesRemoved: stats && stats.removed > 0 ? stats.removed : undefined,
       };
     });
 

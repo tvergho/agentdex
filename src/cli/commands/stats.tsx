@@ -298,7 +298,7 @@ function TokensTab({
 }) {
   const { overview, daily, models, topConversations, lines, cache, sources } = data;
 
-  // Calculate totals
+  // Calculate totals (overview.totalInputTokens now includes cache tokens)
   const totalTokens = overview.totalInputTokens + overview.totalOutputTokens;
   const inputPercent = totalTokens > 0 ? Math.round((overview.totalInputTokens / totalTokens) * 100) : 0;
   const outputPercent = totalTokens > 0 ? 100 - inputPercent : 0;
@@ -511,16 +511,18 @@ function ActivityTab({
       </Box>
 
       {/* Hour and Day charts side-by-side */}
-      <Box>
+      <Box marginTop={1}>
         {/* Hourly distribution */}
         <Box flexDirection="column" width={halfWidth} marginRight={2}>
           <Text bold color="white">By Hour</Text>
+          <Text color="gray">{'─'.repeat(Math.min(20, halfWidth - 2))}</Text>
           <HourlyActivity data={hourly} width={halfWidth} />
         </Box>
 
         {/* Weekly distribution */}
         <Box flexDirection="column" width={halfWidth}>
           <Text bold color="white">By Day of Week</Text>
+          <Text color="gray">{'─'.repeat(Math.min(20, halfWidth - 2))}</Text>
           <WeeklyActivity data={weekly} width={halfWidth} />
         </Box>
       </Box>

@@ -86,38 +86,57 @@ export class CursorAdapter implements SourceAdapter {
     // Filter to main messages (with content)
     const mainBubbles = raw.bubbles.filter((bubble) => bubble.text.trim().length > 0);
 
-    // Propagate line counts from tool-only bubbles to the nearest visible assistant bubble
-    // Tool-only bubbles (empty text but have fileEdits) get filtered out, but we want their line counts
-    // to show on the visible assistant message
+    // Propagate stats from tool-only bubbles to the nearest visible assistant bubble
+    // Tool-only bubbles (empty text but have tokens/line edits) get filtered out, but we want
+    // their stats to show on the visible assistant message
     const mainBubbleIds = new Set(mainBubbles.map((b) => b.bubbleId));
-    const lineCounts = new Map<string, { added: number; removed: number }>();
 
-    // Initialize line counts for main bubbles
+    // Track aggregated stats per visible bubble
+    interface AggregatedStats {
+      added: number;
+      removed: number;
+      outputTokens: number;
+      // For input, track peak context
+      peakInputTokens: number;
+    }
+    const aggregatedStats = new Map<string, AggregatedStats>();
+
+    // Initialize stats for main bubbles
     for (const bubble of mainBubbles) {
-      lineCounts.set(bubble.bubbleId, {
+      aggregatedStats.set(bubble.bubbleId, {
         added: bubble.totalLinesAdded ?? 0,
         removed: bubble.totalLinesRemoved ?? 0,
+        outputTokens: bubble.outputTokens ?? 0,
+        peakInputTokens: bubble.inputTokens ?? 0,
       });
     }
 
-    // For each tool-only bubble, find the nearest visible assistant bubble and add its line counts
+    // For each tool-only bubble, find the nearest visible assistant bubble and add its stats
     for (let i = 0; i < raw.bubbles.length; i++) {
       const bubble = raw.bubbles[i];
       if (!bubble) continue;
 
-      // Skip if this is a main bubble (already has its own line counts)
+      // Skip if this is a main bubble (already has its own stats)
       if (mainBubbleIds.has(bubble.bubbleId)) continue;
 
       // This is a tool-only bubble - find nearest visible assistant bubble
-      if (bubble.type === 'assistant' && (bubble.totalLinesAdded ?? 0) > 0) {
+      if (bubble.type === 'assistant') {
         // Look backwards for the nearest visible assistant bubble
         for (let j = i - 1; j >= 0; j--) {
           const prev = raw.bubbles[j];
           if (prev && prev.type === 'assistant' && mainBubbleIds.has(prev.bubbleId)) {
-            const counts = lineCounts.get(prev.bubbleId);
-            if (counts) {
-              counts.added += bubble.totalLinesAdded ?? 0;
-              counts.removed += bubble.totalLinesRemoved ?? 0;
+            const stats = aggregatedStats.get(prev.bubbleId);
+            if (stats) {
+              // Sum line counts and output tokens
+              stats.added += bubble.totalLinesAdded ?? 0;
+              stats.removed += bubble.totalLinesRemoved ?? 0;
+              stats.outputTokens += bubble.outputTokens ?? 0;
+
+              // For input, use peak (each API call has full context)
+              const inputTokens = bubble.inputTokens ?? 0;
+              if (inputTokens > stats.peakInputTokens) {
+                stats.peakInputTokens = inputTokens;
+              }
             }
             break;
           }
@@ -126,7 +145,7 @@ export class CursorAdapter implements SourceAdapter {
     }
 
     const messages: Message[] = mainBubbles.map((bubble, index) => {
-      const counts = lineCounts.get(bubble.bubbleId);
+      const stats = aggregatedStats.get(bubble.bubbleId);
       return {
         id: `${conversationId}:${bubble.bubbleId}`,
         conversationId,
@@ -134,10 +153,10 @@ export class CursorAdapter implements SourceAdapter {
         content: bubble.text,
         timestamp: undefined,
         messageIndex: index,
-        inputTokens: bubble.inputTokens,
-        outputTokens: bubble.outputTokens,
-        totalLinesAdded: counts && counts.added > 0 ? counts.added : undefined,
-        totalLinesRemoved: counts && counts.removed > 0 ? counts.removed : undefined,
+        inputTokens: stats?.peakInputTokens,
+        outputTokens: stats && stats.outputTokens > 0 ? stats.outputTokens : undefined,
+        totalLinesAdded: stats && stats.added > 0 ? stats.added : undefined,
+        totalLinesRemoved: stats && stats.removed > 0 ? stats.removed : undefined,
       };
     });
 

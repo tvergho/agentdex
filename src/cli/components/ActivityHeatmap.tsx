@@ -322,10 +322,10 @@ export function HourlyActivity({ data, width, color = 'cyan' }: HourlyActivityPr
             <Text color={color}>{bar}</Text>
             {bucket.value > 0 && (
               <Text color="gray">
-                {' '}{String(bucket.value).padStart(3)} ({String(pct).padStart(2)}%)
+                {' '}{String(bucket.value).padStart(2)} {String(pct).padStart(2)}%
               </Text>
             )}
-            {isMax && <Text color="yellow"> ←</Text>}
+            {isMax && <Text color="yellowBright" bold> peak</Text>}
           </Box>
         );
       })}
@@ -371,10 +371,10 @@ export function WeeklyActivity({ data, width, color = 'cyan' }: WeeklyActivityPr
             <Text color={color}>{bar}</Text>
             {value > 0 && (
               <Text color="gray">
-                {' '}{String(value).padStart(3)} ({String(pct).padStart(2)}%)
+                {' '}{String(value).padStart(2)} {String(pct).padStart(2)}%
               </Text>
             )}
-            {isMax && <Text color="yellow"> ←</Text>}
+            {isMax && <Text color="yellowBright" bold> peak</Text>}
           </Box>
         );
       })}

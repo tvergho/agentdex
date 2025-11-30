@@ -487,8 +487,12 @@ export function extractConversations(dbPath: string): RawConversation[] {
       const workspacePath = extractWorkspacePath(filePaths);
       const projectName = extractProjectName(workspacePath);
 
-      // Calculate total token usage
-      const totalInputTokens = bubbles.reduce((sum, b) => sum + (b.inputTokens || 0), 0);
+      // Calculate token usage
+      // For input tokens, use MAX instead of SUM because input_tokens represents the full context
+      // sent in each API call (including all prior history). Summing would count the same context
+      // multiple times. MAX shows the peak context window used.
+      // For output tokens, SUM is correct since each output is new content generated.
+      const totalInputTokens = Math.max(0, ...bubbles.map((b) => b.inputTokens || 0));
       const totalOutputTokens = bubbles.reduce((sum, b) => sum + (b.outputTokens || 0), 0);
 
       conversations.push({

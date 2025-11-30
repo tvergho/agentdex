@@ -276,11 +276,22 @@ export function combineConsecutiveMessages<T extends {
       // Flush current group if any
       if (currentGroup.length > 0) {
         const combinedIdx = combined.length;
-        // Sum up tokens and line counts from all messages in the group
-        const totalInputTokens = currentGroup.reduce((sum, m) => sum + (m.inputTokens || 0), 0);
+        // For input/cache tokens, find the message with peak TOTAL context and use all its values.
+        // We can't take max of each component separately as they'd come from different messages.
+        // For output tokens and line counts, SUM since each adds new content.
+        let peakMessage: T | undefined;
+        let peakContext = 0;
+        for (const m of currentGroup) {
+          const ctx = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
+          if (ctx > peakContext) {
+            peakContext = ctx;
+            peakMessage = m;
+          }
+        }
+        const totalInputTokens = peakMessage?.inputTokens || 0;
+        const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
+        const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
         const totalOutputTokens = currentGroup.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
-        const totalCacheCreationTokens = currentGroup.reduce((sum, m) => sum + (m.cacheCreationTokens || 0), 0);
-        const totalCacheReadTokens = currentGroup.reduce((sum, m) => sum + (m.cacheReadTokens || 0), 0);
         const totalLinesAdded = currentGroup.reduce((sum, m) => sum + (m.totalLinesAdded || 0), 0);
         const totalLinesRemoved = currentGroup.reduce((sum, m) => sum + (m.totalLinesRemoved || 0), 0);
         combined.push({
@@ -311,11 +322,22 @@ export function combineConsecutiveMessages<T extends {
   // Flush final group
   if (currentGroup.length > 0) {
     const combinedIdx = combined.length;
-    // Sum up tokens and line counts from all messages in the group
-    const totalInputTokens = currentGroup.reduce((sum, m) => sum + (m.inputTokens || 0), 0);
+    // For input/cache tokens, find the message with peak TOTAL context and use all its values.
+    // We can't take max of each component separately as they'd come from different messages.
+    // For output tokens and line counts, SUM since each adds new content.
+    let peakMessage: T | undefined;
+    let peakContext = 0;
+    for (const m of currentGroup) {
+      const ctx = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
+      if (ctx > peakContext) {
+        peakContext = ctx;
+        peakMessage = m;
+      }
+    }
+    const totalInputTokens = peakMessage?.inputTokens || 0;
+    const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
+    const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
     const totalOutputTokens = currentGroup.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
-    const totalCacheCreationTokens = currentGroup.reduce((sum, m) => sum + (m.cacheCreationTokens || 0), 0);
-    const totalCacheReadTokens = currentGroup.reduce((sum, m) => sum + (m.cacheReadTokens || 0), 0);
     const totalLinesAdded = currentGroup.reduce((sum, m) => sum + (m.totalLinesAdded || 0), 0);
     const totalLinesRemoved = currentGroup.reduce((sum, m) => sum + (m.totalLinesRemoved || 0), 0);
     combined.push({

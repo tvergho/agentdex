@@ -110,7 +110,9 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
 
   for (const conv of filtered) {
     messages += conv.messageCount || 0;
-    totalInputTokens += conv.totalInputTokens || 0;
+    // Include cache tokens in input for consistency with other stats functions
+    totalInputTokens += (conv.totalInputTokens || 0) +
+      (conv.totalCacheCreationTokens || 0) + (conv.totalCacheReadTokens || 0);
     totalOutputTokens += conv.totalOutputTokens || 0;
     totalLinesAdded += conv.totalLinesAdded || 0;
     totalLinesRemoved += conv.totalLinesRemoved || 0;

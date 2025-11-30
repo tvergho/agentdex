@@ -401,11 +401,24 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
 
     if (messages.length === 0) continue;
 
-    // Calculate total token usage
-    const totalInputTokens = messages.reduce((sum, m) => sum + (m.inputTokens || 0), 0);
+    // Calculate token usage
+    // For input context, find the message with the peak TOTAL context
+    // (input + cache_creation + cache_read). This shows peak context window used.
+    // We can't take max of each component separately as they'd come from different messages.
+    // For output tokens, SUM is correct since each output is new content generated.
+    let peakMessage: RawMessage | undefined;
+    let peakContext = 0;
+    for (const m of messages) {
+      const totalContext = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
+      if (totalContext > peakContext) {
+        peakContext = totalContext;
+        peakMessage = m;
+      }
+    }
+    const totalInputTokens = peakMessage?.inputTokens || 0;
+    const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
+    const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
     const totalOutputTokens = messages.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
-    const totalCacheCreationTokens = messages.reduce((sum, m) => sum + (m.cacheCreationTokens || 0), 0);
-    const totalCacheReadTokens = messages.reduce((sum, m) => sum + (m.cacheReadTokens || 0), 0);
 
     // Calculate total line changes
     const totalLinesAdded = allEdits.reduce((sum, e) => sum + e.linesAdded, 0);

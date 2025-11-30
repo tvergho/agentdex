@@ -51,6 +51,11 @@ interface CodexTokenCount {
       output_tokens?: number;
       reasoning_output_tokens?: number;
     };
+    last_token_usage?: {
+      input_tokens?: number;
+      cached_input_tokens?: number;
+      output_tokens?: number;
+    };
   };
 }
 
@@ -440,27 +445,47 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
     }
   }
 
-  // Extract token usage from the last token_count event
-  let totalInputTokens: number | undefined;
+  // Extract token usage from token_count events
+  // For input: use PEAK of last_token_usage (each API call's context, find max)
+  // For output: use cumulative total_token_usage (each output is new content)
+  let peakInputTokens = 0;
+  let peakCacheReadTokens = 0;
   let totalOutputTokens: number | undefined;
-  let totalCacheReadTokens: number | undefined;
 
-  // Find all token_count events and use the last one
   const tokenCountEntries = entries.filter(
     (e) => e.type === 'event_msg' && (e.payload as CodexTokenCount).type === 'token_count'
   );
 
+  for (const entry of tokenCountEntries) {
+    const tokenPayload = entry.payload as CodexTokenCount;
+    const lastUsage = tokenPayload?.info?.last_token_usage;
+
+    if (lastUsage) {
+      // Track peak input context
+      const inputTokens = lastUsage.input_tokens ?? 0;
+      const cacheTokens = lastUsage.cached_input_tokens ?? 0;
+      const totalContext = inputTokens + cacheTokens;
+
+      if (totalContext > peakInputTokens + peakCacheReadTokens) {
+        peakInputTokens = inputTokens;
+        peakCacheReadTokens = cacheTokens;
+      }
+    }
+  }
+
+  // Get cumulative output from last event
   if (tokenCountEntries.length > 0) {
     const lastTokenEntry = tokenCountEntries[tokenCountEntries.length - 1];
     const tokenPayload = lastTokenEntry?.payload as CodexTokenCount;
-    const usage = tokenPayload?.info?.total_token_usage;
+    const totalUsage = tokenPayload?.info?.total_token_usage;
 
-    if (usage) {
-      totalInputTokens = usage.input_tokens;
-      totalOutputTokens = usage.output_tokens;
-      totalCacheReadTokens = usage.cached_input_tokens;
+    if (totalUsage) {
+      totalOutputTokens = totalUsage.output_tokens;
     }
   }
+
+  const totalInputTokens = peakInputTokens > 0 ? peakInputTokens : undefined;
+  const totalCacheReadTokens = peakCacheReadTokens > 0 ? peakCacheReadTokens : undefined;
 
   if (messages.length === 0) {
     return null;
