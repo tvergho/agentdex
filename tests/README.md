@@ -5,8 +5,14 @@ This directory contains the test suite for Dex, using Bun's built-in test runner
 ## Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (Bun + Cursor)
+bun run test:all
+
+# Run Bun tests only
 bun test
+
+# Run Cursor tests only (uses Node.js)
+bun run test:cursor
 
 # Run tests in watch mode
 bun test --watch
@@ -193,14 +199,18 @@ const count = await countFilesWithExtension('/dir', '.md');
 
 ### Cursor Adapter Tests
 
-The Cursor adapter tests are currently **skipped** because the Cursor parser uses
-`better-sqlite3` which has compatibility issues with Bun's test runner. The native
-bindings don't load properly in Bun's test context.
+The Cursor parser uses `better-sqlite3` which has compatibility issues with Bun's
+test runner. To work around this, Cursor tests run separately using Node.js:
 
-The mock SQLite helpers in `tests/helpers/sources.ts` use `bun:sqlite` which works
-for creating test databases, but the parser itself uses `better-sqlite3`.
+```bash
+# Run Cursor tests specifically
+bun run test:cursor
 
-To test Cursor functionality:
-- Run the main app which uses better-sqlite3 correctly: `bun run dev sync`
-- Or manually test with tsx: `npx tsx tests/unit/adapters/cursor.test.ts`
+# Run all tests (Bun + Cursor)
+bun run test:all
+```
+
+The Cursor tests in `cursor.test.ts` are skipped in `bun test`. Instead, a Node.js
+compatible version exists in `cursor.node.test.ts` that runs with Node's native
+test runner via tsx.
 

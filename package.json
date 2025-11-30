@@ -15,7 +15,9 @@
     "lint:fix": "eslint src/ --fix",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "test:coverage": "bun test --coverage"
+    "test:coverage": "bun test --coverage",
+    "test:cursor": "node --import tsx --test tests/unit/adapters/cursor.node-test.ts",
+    "test:all": "bun test && npm run test:cursor"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

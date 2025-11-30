@@ -184,7 +184,7 @@ export async function createOpenCodeStorage(
 
 // ============ Cursor Mock Data (SQLite) ============
 
-import { Database } from 'bun:sqlite';
+import Database from 'better-sqlite3';
 
 export interface MockCursorBubble {
   bubbleId: string;
