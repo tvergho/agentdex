@@ -10,6 +10,8 @@ Dex indexes conversations from AI coding assistants (Cursor, Claude Code, Codex,
 - 🖥️ **Interactive TUI** with vim-style navigation (j/k, Enter, Esc)
 - 📁 **Project context** - see which files were discussed
 - 🔄 **Incremental sync** - only indexes new conversations
+- 📊 **Analytics dashboard** - token usage, activity heatmaps, project stats
+- 📤 **Export & backup** - markdown exports and JSON backups for portability
 - 🏠 **Fully local** - your data never leaves your machine
 
 ## Supported Sources
@@ -90,6 +92,69 @@ bun run dev list
 
 # Limit results
 bun run dev list --limit 10
+```
+
+### Export
+
+Export conversations as readable markdown files:
+
+```bash
+# Export all conversations
+bun run dev export
+
+# Export to custom directory
+bun run dev export --output ~/my-exports
+
+# Filter by source
+bun run dev export --source cursor
+
+# Filter by project (substring match)
+bun run dev export --project myapp
+
+# Filter by date range
+bun run dev export --from 2025-01-01 --to 2025-01-31
+
+# Export single conversation
+bun run dev export --id <conversation-id>
+```
+
+Output structure:
+```
+dex-export/
+└── cursor/
+    └── my-project/
+        └── 2025-01-15_fixing-auth-bug.md
+```
+
+### Backup & Import
+
+Full database backup for migration between machines:
+
+```bash
+# Create backup
+bun run dev backup
+
+# Import on another machine
+bun run dev import backup.json
+
+# Preview import without writing
+bun run dev import backup.json --dry-run
+```
+
+### Stats
+
+View usage analytics and statistics:
+
+```bash
+# Interactive dashboard
+bun run dev stats
+
+# Quick summary (non-interactive)
+bun run dev stats --summary
+
+# Different time periods
+bun run dev stats --period 7
+bun run dev stats --period 90
 ```
 
 ## Data Storage

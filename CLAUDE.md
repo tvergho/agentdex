@@ -30,6 +30,10 @@ src/
 │   │   ├── show.tsx    # Show single conversation
 │   │   ├── sync.tsx    # Sync data from sources
 │   │   ├── status.tsx  # Embedding progress status
+│   │   ├── stats.tsx   # Analytics dashboard
+│   │   ├── export.ts   # Export as markdown files
+│   │   ├── backup.ts   # Full database backup (JSON)
+│   │   ├── import.ts   # Import from backup
 │   │   └── embed.ts    # Background embedding worker
 │   └── components/     # Reusable UI components
 │       ├── HighlightedText.tsx
@@ -45,6 +49,7 @@ src/
 ├── utils/
 │   ├── config.ts       # Configuration paths
 │   ├── format.ts       # Shared formatting utilities
+│   ├── export.ts       # Export utilities (markdown generation)
 │   └── platform.ts     # OS detection
 ├── embeddings/         # Vector embedding generation
 │   ├── index.ts        # Embedding orchestration
@@ -60,6 +65,10 @@ bun run dev search "query"  # Search conversations
 bun run dev list        # List all conversations
 bun run dev show <id>   # Show a specific conversation
 bun run dev status      # Check embedding progress
+bun run dev stats       # View usage analytics dashboard
+bun run dev export      # Export conversations as markdown
+bun run dev backup      # Full database backup (JSON)
+bun run dev import <file>  # Import from backup
 bun run typecheck       # Run TypeScript type checking
 bun run lint            # Run ESLint
 bun run lint:fix        # Auto-fix lint issues
@@ -129,6 +138,55 @@ LanceDB schema is defined by the first row inserted. To add new columns:
 6. **Delete database and re-sync** - `rm -rf ~/.dex/lancedb && bun run dev sync --force`
 
 **Critical**: Simply opening an existing table won't add new columns. The table must be recreated with the new schema for columns to exist.
+
+## Export & Backup
+
+### Export Command (`dex export`)
+
+Exports conversations as human-readable markdown files organized by source and project:
+
+```bash
+dex export                          # Export all conversations to ./dex-export
+dex export -o ~/my-exports          # Custom output directory
+dex export --source cursor          # Filter by source
+dex export --project myapp          # Filter by project path (substring match)
+dex export --from 2025-01-01 --to 2025-01-31  # Date range
+dex export --id <conversation-id>   # Export single conversation
+```
+
+**Output structure:**
+```
+output/
+└── <source>/
+    └── <project-name>/
+        └── YYYY-MM-DD_conversation-title.md
+```
+
+**Markdown format includes:**
+- Conversation metadata (source, project, model, mode, timestamps)
+- Token usage and lines changed statistics
+- Associated files list
+- Full message content with role labels
+
+### Backup Command (`dex backup`)
+
+Exports the full database as JSON for migration between machines:
+
+```bash
+dex backup                          # Creates dex-backup-TIMESTAMP.json
+dex backup -o my-backup.json        # Custom filename
+dex backup --source claude-code     # Filter by source
+```
+
+### Import Command (`dex import`)
+
+Imports conversations from a backup archive:
+
+```bash
+dex import backup.json              # Import all conversations
+dex import backup.json --dry-run    # Preview what would be imported
+dex import backup.json --force      # Overwrite existing conversations
+```
 
 ## Embeddings
 
