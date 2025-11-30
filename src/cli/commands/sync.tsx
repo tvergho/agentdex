@@ -180,8 +180,10 @@ async function runSync(
     // Connect to database
     await connect();
 
-    // Collect all normalized conversations from all adapters first
+    // ========== PHASE 1: Collect all data from all adapters ==========
+    // This is fast - just reading files, no DB operations yet
     const allConversations: { normalized: NormalizedConversation; adapter: typeof adapters[0]; location: SourceLocation }[] = [];
+    const locationsToSync: { adapter: typeof adapters[0]; location: SourceLocation }[] = [];
 
     // Process each adapter
     for (const adapter of adapters) {
@@ -212,6 +214,8 @@ async function runSync(
           }
         }
 
+        locationsToSync.push({ adapter, location });
+
         // Extract and normalize all conversations
         const rawConversations = await adapter.extract(location);
 
@@ -219,152 +223,133 @@ async function runSync(
           const normalized = adapter.normalize(raw, location);
           allConversations.push({ normalized, adapter, location });
         }
-
-        // Update sync state after extraction
-        await syncStateRepo.set({
-          source: adapter.name,
-          workspacePath: location.workspacePath,
-          dbPath: location.dbPath,
-          lastSyncedAt: new Date().toISOString(),
-          lastMtime: location.mtime,
-        });
       }
     }
 
     progress.conversationsFound = allConversations.length;
+
+    // Group conversations by project path for progress display
+    const projectPaths = new Set(allConversations.map(c => c.normalized.conversation.workspacePath || 'unknown'));
+    progress.projectsFound = projectPaths.size;
     onProgress({ ...progress });
 
-    // Group conversations by project path
-    const byProject = new Map<string, typeof allConversations>();
-    for (const item of allConversations) {
-      const projectPath = item.normalized.conversation.workspacePath || 'unknown';
-      if (!byProject.has(projectPath)) {
-        byProject.set(projectPath, []);
-      }
-      byProject.get(projectPath)!.push(item);
+    if (allConversations.length === 0) {
+      progress.phase = 'done';
+      progress.currentSource = undefined;
+      onProgress({ ...progress });
+      return;
     }
 
-    progress.projectsFound = byProject.size;
-    onProgress({ ...progress });
-
-    // Process by project
+    // ========== PHASE 2: Batch collect all data to insert ==========
     progress.phase = 'syncing';
+    progress.currentSource = 'all sources';
+    onProgress({ ...progress });
 
-    for (const [projectPath, conversations] of byProject) {
-      progress.currentProject = projectPath;
-      // Update currentSource to the adapter of the first conversation in this project group
-      if (conversations.length > 0) {
-        progress.currentSource = conversations[0]!.adapter.name;
-      }
-      onProgress({ ...progress });
+    // Collect all data into arrays for bulk operations
+    const allConvRows: Parameters<typeof conversationRepo.upsert>[0][] = [];
+    const allMessages: Parameters<typeof messageRepo.bulkInsert>[0] = [];
+    const allToolCalls: Parameters<typeof toolCallRepo.bulkInsert>[0] = [];
+    const allFiles: Parameters<typeof filesRepo.bulkInsert>[0] = [];
+    const allMessageFiles: Parameters<typeof messageFilesRepo.bulkInsert>[0] = [];
+    const allFileEdits: Parameters<typeof fileEditsRepo.bulkInsert>[0] = [];
 
+    // For force mode, track what to delete
+    const deleteBySource = new Map<string, Set<string>>(); // source -> workspacePaths
+
+    for (const { normalized, adapter, location } of allConversations) {
+      // Track deletions for force mode
       if (options.force) {
-        // Force mode: Delete existing data for this project
-        // We need to delete by each adapter/workspace combo
-        const seen = new Set<string>();
-        for (const { adapter, location } of conversations) {
-          const key = `${adapter.name}:${location.workspacePath}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            await conversationRepo.deleteBySource(adapter.name, location.workspacePath);
-          }
+        const key = adapter.name;
+        if (!deleteBySource.has(key)) {
+          deleteBySource.set(key, new Set());
         }
+        deleteBySource.get(key)!.add(location.workspacePath);
       }
 
-      for (const { normalized } of conversations) {
-        if (options.force) {
-          // Force mode: Delete and re-insert everything
-          await messageRepo.deleteByConversation(normalized.conversation.id);
-          await toolCallRepo.deleteByConversation(normalized.conversation.id);
-          await filesRepo.deleteByConversation(normalized.conversation.id);
-          await messageFilesRepo.deleteByConversation(normalized.conversation.id);
-          await fileEditsRepo.deleteByConversation(normalized.conversation.id);
+      // Collect conversation
+      allConvRows.push(normalized.conversation);
 
-          // Insert conversation
-          await conversationRepo.upsert(normalized.conversation);
-          progress.conversationsIndexed++;
-
-          // Insert messages
-          if (normalized.messages.length > 0) {
-            await messageRepo.bulkInsert(normalized.messages);
-            progress.messagesIndexed += normalized.messages.length;
-          }
-
-          // Insert tool calls
-          if (normalized.toolCalls.length > 0) {
-            await toolCallRepo.bulkInsert(normalized.toolCalls);
-          }
-
-          // Insert files
-          if (normalized.files && normalized.files.length > 0) {
-            await filesRepo.bulkInsert(normalized.files);
-          }
-
-          // Insert message files
-          if (normalized.messageFiles && normalized.messageFiles.length > 0) {
-            await messageFilesRepo.bulkInsert(normalized.messageFiles);
-          }
-
-          // Insert file edits
-          if (normalized.fileEdits && normalized.fileEdits.length > 0) {
-            await fileEditsRepo.bulkInsert(normalized.fileEdits);
-          }
-        } else {
-          // Incremental mode: Only insert new data, preserve existing embeddings
-          const conversationExists = await conversationRepo.exists(normalized.conversation.id);
-
-          // Always upsert conversation metadata
-          await conversationRepo.upsert(normalized.conversation);
-          progress.conversationsIndexed++;
-
-          if (conversationExists) {
-            // Get existing IDs to avoid duplicates
-            const existingMessageIds = await messageRepo.getExistingIds(normalized.conversation.id);
-            const existingEditIds = await fileEditsRepo.getExistingIds(normalized.conversation.id);
-
-            // Only insert new messages
-            if (normalized.messages.length > 0) {
-              const newCount = await messageRepo.bulkInsertNew(normalized.messages, existingMessageIds);
-              progress.messagesIndexed += newCount;
-            }
-
-            // Insert new file edits
-            if (normalized.fileEdits && normalized.fileEdits.length > 0) {
-              await fileEditsRepo.bulkInsertNew(normalized.fileEdits, existingEditIds);
-            }
-          } else {
-            // New conversation: insert everything
-            if (normalized.messages.length > 0) {
-              await messageRepo.bulkInsert(normalized.messages);
-              progress.messagesIndexed += normalized.messages.length;
-            }
-
-            if (normalized.toolCalls.length > 0) {
-              await toolCallRepo.bulkInsert(normalized.toolCalls);
-            }
-
-            if (normalized.files && normalized.files.length > 0) {
-              await filesRepo.bulkInsert(normalized.files);
-            }
-
-            if (normalized.messageFiles && normalized.messageFiles.length > 0) {
-              await messageFilesRepo.bulkInsert(normalized.messageFiles);
-            }
-
-            if (normalized.fileEdits && normalized.fileEdits.length > 0) {
-              await fileEditsRepo.bulkInsert(normalized.fileEdits);
-            }
-          }
-        }
-
-        onProgress({ ...progress });
+      // Collect messages
+      if (normalized.messages.length > 0) {
+        allMessages.push(...normalized.messages);
       }
 
-      progress.projectsProcessed++;
+      // Collect tool calls
+      if (normalized.toolCalls.length > 0) {
+        allToolCalls.push(...normalized.toolCalls);
+      }
+
+      // Collect files
+      if (normalized.files && normalized.files.length > 0) {
+        allFiles.push(...normalized.files);
+      }
+
+      // Collect message files
+      if (normalized.messageFiles && normalized.messageFiles.length > 0) {
+        allMessageFiles.push(...normalized.messageFiles);
+      }
+
+      // Collect file edits
+      if (normalized.fileEdits && normalized.fileEdits.length > 0) {
+        allFileEdits.push(...normalized.fileEdits);
+      }
+    }
+
+    // ========== PHASE 3: Bulk delete (force mode) ==========
+    if (options.force) {
+      for (const [source, workspacePaths] of deleteBySource) {
+        for (const workspacePath of workspacePaths) {
+          await conversationRepo.deleteBySource(source, workspacePath);
+        }
+      }
+    }
+
+    // ========== PHASE 4: Bulk insert all data ==========
+    // Bulk upsert all conversations at once
+    await conversationRepo.bulkUpsert(allConvRows);
+    progress.conversationsIndexed = allConvRows.length;
+    progress.projectsProcessed = projectPaths.size;
+    onProgress({ ...progress });
+
+    // Bulk insert messages
+    if (allMessages.length > 0) {
+      await messageRepo.bulkInsert(allMessages);
+      progress.messagesIndexed = allMessages.length;
       onProgress({ ...progress });
     }
 
-    // Rebuild FTS index after all data is inserted
+    // Bulk insert tool calls
+    if (allToolCalls.length > 0) {
+      await toolCallRepo.bulkInsert(allToolCalls);
+    }
+
+    // Bulk insert files
+    if (allFiles.length > 0) {
+      await filesRepo.bulkInsert(allFiles);
+    }
+
+    // Bulk insert message files
+    if (allMessageFiles.length > 0) {
+      await messageFilesRepo.bulkInsert(allMessageFiles);
+    }
+
+    // Bulk insert file edits
+    if (allFileEdits.length > 0) {
+      await fileEditsRepo.bulkInsert(allFileEdits);
+    }
+
+    // ========== PHASE 5: Update sync state ==========
+    for (const { adapter, location } of locationsToSync) {
+      await syncStateRepo.set({
+        source: adapter.name,
+        workspacePath: location.workspacePath,
+        dbPath: location.dbPath,
+        lastSyncedAt: new Date().toISOString(),
+        lastMtime: location.mtime,
+      });
+    }
+
+    // ========== PHASE 6: Rebuild FTS index ==========
     if (progress.messagesIndexed > 0) {
       progress.phase = 'indexing';
       progress.currentSource = undefined;

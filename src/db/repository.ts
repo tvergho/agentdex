@@ -139,6 +139,54 @@ export const conversationRepo = {
     await table.add([row]);
   },
 
+  async bulkUpsert(conversations: Conversation[]): Promise<void> {
+    if (conversations.length === 0) return;
+
+    const table = await getConversationsTable();
+
+    // Get all existing IDs in one query
+    const allExisting = await table.query().select(['id']).toArray();
+    const existingIds = new Set(allExisting.map((row) => row.id as string));
+
+    // Find IDs that need deletion
+    const idsToDelete = conversations
+      .filter((conv) => existingIds.has(conv.id))
+      .map((conv) => conv.id);
+
+    // Bulk delete existing (in batches to avoid query length limits)
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
+      const batch = idsToDelete.slice(i, i + BATCH_SIZE);
+      const whereClause = batch.map((id) => `id = '${id}'`).join(' OR ');
+      await table.delete(whereClause);
+    }
+
+    // Convert all conversations to rows
+    const rows = conversations.map((conv) => ({
+      id: conv.id,
+      source: conv.source,
+      title: conv.title,
+      subtitle: conv.subtitle ?? '',
+      workspacePath: conv.workspacePath ?? '',
+      projectName: conv.projectName ?? '',
+      model: conv.model ?? '',
+      mode: conv.mode ?? '',
+      createdAt: conv.createdAt ?? '',
+      updatedAt: conv.updatedAt ?? '',
+      messageCount: conv.messageCount,
+      sourceRefJson: JSON.stringify(conv.sourceRef),
+      totalInputTokens: conv.totalInputTokens ?? 0,
+      totalOutputTokens: conv.totalOutputTokens ?? 0,
+      totalCacheCreationTokens: conv.totalCacheCreationTokens ?? 0,
+      totalCacheReadTokens: conv.totalCacheReadTokens ?? 0,
+      totalLinesAdded: conv.totalLinesAdded ?? 0,
+      totalLinesRemoved: conv.totalLinesRemoved ?? 0,
+    }));
+
+    // Bulk insert all rows
+    await table.add(rows);
+  },
+
   async findById(id: string): Promise<Conversation | null> {
     const table = await getConversationsTable();
     const results = await table.query().where(`id = '${id}'`).limit(1).toArray();

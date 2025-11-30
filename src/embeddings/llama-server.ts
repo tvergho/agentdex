@@ -6,7 +6,12 @@
 import { existsSync, mkdirSync, createWriteStream, chmodSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawn, ChildProcess } from 'child_process';
+import { cpus } from 'os';
 import { getDataDir } from '../utils/config';
+
+// Moderate thread count for background work: 25% of cores, minimum 1, max 3
+// Enough for reasonable speed without causing thermal issues
+const LOW_PRIORITY_THREADS = Math.min(3, Math.max(1, Math.floor(cpus().length * 0.25)));
 
 // GitHub API for fetching latest release
 const GITHUB_API_LATEST = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest';
@@ -238,7 +243,7 @@ async function moveFilesToRoot(destDir: string): Promise<void> {
 let serverProcess: ChildProcess | null = null;
 let serverPort = 8089;
 
-export async function startLlamaServer(modelPath: string, threads: number = 4): Promise<number> {
+export async function startLlamaServer(modelPath: string, threads?: number): Promise<number> {
   if (serverProcess) {
     return serverPort;
   }
@@ -251,15 +256,19 @@ export async function startLlamaServer(modelPath: string, threads: number = 4): 
   // Find an available port
   serverPort = 8089 + Math.floor(Math.random() * 100);
 
+  // Use conservative thread count for background embedding
+  const threadCount = threads ?? LOW_PRIORITY_THREADS;
+
+  // Moderate batch sizes - balance speed and thermal impact
   const args = [
     '--model', modelPath,
     '--port', String(serverPort),
     '--embedding',
     '--pooling', 'mean',
-    '--threads', String(threads),
-    '--ctx-size', '8192',
-    '--batch-size', '8192',
-    '--ubatch-size', '8192',
+    '--threads', String(threadCount),
+    '--ctx-size', '4096',
+    '--batch-size', '2048',   // Moderate - allows decent throughput
+    '--ubatch-size', '512',   // Smaller micro-batches to spread work
   ];
 
   // Start with low priority on Unix

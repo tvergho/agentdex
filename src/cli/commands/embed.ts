@@ -27,12 +27,12 @@ import {
 } from '../../embeddings/llama-server';
 import { existsSync } from 'fs';
 
-// Batch size for server - moderate due to long texts
-const SERVER_BATCH_SIZE = 32;
-// Smaller batch size for node-llama-cpp fallback
-const FALLBACK_BATCH_SIZE = 16;
-// Pause between batches
-const BATCH_DELAY_MS = 50;
+// Moderate batch sizes - balance between speed and thermal impact
+const SERVER_BATCH_SIZE = 16;    // Half of original 32
+const FALLBACK_BATCH_SIZE = 8;   // Half of original 16
+
+// Moderate pause between batches - enough to prevent sustained heat buildup
+const BATCH_DELAY_MS = 200;      // 200ms pause between batches
 // Instruction prefix for query embeddings
 const INSTRUCTION_PREFIX = 'Instruct: Retrieve relevant code conversations\nQuery: ';
 // Max characters per text (8192 tokens ~ 32K chars, but be conservative)
@@ -91,9 +91,9 @@ async function runWithServer(
       console.log('\nllama-server downloaded.');
     }
 
-    // Start server
+    // Start server with default low-priority thread count
     console.log('Starting llama-server...');
-    const port = await startLlamaServer(modelPath, 4);
+    const port = await startLlamaServer(modelPath);
     console.log(`llama-server started on port ${port}`);
 
     // Process in batches
@@ -218,9 +218,9 @@ async function runWithNodeLlamaCpp(
       startedAt: getEmbeddingProgress().startedAt,
     });
 
-    // Brief pause between batches
+    // Same pause as server path to keep CPU cool
     if (i + FALLBACK_BATCH_SIZE < messages.length) {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
     }
   }
 
