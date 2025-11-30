@@ -457,6 +457,8 @@ function UnifiedApp() {
     // Quit from home/list (but not from deeper views)
     if (input === 'q' && (unifiedViewMode === 'home' || unifiedViewMode === 'list')) {
       exit();
+      // Force exit after short delay to avoid hanging on open connections
+      setTimeout(() => process.exit(0), 100);
       return;
     }
 
