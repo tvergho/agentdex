@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Source types for extensibility
-export const SourceType = z.enum(['cursor', 'claude-code', 'codex']);
+export const SourceType = z.enum(['cursor', 'claude-code', 'codex', 'opencode']);
 export type SourceType = z.infer<typeof SourceType>;
 
 // Reference back to original source for deep linking
