@@ -141,3 +141,22 @@ export const SearchResponse = z.object({
   searchTimeMs: z.number(),
 });
 export type SearchResponse = z.infer<typeof SearchResponse>;
+
+// Export/backup archive format for migration between machines
+export const ExportedConversation = z.object({
+  conversation: Conversation,
+  messages: z.array(Message),
+  toolCalls: z.array(ToolCall),
+  files: z.array(ConversationFile),
+  messageFiles: z.array(MessageFile),
+  fileEdits: z.array(FileEdit),
+});
+export type ExportedConversation = z.infer<typeof ExportedConversation>;
+
+export const ExportArchive = z.object({
+  version: z.string(),
+  exportedAt: z.string().datetime(),
+  machine: z.string().optional(),
+  conversations: z.array(ExportedConversation),
+});
+export type ExportArchive = z.infer<typeof ExportArchive>;

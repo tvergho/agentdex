@@ -217,6 +217,69 @@ export const conversationRepo = {
       await table.delete(`source = '${source}'`);
     }
   },
+
+  async findByFilters(opts: {
+    source?: string;
+    workspacePath?: string;
+    fromDate?: string;
+    toDate?: string;
+    ids?: string[];
+  } = {}): Promise<Conversation[]> {
+    const table = await getConversationsTable();
+    const allResults = await table.query().toArray();
+
+    let results = allResults;
+
+    // Apply filters in memory (LanceDB has issues with complex WHERE clauses)
+    if (opts.source) {
+      results = results.filter((row) => (row.source as string) === opts.source);
+    }
+    if (opts.workspacePath) {
+      results = results.filter((row) => {
+        const wp = row.workspacePath as string;
+        return wp && wp.includes(opts.workspacePath!);
+      });
+    }
+    if (opts.fromDate) {
+      const from = new Date(opts.fromDate).getTime();
+      results = results.filter((row) => {
+        const created = row.createdAt as string;
+        return created && new Date(created).getTime() >= from;
+      });
+    }
+    if (opts.toDate) {
+      const to = new Date(opts.toDate).getTime();
+      results = results.filter((row) => {
+        const created = row.createdAt as string;
+        return created && new Date(created).getTime() <= to;
+      });
+    }
+    if (opts.ids && opts.ids.length > 0) {
+      const idSet = new Set(opts.ids);
+      results = results.filter((row) => idSet.has(row.id as string));
+    }
+
+    return results.map((row) => ({
+      id: row.id as string,
+      source: row.source as Conversation['source'],
+      title: row.title as string,
+      subtitle: (row.subtitle as string) || undefined,
+      workspacePath: (row.workspacePath as string) || undefined,
+      projectName: (row.projectName as string) || undefined,
+      model: (row.model as string) || undefined,
+      mode: (row.mode as string) || undefined,
+      createdAt: (row.createdAt as string) || undefined,
+      updatedAt: (row.updatedAt as string) || undefined,
+      messageCount: row.messageCount as number,
+      sourceRef: JSON.parse(row.sourceRefJson as string) as SourceRef,
+      totalInputTokens: (row.totalInputTokens as number) || undefined,
+      totalOutputTokens: (row.totalOutputTokens as number) || undefined,
+      totalCacheCreationTokens: (row.totalCacheCreationTokens as number) || undefined,
+      totalCacheReadTokens: (row.totalCacheReadTokens as number) || undefined,
+      totalLinesAdded: (row.totalLinesAdded as number) || undefined,
+      totalLinesRemoved: (row.totalLinesRemoved as number) || undefined,
+    }));
+  },
 };
 
 // ============ Message Repository ============
@@ -456,6 +519,24 @@ export const toolCallRepo = {
       .query()
       .where(`"filePath" = '${filePath}'`)
       .toArray();
+
+    return results.map((row) => ({
+      id: row.id as string,
+      messageId: row.messageId as string,
+      conversationId: row.conversationId as string,
+      type: row.type as string,
+      input: row.input as string,
+      output: (row.output as string) || undefined,
+      filePath: (row.filePath as string) || undefined,
+    }));
+  },
+
+  async findByConversation(conversationId: string): Promise<ToolCall[]> {
+    const table = await getToolCallsTable();
+    const allResults = await table.query().toArray();
+    const results = allResults.filter(
+      (row) => (row.conversationId as string) === conversationId
+    );
 
     return results.map((row) => ({
       id: row.id as string,
