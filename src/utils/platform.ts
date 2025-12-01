@@ -11,9 +11,22 @@ export function getPlatform(): Platform {
   throw new Error(`Unsupported platform: ${platform}`);
 }
 
+/**
+ * Get the user's home directory.
+ * Prefers environment variables (HOME on Unix, USERPROFILE on Windows) over os.homedir()
+ * for better testability.
+ */
+function getHomeDir(): string {
+  // Check environment variables first for testability
+  if (process.platform === 'win32') {
+    return process.env['USERPROFILE'] || process.env['HOME'] || homedir();
+  }
+  return process.env['HOME'] || homedir();
+}
+
 export function expandPath(path: string): string {
   if (path.startsWith('~/')) {
-    return join(homedir(), path.slice(2));
+    return join(getHomeDir(), path.slice(2));
   }
   if (path.startsWith('%APPDATA%')) {
     const appData = process.env['APPDATA'];
