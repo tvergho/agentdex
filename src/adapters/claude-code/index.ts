@@ -262,6 +262,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
           editType: edit.editType,
           linesAdded: edit.linesAdded,
           linesRemoved: edit.linesRemoved,
+          newContent: edit.newContent,
         });
       }
     }

@@ -14,6 +14,7 @@ import { messageRepo, filesRepo, messageFilesRepo, toolCallRepo, fileEditsRepo }
 import {
   combineConsecutiveMessages,
   getRenderedLineCount,
+  formatToolOutputs,
   type CombinedMessage,
 } from '../../utils/format';
 import type {
@@ -383,9 +384,17 @@ export function useNavigation({
     goToMessage();
   }, [goToMessage]);
 
-  // Message detail navigation
+  // Message detail navigation - calculate line count including tool outputs
   const currentMessage = combinedMessages[selectedMessageIndex];
-  const lineCount = currentMessage ? getRenderedLineCount(currentMessage.content, width) : 0;
+  const fullContent = useMemo(() => {
+    if (!currentMessage) return '';
+    let content = currentMessage.content;
+    if (currentMessage.role === 'assistant') {
+      content += formatToolOutputs(conversationToolCalls, conversationFileEdits, currentMessage.messageIds);
+    }
+    return content;
+  }, [currentMessage, conversationToolCalls, conversationFileEdits]);
+  const lineCount = fullContent ? getRenderedLineCount(fullContent, width) : 0;
   const visibleLines = availableHeight - 3;
   const maxMessageScrollOffset = Math.max(0, lineCount - visibleLines);
 

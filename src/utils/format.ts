@@ -389,3 +389,46 @@ export function renderMarkdownContent(content: string, width: number): string {
 export function getRenderedLineCount(content: string, width: number): number {
   return renderMarkdownContent(content, width).split('\n').length;
 }
+
+/**
+ * Format tool outputs as markdown for rendering in message detail view.
+ * Used by both the navigation hook (for scroll calculations) and the component (for display).
+ */
+export function formatToolOutputs(
+  toolCalls: { messageId: string; type: string; filePath?: string; output?: string }[],
+  fileEdits: { messageId: string; filePath: string; linesAdded: number; linesRemoved: number; newContent?: string }[],
+  messageIds: string[]
+): string {
+  const msgToolCalls = toolCalls.filter(
+    (tc) => messageIds.includes(tc.messageId) && tc.output
+  );
+  const msgFileEdits = fileEdits.filter(
+    (fe) => messageIds.includes(fe.messageId) && fe.newContent
+  );
+
+  if (msgToolCalls.length === 0 && msgFileEdits.length === 0) {
+    return '';
+  }
+
+  const lines: string[] = ['', '---', '', '### Tool Outputs', ''];
+
+  for (const tc of msgToolCalls) {
+    const fileName = tc.filePath ? getFileName(tc.filePath) : '';
+    lines.push(`**${tc.type}**${fileName ? ` \`${fileName}\`` : ''}`);
+    lines.push('```');
+    lines.push(tc.output!);
+    lines.push('```');
+    lines.push('');
+  }
+
+  for (const fe of msgFileEdits) {
+    const fileName = getFileName(fe.filePath);
+    lines.push(`**Edit** \`${fileName}\` (+${fe.linesAdded}/-${fe.linesRemoved})`);
+    lines.push('```');
+    lines.push(fe.newContent!);
+    lines.push('```');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}

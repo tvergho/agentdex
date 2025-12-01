@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import {
   formatPaginationInfo,
+  formatToolOutputs,
   getFileName,
   getRoleColor,
   getRoleLabel,
@@ -19,48 +20,6 @@ export interface MessageDetailViewProps {
   height: number;
   scrollOffset: number;
   query: string;
-}
-
-/**
- * Format tool outputs as markdown for rendering
- */
-function formatToolOutputs(
-  toolCalls: ToolCall[],
-  fileEdits: FileEdit[],
-  messageIds: string[]
-): string {
-  const msgToolCalls = toolCalls.filter(
-    (tc) => messageIds.includes(tc.messageId) && tc.output
-  );
-  const msgFileEdits = fileEdits.filter(
-    (fe) => messageIds.includes(fe.messageId) && fe.newContent
-  );
-
-  if (msgToolCalls.length === 0 && msgFileEdits.length === 0) {
-    return '';
-  }
-
-  const lines: string[] = ['', '---', '', '### Tool Outputs', ''];
-
-  for (const tc of msgToolCalls) {
-    const fileName = tc.filePath ? getFileName(tc.filePath) : '';
-    lines.push(`**${tc.type}**${fileName ? ` \`${fileName}\`` : ''}`);
-    lines.push('```');
-    lines.push(tc.output!);
-    lines.push('```');
-    lines.push('');
-  }
-
-  for (const fe of msgFileEdits) {
-    const fileName = getFileName(fe.filePath);
-    lines.push(`**Edit** \`${fileName}\` (+${fe.linesAdded}/-${fe.linesRemoved})`);
-    lines.push('```');
-    lines.push(fe.newContent!);
-    lines.push('```');
-    lines.push('');
-  }
-
-  return lines.join('\n');
 }
 
 /**
@@ -86,20 +45,10 @@ export function MessageDetailView({
 
   // Build full content including tool outputs for assistant messages
   const fullContent = useMemo(() => {
-    // DEBUG: Log what we're receiving
-    console.error('[MessageDetailView] DEBUG:');
-    console.error('  toolCalls length:', toolCalls.length);
-    console.error('  fileEdits length:', fileEdits.length);
-    console.error('  message.role:', message.role);
-    console.error('  message.messageIds:', message.messageIds);
-    
     let content = message.content;
     if (message.role === 'assistant') {
-      const toolOutput = formatToolOutputs(toolCalls, fileEdits, message.messageIds);
-      console.error('  toolOutput length:', toolOutput.length);
-      content += toolOutput;
+      content += formatToolOutputs(toolCalls, fileEdits, message.messageIds);
     }
-    console.error('  final content length:', content.length);
     return content;
   }, [message.content, message.role, message.messageIds, toolCalls, fileEdits]);
 

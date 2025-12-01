@@ -101,6 +101,7 @@ export interface RawFileEdit {
   editType: 'create' | 'modify' | 'delete';
   linesAdded: number;
   linesRemoved: number;
+  newContent?: string; // The new code content (for Edit: new_string, for Write: content)
 }
 
 export interface RawConversation {
@@ -258,6 +259,7 @@ function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] 
             editType: 'modify',
             linesRemoved: countLines(oldString),
             linesAdded: countLines(newString),
+            newContent: newString || undefined,
           });
         }
       } catch {
@@ -275,6 +277,7 @@ function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] 
             editType: 'create',
             linesRemoved: 0,
             linesAdded: countLines(content),
+            newContent: content || undefined,
           });
         }
       } catch {
