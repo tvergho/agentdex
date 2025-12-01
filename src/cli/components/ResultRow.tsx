@@ -75,12 +75,39 @@ export function ResultRow({
     ? truncatePath(conversation.workspacePath, Math.max(15, availableForPath))
     : null;
 
-  // Snippet - truncate to fit width
+  // Snippet - truncate to fit width, centered on the search term
   const snippetContent = bestMatch.snippet.replace(/\n/g, ' ').trim();
   const snippetMaxWidth = Math.max(20, contentWidth - 2);
-  const snippetText = snippetContent.length > snippetMaxWidth
-    ? snippetContent.slice(0, snippetMaxWidth - 1) + '…'
-    : snippetContent;
+  let snippetText = snippetContent;
+  if (snippetContent.length > snippetMaxWidth) {
+    // Find the first search term position to center the truncation
+    const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+    const lowerSnippet = snippetContent.toLowerCase();
+
+    // Try full phrase first, then individual terms
+    let matchPos = lowerSnippet.indexOf(query.toLowerCase());
+    if (matchPos === -1) {
+      for (const term of terms) {
+        const pos = lowerSnippet.indexOf(term);
+        if (pos !== -1) {
+          matchPos = pos;
+          break;
+        }
+      }
+    }
+
+    if (matchPos !== -1 && matchPos > snippetMaxWidth / 2) {
+      // Center around the match
+      const start = Math.max(0, matchPos - Math.floor(snippetMaxWidth / 2));
+      const end = Math.min(snippetContent.length, start + snippetMaxWidth - 2);
+      const prefix = start > 0 ? '…' : '';
+      const suffix = end < snippetContent.length ? '…' : '';
+      snippetText = prefix + snippetContent.slice(start, end) + suffix;
+    } else {
+      // Match is near the beginning, just truncate from end
+      snippetText = snippetContent.slice(0, snippetMaxWidth - 1) + '…';
+    }
+  }
 
   // Format file matches display - truncate to fit
   const hasFileMatches = fileMatches && fileMatches.length > 0;
@@ -96,7 +123,7 @@ export function ResultRow({
   }
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginBottom={2}>
       {/* Row 1: Index + Title + Match count + Time */}
       <Box width={width}>
         {index !== undefined && (
@@ -124,11 +151,9 @@ export function ResultRow({
         {hasFileMatches ? (
           <Text color="gray" wrap="truncate-end">{fileMatchDisplay}</Text>
         ) : (
-          <Text color="gray" wrap="truncate-end">{snippetText}</Text>
+          <HighlightedText text={snippetText} query={query} dimColor />
         )}
       </Box>
-      {/* Spacer row for consistent vertical spacing */}
-      <Box height={1} />
     </Box>
   );
 }

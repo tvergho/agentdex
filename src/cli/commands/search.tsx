@@ -658,7 +658,41 @@ async function plainSearch(
       console.log(`   ${r.conversation.workspacePath}`);
     }
     console.log(`   ${r.totalMatches} match(es) · ${formatRelativeTime(r.conversation.updatedAt)}`);
-    console.log(`   "${r.snippet.replace(/\n/g, ' ').slice(0, 100)}${r.snippet.length > 100 ? '...' : ''}"`);
+
+    // Center snippet around search term
+    const snippetContent = r.snippet.replace(/\n/g, ' ').trim();
+    const maxWidth = 100;
+    let snippetText = snippetContent;
+    if (snippetContent.length > maxWidth && query) {
+      const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+      const lowerSnippet = snippetContent.toLowerCase();
+
+      // Try full phrase first, then individual terms
+      let matchPos = lowerSnippet.indexOf(query.toLowerCase());
+      if (matchPos === -1) {
+        for (const term of terms) {
+          const pos = lowerSnippet.indexOf(term);
+          if (pos !== -1) {
+            matchPos = pos;
+            break;
+          }
+        }
+      }
+
+      if (matchPos !== -1 && matchPos > maxWidth / 2) {
+        // Center around the match
+        const start = Math.max(0, matchPos - Math.floor(maxWidth / 2));
+        const end = Math.min(snippetContent.length, start + maxWidth - 2);
+        const prefix = start > 0 ? '...' : '';
+        const suffix = end < snippetContent.length ? '...' : '';
+        snippetText = prefix + snippetContent.slice(start, end) + suffix;
+      } else {
+        snippetText = snippetContent.slice(0, maxWidth - 3) + '...';
+      }
+    } else if (snippetContent.length > maxWidth) {
+      snippetText = snippetContent.slice(0, maxWidth - 3) + '...';
+    }
+    console.log(`   "${snippetText}"`);
     console.log(`   ID: ${r.conversation.id}`);
     console.log('');
   }

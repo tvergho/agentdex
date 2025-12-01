@@ -104,12 +104,40 @@ export function MatchesView({
           const indexStr = `${displayIndex + 1}.`;
           const indexWidth = 4; // "999." max
 
-          // Truncate snippet to fit
+          // Use the snippet (already positioned around search term) instead of full content
           const contentWidth = width - indexWidth - 1;
-          const snippetContent = match.content.replace(/\n/g, ' ').trim();
-          const snippetText = snippetContent.length > contentWidth - 2
-            ? snippetContent.slice(0, contentWidth - 3) + '…'
-            : snippetContent;
+          const snippetContent = match.snippet.replace(/\n/g, ' ').trim();
+          const maxWidth = contentWidth - 2;
+          let snippetText = snippetContent;
+          if (snippetContent.length > maxWidth) {
+            // Find the first search term position to center the truncation
+            const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+            const lowerSnippet = snippetContent.toLowerCase();
+
+            // Try full phrase first, then individual terms
+            let matchPos = lowerSnippet.indexOf(query.toLowerCase());
+            if (matchPos === -1) {
+              for (const term of terms) {
+                const pos = lowerSnippet.indexOf(term);
+                if (pos !== -1) {
+                  matchPos = pos;
+                  break;
+                }
+              }
+            }
+
+            if (matchPos !== -1 && matchPos > maxWidth / 2) {
+              // Center around the match
+              const start = Math.max(0, matchPos - Math.floor(maxWidth / 2));
+              const end = Math.min(snippetContent.length, start + maxWidth - 2);
+              const prefix = start > 0 ? '…' : '';
+              const suffix = end < snippetContent.length ? '…' : '';
+              snippetText = prefix + snippetContent.slice(start, end) + suffix;
+            } else {
+              // Match is near the beginning, just truncate from end
+              snippetText = snippetContent.slice(0, maxWidth - 1) + '…';
+            }
+          }
 
           return (
             <Box
