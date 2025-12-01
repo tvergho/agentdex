@@ -15,8 +15,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
-import { spawn } from 'child_process';
-import { connect } from '../../db/index';
+import { spawn, spawnSync } from 'child_process';
+import { connect, getMessagesTable } from '../../db/index';
 import { conversationRepo, search, searchByFilePath, getFileMatchesForConversations } from '../../db/repository';
 // Note: sync runs in child process via runSyncInBackground to avoid blocking UI
 import { getLanceDBPath } from '../../utils/config';
@@ -107,6 +107,164 @@ function runSyncInBackground(
 
     child.on('error', () => {
       onComplete(null);
+    });
+  });
+}
+
+// Get message count via child process (fast check for first load detection)
+function getMessageCountInBackground(): Promise<number> {
+  return new Promise((resolve) => {
+    const dbPath = getLanceDBPath();
+    const script = `
+import * as lancedb from '@lancedb/lancedb';
+try {
+  const db = await lancedb.connect('${dbPath}');
+  const tables = await db.tableNames();
+  if (tables.includes('messages')) {
+    const table = await db.openTable('messages');
+    const count = await table.countRows();
+    console.log(count);
+  } else {
+    console.log(0);
+  }
+} catch (e) {
+  console.log(0);
+}
+process.exit(0);
+`;
+
+    let resolved = false;
+    const child = spawn('bun', ['-e', script], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+
+    child.unref();
+
+    let output = '';
+    child.stdout?.on('data', (data: Buffer) => {
+      output += data.toString();
+    });
+
+    child.on('close', () => {
+      if (resolved) return;
+      resolved = true;
+      const count = parseInt(output.trim(), 10);
+      resolve(isNaN(count) ? 0 : count);
+    });
+
+    child.on('error', () => {
+      if (resolved) return;
+      resolved = true;
+      resolve(0);
+    });
+
+    // Timeout after 3 seconds
+    setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      child.kill();
+      resolve(0);
+    }, 3000);
+  });
+}
+
+// Sync progress state (matches sync.tsx SyncProgress)
+interface FirstLoadSyncProgress {
+  phase: 'detecting' | 'discovering' | 'extracting' | 'syncing' | 'indexing' | 'enriching' | 'done' | 'error';
+  currentSource?: string;
+  projectsFound: number;
+  projectsProcessed: number;
+  conversationsFound: number;
+  conversationsIndexed: number;
+  messagesIndexed: number;
+  embeddingStarted?: boolean;
+}
+
+// Run sync synchronously (blocking) - used only for first load
+function runSyncBlocking(
+  onProgress: (progress: FirstLoadSyncProgress) => void
+): Promise<{ newCount: number } | null> {
+  return new Promise((resolve) => {
+    const progress: FirstLoadSyncProgress = {
+      phase: 'detecting',
+      projectsFound: 0,
+      projectsProcessed: 0,
+      conversationsFound: 0,
+      conversationsIndexed: 0,
+      messagesIndexed: 0,
+    };
+    onProgress(progress);
+
+    const child = spawn('bun', ['run', 'dev', 'sync'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const text = data.toString();
+
+      // Parse progress from sync output (ANSI codes stripped)
+      // Detect phase changes from spinner text
+      if (text.includes('Detecting sources')) {
+        progress.phase = 'detecting';
+      } else if (text.includes('Discovering')) {
+        progress.phase = 'discovering';
+        const match = text.match(/Discovering (\w+)/);
+        if (match) progress.currentSource = match[1];
+      } else if (text.includes('Extracting')) {
+        progress.phase = 'extracting';
+        const match = text.match(/Extracting (\w+)/);
+        if (match) progress.currentSource = match[1];
+      } else if (text.includes('Syncing')) {
+        progress.phase = 'syncing';
+        const match = text.match(/Syncing (\w+)/);
+        if (match) progress.currentSource = match[1];
+      } else if (text.includes('Building search index')) {
+        progress.phase = 'indexing';
+        progress.currentSource = undefined;
+      } else if (text.includes('Generating titles')) {
+        progress.phase = 'enriching';
+        progress.currentSource = undefined;
+      } else if (text.includes('Sync complete')) {
+        progress.phase = 'done';
+        progress.currentSource = undefined;
+      }
+
+      // Parse counts from progress line: "Projects: X/Y | Conversations: A/B | Messages: M"
+      const countsMatch = text.match(/Projects:\s*(\d+)\/(\d+)\s*\|\s*Conversations:\s*(\d+)\/(\d+)\s*\|\s*Messages:\s*(\d+)/);
+      if (countsMatch) {
+        progress.projectsProcessed = parseInt(countsMatch[1]!, 10);
+        progress.projectsFound = parseInt(countsMatch[2]!, 10);
+        progress.conversationsIndexed = parseInt(countsMatch[3]!, 10);
+        progress.conversationsFound = parseInt(countsMatch[4]!, 10);
+        progress.messagesIndexed = parseInt(countsMatch[5]!, 10);
+      }
+
+      // Check if embedding started
+      if (text.includes('Embeddings generating')) {
+        progress.embeddingStarted = true;
+      }
+
+      onProgress({ ...progress });
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        progress.phase = 'done';
+        onProgress({ ...progress });
+        getCountInBackground().then((newCount) => {
+          resolve({ newCount });
+        });
+      } else {
+        progress.phase = 'error';
+        onProgress({ ...progress });
+        resolve(null);
+      }
+    });
+
+    child.on('error', () => {
+      progress.phase = 'error';
+      onProgress({ ...progress });
+      resolve(null);
     });
   });
 }
@@ -217,6 +375,77 @@ function HelpOverlay({ width, height }: { width: number; height: number }) {
       <Text backgroundColor="gray" color="white">
         {'└' + '─'.repeat(innerWidth) + '┘'}
       </Text>
+    </Box>
+  );
+}
+
+// First load screen - shown during initial sync
+function FirstLoadScreen({
+  width,
+  height,
+  progress,
+  spinnerFrame,
+}: {
+  width: number;
+  height: number;
+  progress: FirstLoadSyncProgress;
+  spinnerFrame: number;
+}) {
+  const logoLines = LOGO.split('\n');
+  const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+  const getPhaseText = () => {
+    switch (progress.phase) {
+      case 'detecting': return 'Detecting sources...';
+      case 'discovering': return `Discovering ${progress.currentSource || ''}...`;
+      case 'extracting': return `Extracting ${progress.currentSource || ''} conversations...`;
+      case 'syncing': return `Syncing ${progress.currentSource || ''}...`;
+      case 'indexing': return 'Building search index...';
+      case 'enriching': return 'Generating titles...';
+      case 'done': return 'Sync complete!';
+      case 'error': return 'Sync failed';
+      default: return 'Syncing...';
+    }
+  };
+
+  const showCounts = progress.conversationsFound > 0 || progress.messagesIndexed > 0;
+
+  return (
+    <Box
+      width={width}
+      height={height}
+      flexDirection="column"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <Box flexDirection="column" alignItems="center" marginBottom={2}>
+        {logoLines.map((line, i) => (
+          <Text key={i} color="cyan" bold>{line}</Text>
+        ))}
+      </Box>
+
+      <Box marginBottom={1}>
+        {progress.phase === 'done' ? (
+          <Text color="green">✓ </Text>
+        ) : progress.phase === 'error' ? (
+          <Text color="red">✗ </Text>
+        ) : (
+          <Text color="cyan">{spinner[spinnerFrame]} </Text>
+        )}
+        <Text color="white">{getPhaseText()}</Text>
+      </Box>
+
+      {showCounts && (
+        <Box marginBottom={1}>
+          <Text color="gray">
+            Projects: {progress.projectsProcessed}/{progress.projectsFound} |
+            Conversations: {progress.conversationsIndexed}/{progress.conversationsFound} |
+            Messages: {progress.messagesIndexed}
+          </Text>
+        </Box>
+      )}
+
+      <Text color="gray">First run - indexing your conversations</Text>
     </Box>
   );
 }
@@ -342,7 +571,7 @@ function HomeScreen({
         <Box><Text color="gray">╭{'─'.repeat(boxWidth - 2)}╮</Text></Box>
         <Box>
           <Text color="gray">│ </Text>
-          <Text color="white">{searchQuery || ' '}</Text>
+          <Text color="white">{searchQuery}</Text>
           <Text color="cyan" inverse> </Text>
           <Text>{' '.repeat(Math.max(0, innerWidth - searchQuery.length - 1))}</Text>
           <Text color="gray"> │</Text>
@@ -372,6 +601,30 @@ function HomeScreen({
 function UnifiedApp() {
   const { exit } = useApp();
   const { width, height } = useScreenSize();
+
+  // First load state - blocks UI until sync completes on first run
+  const [isFirstLoad, setIsFirstLoad] = useState<boolean | null>(null); // null = checking
+  const [firstLoadComplete, setFirstLoadComplete] = useState(false);
+  const [firstLoadProgress, setFirstLoadProgress] = useState<FirstLoadSyncProgress>({
+    phase: 'detecting',
+    projectsFound: 0,
+    projectsProcessed: 0,
+    conversationsFound: 0,
+    conversationsIndexed: 0,
+    messagesIndexed: 0,
+  });
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+
+  // Spinner animation for first load
+  useEffect(() => {
+    if (firstLoadComplete || firstLoadProgress.phase === 'done' || firstLoadProgress.phase === 'error') {
+      return;
+    }
+    const timer = setInterval(() => {
+      setSpinnerFrame((f) => (f + 1) % 10);
+    }, 80);
+    return () => clearInterval(timer);
+  }, [firstLoadComplete, firstLoadProgress.phase]);
 
   // Data state
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -472,7 +725,7 @@ function UnifiedApp() {
     handleExportInput,
   } = useExport({ getConversations: getCurrentConversation });
 
-  // Background sync - runs after DB connection
+  // Background sync - runs after DB connection (only for subsequent loads)
   const syncStartedRef = useRef(false);
   const initStartedRef = useRef(false);
   const dbReadyPromiseRef = useRef<Promise<void> | null>(null);
@@ -494,24 +747,52 @@ function UnifiedApp() {
     });
   }, []);
 
-  // Start DB connection immediately on mount (non-blocking)
+  // Start initialization - check if first load (no messages)
   useEffect(() => {
     if (initStartedRef.current) return;
     initStartedRef.current = true;
 
-    // Get count in background child process (fast, non-blocking)
-    getCountInBackground().then((count) => {
-      setConversationCount(count);
-    });
+    // Check message count to detect first load
+    getMessageCountInBackground().then(async (messageCount) => {
+      if (messageCount === 0) {
+        // First load - run blocking sync
+        setIsFirstLoad(true);
 
-    // Start DB connection immediately so it's ready when user navigates
-    dbReadyPromiseRef.current = (async () => {
-      await connect();
-      setDbReady(true);
-      const count = await conversationRepo.count();
-      setConversationCount(count);
-      startBackgroundSync();
-    })();
+        const result = await runSyncBlocking((progress) => {
+          setFirstLoadProgress(progress);
+        });
+
+        if (result) {
+          setConversationCount(result.newCount);
+        }
+
+        // First sync complete - connect to DB and show UI
+        await connect();
+        setDbReady(true);
+        const count = await conversationRepo.count();
+        setConversationCount(count);
+        setFirstLoadComplete(true);
+        setSyncStatus({ phase: 'done', newConversations: count });
+      } else {
+        // Not first load - show UI immediately and sync in background
+        setIsFirstLoad(false);
+        setFirstLoadComplete(true);
+
+        // Get conversation count for display
+        getCountInBackground().then((count) => {
+          setConversationCount(count);
+        });
+
+        // Start DB connection so it's ready when user navigates
+        dbReadyPromiseRef.current = (async () => {
+          await connect();
+          setDbReady(true);
+          const count = await conversationRepo.count();
+          setConversationCount(count);
+          startBackgroundSync();
+        })();
+      }
+    });
   }, [startBackgroundSync]);
 
   // Wait for DB to be ready (returns immediately if already connected)
@@ -799,6 +1080,18 @@ function UnifiedApp() {
       }
     }
   });
+
+  // First load screen - blocks until sync completes
+  if (!firstLoadComplete) {
+    return (
+      <FirstLoadScreen
+        width={width}
+        height={height}
+        progress={firstLoadProgress}
+        spinnerFrame={spinnerFrame}
+      />
+    );
+  }
 
   // Home screen
   if (unifiedViewMode === 'home') {

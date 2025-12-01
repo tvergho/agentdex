@@ -131,7 +131,7 @@ export function MatchesView({
                 <HighlightedText text={snippetText} query={query} />
               </Box>
               {/* Spacer for consistent vertical spacing */}
-              <Box height={1} />
+              <Text> </Text>
             </Box>
           );
         })}

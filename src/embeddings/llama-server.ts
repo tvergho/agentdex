@@ -259,16 +259,23 @@ export async function startLlamaServer(modelPath: string, threads?: number): Pro
   // Use conservative thread count for background embedding
   const threadCount = threads ?? LOW_PRIORITY_THREADS;
 
-  // Small batch sizes to minimize thermal impact
+  // Detect if we should use GPU acceleration (macOS with Metal)
+  const useGpu = process.platform === 'darwin';
+
+  // Server configuration optimized for GPU acceleration when available
   const args = [
     '--model', modelPath,
     '--port', String(serverPort),
     '--embedding',
     '--pooling', 'mean',
     '--threads', String(threadCount),
-    '--ctx-size', '2048',     // Reduced context
-    '--batch-size', '512',    // Small batches
-    '--ubatch-size', '128',   // Tiny micro-batches
+    '--ctx-size', '8192',
+    '--batch-size', '4096',
+    '--ubatch-size', '2048',
+    // GPU acceleration: offload all layers to Metal on macOS
+    ...(useGpu ? ['--n-gpu-layers', '99'] : []),
+    // Flash attention: faster processing with lower memory bandwidth
+    '--flash-attn', 'on',
   ];
 
   // Start with low priority on Unix
@@ -281,11 +288,30 @@ export async function startLlamaServer(modelPath: string, threads?: number): Pro
     detached: false,
   });
 
+  // Capture stderr for error reporting
+  let stderrOutput = '';
+  serverProcess.stderr?.on('data', (data) => {
+    stderrOutput += data.toString();
+  });
+
+  // Watch for early exit (indicates startup failure)
+  let exitedEarly = false;
+  let exitCode: number | null = null;
+  serverProcess.on('exit', (code) => {
+    exitedEarly = true;
+    exitCode = code;
+  });
+
   // Wait for server to be ready
   const ready = await waitForServer(serverPort, 30000);
   if (!ready) {
     await stopLlamaServer();
-    throw new Error('llama-server failed to start within timeout');
+    // Include stderr in error message for debugging
+    const errMsg = stderrOutput.trim().split('\n').slice(-5).join('\n'); // Last 5 lines
+    if (exitedEarly) {
+      throw new Error(`llama-server exited with code ${exitCode}:\n${errMsg}`);
+    }
+    throw new Error(`llama-server failed to start within timeout:\n${errMsg}`);
   }
 
   return serverPort;

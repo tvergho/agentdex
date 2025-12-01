@@ -629,12 +629,17 @@ export const messageRepo = {
     // FTS-first approach: FTS results are the baseline, vector search only adds
     // This ensures keyword matches are never demoted by vector search
 
-    // Step 1: Always run FTS search first (reliable keyword matching)
-    const ftsResults = await table
-      .search(query, 'fts')
-      .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-      .limit(limit)
-      .toArray();
+    // Step 1: Try FTS search first (reliable keyword matching when index is valid)
+    let ftsResults: Record<string, unknown>[] = [];
+    try {
+      ftsResults = await table
+        .search(query, 'fts')
+        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
+        .limit(limit)
+        .toArray();
+    } catch {
+      // FTS index might be invalid during embedding, continue to fallback
+    }
 
     // Build result set from FTS (these maintain their ranking)
     const resultMap = new Map<string, { rank: number; row: Record<string, unknown>; score: number }>();
@@ -648,6 +653,38 @@ export const messageRepo = {
         });
       }
     });
+
+    // Step 1b: Fallback to basic content filtering if FTS returned no results
+    // This handles the case where FTS index is invalidated during embedding
+    if (resultMap.size === 0) {
+      const allMessages = await table
+        .query()
+        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
+        .limit(5000) // Scan up to 5000 messages for fallback
+        .toArray();
+
+      // Simple case-insensitive substring matching
+      const queryLower = query.toLowerCase();
+      const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
+
+      let fallbackRank = 0;
+      for (const row of allMessages) {
+        const content = row.content as string;
+        if (!content) continue;
+
+        const contentLower = content.toLowerCase();
+        // Check if any query term appears in content
+        const matchCount = queryTerms.filter(term => contentLower.includes(term)).length;
+        if (matchCount > 0) {
+          resultMap.set(row.id as string, {
+            rank: fallbackRank++,
+            row,
+            score: matchCount / queryTerms.length // Score by term coverage
+          });
+          if (fallbackRank >= limit) break;
+        }
+      }
+    }
 
     // Step 2: Try vector search to find additional semantic matches
     // Only attempt if embeddings are complete (avoid slow model loading)
