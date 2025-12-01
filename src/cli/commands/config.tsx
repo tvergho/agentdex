@@ -21,7 +21,7 @@ import {
   type CodexCredentialStatus,
 } from '../../providers/index.js';
 import {
-  countUntitledConversations,
+  countUntitledBySource,
   enrichWithProvider,
   type EnrichmentProgress,
   type ProviderId,
@@ -73,7 +73,8 @@ function ConfigApp() {
   const [config, setConfig] = useState<DexConfig | null>(null);
   const [credentialStatus, setCredentialStatus] = useState<CredentialStatus | null>(null);
   const [codexCredentialStatus, setCodexCredentialStatus] = useState<CodexCredentialStatus | null>(null);
-  const [untitledCount, setUntitledCount] = useState(0);
+  const [claudeUntitledCount, setClaudeUntitledCount] = useState(0);
+  const [codexUntitledCount, setCodexUntitledCount] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [authenticating, setAuthenticating] = useState(false);
@@ -98,8 +99,12 @@ function ConfigApp() {
         const codexStatus = getCodexCredentialStatus();
         setCodexCredentialStatus(codexStatus);
 
-        const count = await countUntitledConversations();
-        setUntitledCount(count);
+        // Count untitled per source
+        const claudeCount = await countUntitledBySource('claude-code');
+        setClaudeUntitledCount(claudeCount);
+
+        const codexCount = await countUntitledBySource('codex');
+        setCodexUntitledCount(codexCount);
       } catch (err) {
         setToast({
           message: `Failed to load: ${err instanceof Error ? err.message : String(err)}`,
@@ -134,11 +139,11 @@ function ConfigApp() {
       section: 'claude-code',
     });
 
-    // Generate button for Claude Code
-    if (untitledCount > 0) {
+    // Generate button for Claude Code (only for claude-code source conversations)
+    if (claudeUntitledCount > 0) {
       menuItems.push({
         id: 'claude-generate',
-        label: `Generate ${untitledCount} titles`,
+        label: `Generate ${claudeUntitledCount} titles`,
         type: 'action',
         section: 'claude-code',
       });
@@ -179,11 +184,11 @@ function ConfigApp() {
       section: 'codex',
     });
 
-    // Generate button for Codex
-    if (untitledCount > 0) {
+    // Generate button for Codex (only for codex source conversations)
+    if (codexUntitledCount > 0) {
       menuItems.push({
         id: 'codex-generate',
-        label: `Generate ${untitledCount} titles`,
+        label: `Generate ${codexUntitledCount} titles`,
         type: 'action',
         section: 'codex',
       });
@@ -306,27 +311,37 @@ function ConfigApp() {
       else if (item.id === 'claude-generate' || item.id === 'codex-generate') {
         const providerId: ProviderId = item.id === 'claude-generate' ? 'claudeCode' : 'codex';
         const providerName = providerId === 'claudeCode' ? 'Claude Code' : 'Codex';
+        const source = providerId === 'claudeCode' ? 'claude-code' : 'codex';
+        const currentCount = providerId === 'claudeCode' ? claudeUntitledCount : codexUntitledCount;
 
         setGeneratingProvider(providerId);
         setGenerationProgress({
           completed: 0,
-          total: untitledCount,
+          total: currentCount,
           inFlight: 0,
           recentTitles: [],
         });
 
         const generatedIds: string[] = [];
         const result = await enrichWithProvider(providerId, {
-          onProgress: (progress) => setGenerationProgress(progress),
-          onTitleGenerated: (convId) => generatedIds.push(convId),
+          source,
+          callbacks: {
+            onProgress: (progress) => setGenerationProgress(progress),
+            onTitleGenerated: (convId) => generatedIds.push(convId),
+          },
         });
 
         setGenerationProgress(null);
         setGeneratingProvider(null);
         setRecentlyGeneratedIds({ provider: providerId, ids: generatedIds });
 
-        const newCount = await conversationRepo.countUntitled();
-        setUntitledCount(newCount);
+        // Update the correct count
+        const newCount = await countUntitledBySource(source);
+        if (providerId === 'claudeCode') {
+          setClaudeUntitledCount(newCount);
+        } else {
+          setCodexUntitledCount(newCount);
+        }
 
         setToast({
           message: `Generated ${result.enriched} title${result.enriched === 1 ? '' : 's'} via ${providerName}${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
@@ -340,10 +355,17 @@ function ConfigApp() {
           }
 
           const resetCount = recentlyGeneratedIds.ids.length;
+          const provider = recentlyGeneratedIds.provider;
           setRecentlyGeneratedIds(null);
 
-          const newCount = await conversationRepo.countUntitled();
-          setUntitledCount(newCount);
+          // Update the correct count
+          const source = provider === 'claudeCode' ? 'claude-code' : 'codex';
+          const newCount = await countUntitledBySource(source);
+          if (provider === 'claudeCode') {
+            setClaudeUntitledCount(newCount);
+          } else {
+            setCodexUntitledCount(newCount);
+          }
 
           setToast({
             message: `Reset ${resetCount} title${resetCount === 1 ? '' : 's'} to "Untitled"`,
@@ -359,7 +381,7 @@ function ConfigApp() {
         type: 'error',
       });
     }
-  }, [config, selectableItems, selectedIndex, untitledCount, recentlyGeneratedIds]);
+  }, [config, selectableItems, selectedIndex, claudeUntitledCount, codexUntitledCount, recentlyGeneratedIds]);
 
   useInput((input, key) => {
     if (input === 'q' || key.escape) {
@@ -471,7 +493,7 @@ function ConfigApp() {
               {item.type === 'toggle' && (
                 <Text color={item.value ? 'green' : 'gray'}>[{item.value ? '✓' : ' '}] </Text>
               )}
-              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isGenerate ? 'blue' : isReset ? 'yellow' : 'white'}>
+              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isGenerate ? 'magenta' : isReset ? 'yellow' : 'white'}>
                 {item.label}
               </Text>
             </Box>
@@ -559,7 +581,7 @@ function ConfigApp() {
               {item.type === 'toggle' && (
                 <Text color={item.value ? 'green' : 'gray'}>[{item.value ? '✓' : ' '}] </Text>
               )}
-              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isConnect ? 'green' : isGenerate ? 'blue' : isReset ? 'yellow' : 'white'}>
+              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isConnect ? 'green' : isGenerate ? 'magenta' : isReset ? 'yellow' : 'white'}>
                 {item.label}
               </Text>
             </Box>

@@ -270,6 +270,13 @@ export async function countUntitledConversations(): Promise<number> {
 }
 
 /**
+ * Count untitled conversations for a specific source
+ */
+export async function countUntitledBySource(source: string): Promise<number> {
+  return conversationRepo.countUntitledBySource(source);
+}
+
+/**
  * Enrich a specific list of conversations (for manual trigger from config UI)
  *
  * Uses the highest-priority available provider (Claude Code > Codex).
@@ -383,15 +390,22 @@ export function getActiveEnrichmentProvider(): string | null {
  * Enrich untitled conversations using a specific provider
  *
  * @param providerId - Which provider to use ('claudeCode' or 'codex')
- * @param callbacks - Progress and completion callbacks
+ * @param options - Options including source filter and callbacks
  * @returns Enrichment result with counts and provider used
  */
 export async function enrichWithProvider(
   providerId: ProviderId,
-  callbacks?: EnrichmentCallbacks | ((current: number, total: number) => void)
+  options?: {
+    source?: string;
+    callbacks?: EnrichmentCallbacks | ((current: number, total: number) => void);
+  }
 ): Promise<EnrichmentResult & { provider?: string }> {
-  // Get untitled conversations
-  const untitled = await conversationRepo.findUntitled(100);
+  const { source, callbacks } = options ?? {};
+
+  // Get untitled conversations (filtered by source if specified)
+  const untitled = source
+    ? await conversationRepo.findUntitledBySource(source, 100)
+    : await conversationRepo.findUntitled(100);
 
   if (untitled.length === 0) {
     return { enriched: 0, failed: 0, skipped: 0 };
@@ -399,8 +413,8 @@ export async function enrichWithProvider(
 
   // Normalize callbacks
   const cb: EnrichmentCallbacks = typeof callbacks === 'function'
-    ? { onProgress: (p) => callbacks(p.completed, p.total) }
-    : callbacks ?? {};
+    ? { onProgress: (p) => (callbacks as (current: number, total: number) => void)(p.completed, p.total) }
+    : (callbacks as EnrichmentCallbacks) ?? {};
 
   // Create client for the specific provider
   const clientInfo = await createClientForProvider(providerId);

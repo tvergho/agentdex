@@ -388,6 +388,63 @@ export const conversationRepo = {
   },
 
   /**
+   * Count untitled conversations for a specific source
+   */
+  async countUntitledBySource(source: string): Promise<number> {
+    const table = await getConversationsTable();
+    const results = await table.query().select(['title', 'source']).toArray();
+
+    return results.filter((row) => {
+      const title = (row.title as string) || '';
+      const rowSource = row.source as string;
+      return (title === 'Untitled' || title.trim() === '') && rowSource === source;
+    }).length;
+  },
+
+  /**
+   * Find untitled conversations for a specific source
+   */
+  async findUntitledBySource(source: string, limit = 100): Promise<Conversation[]> {
+    const table = await getConversationsTable();
+    const results = await table.query().toArray();
+
+    // Filter for untitled conversations from specific source
+    const untitled = results.filter((row) => {
+      const title = (row.title as string) || '';
+      const rowSource = row.source as string;
+      return (title === 'Untitled' || title.trim() === '') && rowSource === source;
+    });
+
+    // Sort by updated_at descending and limit
+    untitled.sort((a, b) => {
+      const aDate = (a.updated_at as string) || '';
+      const bDate = (b.updated_at as string) || '';
+      return bDate.localeCompare(aDate);
+    });
+
+    return untitled.slice(0, limit).map((row) => ({
+      id: row.id as string,
+      source: row.source as Conversation['source'],
+      title: row.title as string,
+      subtitle: (row.subtitle as string) || undefined,
+      workspacePath: (row.workspace_path as string) || undefined,
+      projectName: (row.project_name as string) || undefined,
+      model: (row.model as string) || undefined,
+      mode: (row.mode as string) || undefined,
+      createdAt: (row.created_at as string) || undefined,
+      updatedAt: (row.updated_at as string) || undefined,
+      messageCount: (row.message_count as number) || 0,
+      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
+      totalInputTokens: (row.total_input_tokens as number) || undefined,
+      totalOutputTokens: (row.total_output_tokens as number) || undefined,
+      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+      totalLinesAdded: (row.total_lines_added as number) || undefined,
+      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+    }));
+  },
+
+  /**
    * Update the title of a conversation
    */
   async updateTitle(id: string, title: string): Promise<void> {
