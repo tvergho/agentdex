@@ -22,7 +22,7 @@ import {
   type MessageFile,
   FileEdit,
 } from '../schema/index';
-import { EMBEDDING_DIMENSIONS, embedQuery, getEmbeddingProgress } from '../embeddings/index';
+import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
 
 // Helper to safely parse JSON with fallback
 function safeJsonParse<T>(value: unknown, fallback: T): T {
@@ -68,7 +68,10 @@ function extractSnippet(
   const lowerQuery = query.toLowerCase();
   const terms = lowerQuery.split(/\s+/).filter((t) => t.length > 0);
 
-  // Find all match positions
+  // First, try to find the full phrase match
+  const fullPhrasePos = lowerContent.indexOf(lowerQuery);
+
+  // Find all individual term positions as fallback
   const positions: number[] = [];
   for (const term of terms) {
     let pos = 0;
@@ -78,7 +81,7 @@ function extractSnippet(
     }
   }
 
-  if (positions.length === 0) {
+  if (positions.length === 0 && fullPhrasePos === -1) {
     // No matches found, return start of content
     const snippet = content.slice(0, contextChars * 2);
     return {
@@ -87,9 +90,9 @@ function extractSnippet(
     };
   }
 
-  // Find the best position (first match)
+  // Prefer full phrase position, otherwise use first individual term match
   positions.sort((a, b) => a - b);
-  const firstMatch = positions[0]!;
+  const firstMatch = fullPhrasePos !== -1 ? fullPhrasePos : positions[0]!;
 
   // Calculate snippet bounds
   const start = Math.max(0, firstMatch - contextChars);
@@ -687,35 +690,33 @@ export const messageRepo = {
     }
 
     // Step 2: Try vector search to find additional semantic matches
-    // Only attempt if embeddings are complete (avoid slow model loading)
-    const embeddingProgress = getEmbeddingProgress();
-    if (embeddingProgress.status === 'done') {
-      try {
-        const queryVector = await embedQuery(query);
-        const vectorResults = await table
-          .query()
-          .nearestTo(queryVector)
-          .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-          .limit(limit)
-          .toArray();
+    // Always attempt - will only find results from already-embedded messages
+    // FTS results are preserved, vector results only add to them
+    try {
+      const queryVector = await embedQuery(query);
+      const vectorResults = await table
+        .query()
+        .nearestTo(queryVector)
+        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
+        .limit(limit)
+        .toArray();
 
-        // Add vector-only results (semantic matches that FTS missed)
-        // These are appended after FTS results, never replacing them
-        let appendRank = resultMap.size;
-        for (const row of vectorResults) {
-          const id = row.id as string;
-          const content = row.content as string;
-          if (!resultMap.has(id) && content && content.trim().length > 0) {
-            resultMap.set(id, {
-              rank: appendRank++,
-              row,
-              score: 0.5 / (appendRank + 1) // Lower score for vector-only results
-            });
-          }
+      // Add vector-only results (semantic matches that FTS missed)
+      // These are appended after FTS results, never replacing them
+      let appendRank = resultMap.size;
+      for (const row of vectorResults) {
+        const id = row.id as string;
+        const content = row.content as string;
+        if (!resultMap.has(id) && content && content.trim().length > 0) {
+          resultMap.set(id, {
+            rank: appendRank++,
+            row,
+            score: 0.5 / (appendRank + 1) // Lower score for vector-only results
+          });
         }
-      } catch {
-        // Model not available, continue with FTS-only results
       }
+    } catch {
+      // Model not available, continue with FTS-only results
     }
 
     // Return results sorted by rank (FTS first, then vector additions)
