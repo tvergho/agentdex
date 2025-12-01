@@ -22,6 +22,7 @@ import {
   rebuildFtsIndex,
   acquireSyncLock,
   releaseSyncLock,
+  getMessagesTable,
 } from '../../db/index';
 import {
   conversationRepo,
@@ -39,6 +40,25 @@ import {
 import { printRichSummary } from './stats';
 import { loadConfig } from '../../config/index.js';
 import { enrichUntitledConversations } from '../../features/enrichment/index.js';
+
+/**
+ * Count messages that still need embedding (have zero vectors).
+ */
+async function countPendingEmbeddings(): Promise<number> {
+  try {
+    const table = await getMessagesTable();
+    const allMessages = await table.query().select(['vector']).toArray();
+
+    return allMessages.filter((row) => {
+      const vector = row.vector;
+      if (!vector) return true;
+      const arr = Array.isArray(vector) ? vector : Array.from(vector as Float32Array);
+      return arr.every((v) => v === 0);
+    }).length;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Kill any running embedding processes to prevent LanceDB commit conflicts.
@@ -466,14 +486,16 @@ export async function runSync(
       onProgress({ ...progress });
 
       await rebuildFtsIndex();
+    }
 
-      // Spawn background embedding process.
-      // We killed any existing process at the start of sync, so we can safely spawn.
-      // The embed worker checks for messages with zero vectors, so it will correctly
-      // embed only what's needed (new messages + any that were interrupted).
+    // ========== PHASE 6b: Spawn embedding worker if needed ==========
+    // Check for pending embeddings (messages with zero vectors).
+    // This handles both new messages and previously interrupted embedding runs.
+    const pendingEmbeddings = await countPendingEmbeddings();
+    if (pendingEmbeddings > 0) {
       setEmbeddingProgress({
         status: 'idle',
-        total: progress.messagesIndexed,
+        total: pendingEmbeddings,
         completed: 0,
       });
 

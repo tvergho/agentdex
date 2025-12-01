@@ -22,7 +22,7 @@ import {
   type MessageFile,
   FileEdit,
 } from '../schema/index';
-import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
+import { EMBEDDING_DIMENSIONS, embedQuery, getEmbeddingProgress } from '../embeddings/index';
 
 // Helper to safely parse JSON with fallback
 function safeJsonParse<T>(value: unknown, fallback: T): T {
@@ -569,110 +569,80 @@ export const messageRepo = {
   async search(query: string, limit = 50): Promise<MessageMatch[]> {
     const table = await getMessagesTable();
 
-    // Manual hybrid search: run FTS and vector separately, then combine with RRF
-    try {
-      // Get vector for semantic search
-      const queryVector = await embedQuery(query);
+    // FTS-first approach: FTS results are the baseline, vector search only adds
+    // This ensures keyword matches are never demoted by vector search
 
-      // Run both searches in parallel
-      const [ftsResults, vectorResults] = await Promise.all([
-        table
-          .search(query, 'fts')
-          .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-          .limit(limit * 2)
-          .toArray(),
-        table
+    // Step 1: Always run FTS search first (reliable keyword matching)
+    const ftsResults = await table
+      .search(query, 'fts')
+      .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
+      .limit(limit)
+      .toArray();
+
+    // Build result set from FTS (these maintain their ranking)
+    const resultMap = new Map<string, { rank: number; row: Record<string, unknown>; score: number }>();
+    ftsResults.forEach((row, rank) => {
+      const content = row.content as string;
+      if (content && content.trim().length > 0) {
+        resultMap.set(row.id as string, {
+          rank,
+          row,
+          score: (row._score as number) ?? (1 / (rank + 1)) // FTS score or rank-based
+        });
+      }
+    });
+
+    // Step 2: Try vector search to find additional semantic matches
+    // Only attempt if embeddings are complete (avoid slow model loading)
+    const embeddingProgress = getEmbeddingProgress();
+    if (embeddingProgress.status === 'done') {
+      try {
+        const queryVector = await embedQuery(query);
+        const vectorResults = await table
           .query()
           .nearestTo(queryVector)
           .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-          .limit(limit * 2)
-          .toArray(),
-      ]);
+          .limit(limit)
+          .toArray();
 
-      // Reciprocal Rank Fusion (RRF) to combine results
-      const k = 60; // RRF constant
-      const scores = new Map<string, { score: number; row: Record<string, unknown> }>();
-
-      // Score FTS results
-      ftsResults.forEach((row, rank) => {
-        const id = row.id as string;
-        const rrfScore = 1 / (k + rank + 1);
-        const existing = scores.get(id);
-        if (existing) {
-          existing.score += rrfScore;
-        } else {
-          scores.set(id, { score: rrfScore, row });
+        // Add vector-only results (semantic matches that FTS missed)
+        // These are appended after FTS results, never replacing them
+        let appendRank = resultMap.size;
+        for (const row of vectorResults) {
+          const id = row.id as string;
+          const content = row.content as string;
+          if (!resultMap.has(id) && content && content.trim().length > 0) {
+            resultMap.set(id, {
+              rank: appendRank++,
+              row,
+              score: 0.5 / (appendRank + 1) // Lower score for vector-only results
+            });
+          }
         }
-      });
-
-      // Score vector results
-      vectorResults.forEach((row, rank) => {
-        const id = row.id as string;
-        const rrfScore = 1 / (k + rank + 1);
-        const existing = scores.get(id);
-        if (existing) {
-          existing.score += rrfScore;
-        } else {
-          scores.set(id, { score: rrfScore, row });
-        }
-      });
-
-      // Sort by combined score and take top results
-      const combined = Array.from(scores.values())
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit);
-
-      return combined
-        .filter(({ row }) => {
-          // Filter out messages with empty/whitespace-only content
-          const content = row.content as string;
-          return content && content.trim().length > 0;
-        })
-        .map(({ score, row }) => {
-          const content = row.content as string;
-          const { snippet, highlightRanges } = extractSnippet(content, query);
-
-          return {
-            messageId: row.id as string,
-            conversationId: row.conversation_id as string,
-            role: row.role as MessageMatch['role'],
-            content,
-            snippet,
-            highlightRanges,
-            score,
-            messageIndex: row.message_index as number,
-          };
-        });
-    } catch {
-      // Fallback to FTS-only if embedding model not available
-      const results = await table
-        .search(query, 'fts')
-        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-        .limit(limit)
-        .toArray();
-
-      return results
-        .filter((row) => {
-          // Filter out messages with empty/whitespace-only content
-          const content = row.content as string;
-          return content && content.trim().length > 0;
-        })
-        .map((row) => {
-          const content = row.content as string;
-          const { snippet, highlightRanges } = extractSnippet(content, query);
-
-          return {
-            messageId: row.id as string,
-            conversationId: row.conversation_id as string,
-            role: row.role as MessageMatch['role'],
-            content,
-            snippet,
-            highlightRanges,
-            score: (row._score as number) ?? 0,
-            messageIndex: row.message_index as number,
-          };
-        });
+      } catch {
+        // Model not available, continue with FTS-only results
+      }
     }
+
+    // Return results sorted by rank (FTS first, then vector additions)
+    return Array.from(resultMap.values())
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, limit)
+      .map(({ score, row }) => {
+        const content = row.content as string;
+        const { snippet, highlightRanges } = extractSnippet(content, query);
+
+        return {
+          messageId: row.id as string,
+          conversationId: row.conversation_id as string,
+          role: row.role as MessageMatch['role'],
+          content,
+          snippet,
+          highlightRanges,
+          score,
+          messageIndex: row.message_index as number,
+        };
+      });
   },
 };
 

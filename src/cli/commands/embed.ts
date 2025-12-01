@@ -33,6 +33,11 @@ const FALLBACK_BATCH_SIZE = 4;   // Tiny batches for fallback
 
 // Long pause between batches - lets CPU cool down
 const BATCH_DELAY_MS = 1000;     // 1 second pause between batches
+
+// Rebuild FTS index every N messages to keep search working during embedding
+// mergeInsert invalidates the FTS index, so we need to rebuild periodically
+// Using a small interval since FTS breaks immediately on first mergeInsert
+const FTS_REBUILD_INTERVAL = 50;
 // Instruction prefix for query embeddings
 const INSTRUCTION_PREFIX = 'Instruct: Retrieve relevant code conversations\nQuery: ';
 // Max characters per text (8192 tokens ~ 32K chars, but be conservative)
@@ -120,6 +125,7 @@ async function runWithServer(
     console.log(`llama-server started on port ${port}`);
 
     // Process in batches
+    let messagesSinceLastFtsRebuild = 0;
     for (let i = 0; i < messages.length; i += SERVER_BATCH_SIZE) {
       const batch = messages.slice(i, i + SERVER_BATCH_SIZE);
       const texts = prepareTexts(batch.map((m) => m.content));
@@ -162,6 +168,13 @@ async function runWithServer(
             await new Promise((r) => setTimeout(r, 200));
           }
         }
+        messagesSinceLastFtsRebuild += updatedRows.length;
+      }
+
+      // Periodically rebuild FTS index to keep search working during embedding
+      if (messagesSinceLastFtsRebuild >= FTS_REBUILD_INTERVAL) {
+        await rebuildFtsIndex();
+        messagesSinceLastFtsRebuild = 0;
       }
 
       // Update progress
@@ -197,6 +210,7 @@ async function runWithNodeLlamaCpp(
   await initEmbeddings(true);
 
   // Process in batches
+  let messagesSinceLastFtsRebuild = 0;
   for (let i = 0; i < messages.length; i += FALLBACK_BATCH_SIZE) {
     const batch = messages.slice(i, i + FALLBACK_BATCH_SIZE);
     // Strip tool outputs before embedding to avoid embedding code
@@ -232,6 +246,13 @@ async function runWithNodeLlamaCpp(
           await new Promise((r) => setTimeout(r, 200));
         }
       }
+      messagesSinceLastFtsRebuild += updatedRows.length;
+    }
+
+    // Periodically rebuild FTS index to keep search working during embedding
+    if (messagesSinceLastFtsRebuild >= FTS_REBUILD_INTERVAL) {
+      await rebuildFtsIndex();
+      messagesSinceLastFtsRebuild = 0;
     }
 
     // Update progress
