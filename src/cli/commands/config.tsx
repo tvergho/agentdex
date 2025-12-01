@@ -15,11 +15,15 @@ import {
 } from '../../config/index.js';
 import {
   getClaudeCodeCredentialStatus,
+  getCodexCredentialStatus,
+  runCodexAuth,
   type CredentialStatus,
+  type CodexCredentialStatus,
 } from '../../providers/index.js';
 import {
   countUntitledConversations,
   enrichUntitledConversations,
+  getActiveEnrichmentProvider,
   type EnrichmentProgress,
 } from '../../features/enrichment/index.js';
 import { conversationRepo } from '../../db/repository.js';
@@ -68,9 +72,11 @@ function ConfigApp() {
   // State
   const [config, setConfig] = useState<DexConfig | null>(null);
   const [credentialStatus, setCredentialStatus] = useState<CredentialStatus | null>(null);
+  const [codexCredentialStatus, setCodexCredentialStatus] = useState<CodexCredentialStatus | null>(null);
   const [untitledCount, setUntitledCount] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [authenticating, setAuthenticating] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [generationProgress, setGenerationProgress] = useState<EnrichmentProgress | null>(null);
   const [recentlyGeneratedIds, setRecentlyGeneratedIds] = useState<string[]>([]);
@@ -87,6 +93,9 @@ function ConfigApp() {
 
         const status = getClaudeCodeCredentialStatus();
         setCredentialStatus(status);
+
+        const codexStatus = getCodexCredentialStatus();
+        setCodexCredentialStatus(codexStatus);
 
         const count = await countUntitledConversations();
         setUntitledCount(count);
@@ -105,11 +114,13 @@ function ConfigApp() {
   // Build menu items
   const menuItems: MenuItem[] = [];
   const claudeCodeConnected = config?.providers.claudeCode.enabled ?? false;
+  const codexConnected = config?.providers.codex.enabled ?? false;
+  const anyProviderConnected = claudeCodeConnected || codexConnected;
 
+  // Claude Code menu items
   if (config && claudeCodeConnected) {
-    // Order matches visual layout: auto-enrich, disconnect, then generate
     menuItems.push({
-      id: 'auto-enrich',
+      id: 'claude-auto-enrich',
       label: 'Auto-enrich titles on sync',
       type: 'toggle',
       value: config.providers.claudeCode.autoEnrichSummaries,
@@ -117,12 +128,48 @@ function ConfigApp() {
     });
 
     menuItems.push({
-      id: 'disconnect',
+      id: 'claude-disconnect',
       label: 'Disconnect',
       type: 'button',
       section: 'claude-code',
     });
+  } else if (config && credentialStatus?.isAuthenticated) {
+    menuItems.push({
+      id: 'claude-connect',
+      label: 'Connect',
+      type: 'button',
+      section: 'claude-code',
+    });
+  }
 
+  // Codex menu items
+  if (config && codexConnected) {
+    menuItems.push({
+      id: 'codex-auto-enrich',
+      label: 'Auto-enrich titles on sync',
+      type: 'toggle',
+      value: config.providers.codex.autoEnrichSummaries,
+      section: 'codex',
+    });
+
+    menuItems.push({
+      id: 'codex-disconnect',
+      label: 'Disconnect',
+      type: 'button',
+      section: 'codex',
+    });
+  } else if (config) {
+    // Codex connect - always available (will trigger auth if no creds)
+    menuItems.push({
+      id: 'codex-connect',
+      label: codexCredentialStatus?.isAuthenticated ? 'Connect' : 'Connect (opens browser)',
+      type: 'button',
+      section: 'codex',
+    });
+  }
+
+  // Titles section - shown when any provider is connected
+  if (anyProviderConnected) {
     if (untitledCount > 0) {
       menuItems.push({
         id: 'generate',
@@ -140,13 +187,6 @@ function ConfigApp() {
         section: 'titles',
       });
     }
-  } else if (config && credentialStatus?.isAuthenticated) {
-    menuItems.push({
-      id: 'connect',
-      label: 'Connect',
-      type: 'button',
-      section: 'claude-code',
-    });
   }
 
   const selectableItems = menuItems.filter((item) => !item.disabled);
@@ -170,23 +210,73 @@ function ConfigApp() {
     if (!item || item.disabled) return;
 
     try {
-      if (item.id === 'connect') {
+      // Claude Code actions
+      if (item.id === 'claude-connect') {
         const newConfig = updateProviderConfig('claudeCode', { enabled: true });
         setConfig(newConfig);
         setToast({ message: 'Connected to Claude Code', type: 'success' });
-      } else if (item.id === 'disconnect') {
+      } else if (item.id === 'claude-disconnect') {
         const newConfig = updateProviderConfig('claudeCode', {
           enabled: false,
           autoEnrichSummaries: false,
         });
         setConfig(newConfig);
-        setToast({ message: 'Disconnected', type: 'info' });
-      } else if (item.id === 'auto-enrich') {
+        setToast({ message: 'Disconnected from Claude Code', type: 'info' });
+      } else if (item.id === 'claude-auto-enrich') {
         const newConfig = updateProviderConfig('claudeCode', {
           autoEnrichSummaries: !config.providers.claudeCode.autoEnrichSummaries,
         });
         setConfig(newConfig);
-      } else if (item.id === 'generate') {
+      }
+      // Codex actions
+      else if (item.id === 'codex-connect') {
+        // Check if we need to authenticate
+        const currentStatus = getCodexCredentialStatus();
+        if (!currentStatus.isAuthenticated) {
+          // Need to run OAuth flow
+          setAuthenticating(true);
+          setToast({ message: 'Opening browser for ChatGPT login...', type: 'info' });
+
+          // This spawns an interactive process that opens the browser
+          const success = await runCodexAuth();
+          setAuthenticating(false);
+
+          if (success) {
+            // Re-check credentials
+            const newStatus = getCodexCredentialStatus();
+            setCodexCredentialStatus(newStatus);
+
+            if (newStatus.isAuthenticated) {
+              const newConfig = updateProviderConfig('codex', { enabled: true });
+              setConfig(newConfig);
+              setToast({ message: 'Connected to Codex (ChatGPT)', type: 'success' });
+            } else {
+              setToast({ message: 'Authentication failed. Please try again.', type: 'error' });
+            }
+          } else {
+            setToast({ message: 'Authentication cancelled or failed.', type: 'error' });
+          }
+        } else {
+          // Already have credentials, just enable
+          const newConfig = updateProviderConfig('codex', { enabled: true });
+          setConfig(newConfig);
+          setToast({ message: 'Connected to Codex (ChatGPT)', type: 'success' });
+        }
+      } else if (item.id === 'codex-disconnect') {
+        const newConfig = updateProviderConfig('codex', {
+          enabled: false,
+          autoEnrichSummaries: false,
+        });
+        setConfig(newConfig);
+        setToast({ message: 'Disconnected from Codex', type: 'info' });
+      } else if (item.id === 'codex-auto-enrich') {
+        const newConfig = updateProviderConfig('codex', {
+          autoEnrichSummaries: !config.providers.codex.autoEnrichSummaries,
+        });
+        setConfig(newConfig);
+      }
+      // Title generation actions
+      else if (item.id === 'generate') {
         setGenerationProgress({
           completed: 0,
           total: untitledCount,
@@ -206,8 +296,9 @@ function ConfigApp() {
         const newCount = await conversationRepo.countUntitled();
         setUntitledCount(newCount);
 
+        const providerMsg = result.provider ? ` via ${result.provider}` : '';
         setToast({
-          message: `Generated ${result.enriched} title${result.enriched === 1 ? '' : 's'}${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
+          message: `Generated ${result.enriched} title${result.enriched === 1 ? '' : 's'}${providerMsg}${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
           type: result.failed > 0 ? 'error' : 'success',
         });
       } else if (item.id === 'reset') {
@@ -229,6 +320,7 @@ function ConfigApp() {
       }
     } catch (err) {
       setGenerationProgress(null);
+      setAuthenticating(false);
       setToast({
         message: `Failed: ${err instanceof Error ? err.message : String(err)}`,
         type: 'error',
@@ -279,7 +371,6 @@ function ConfigApp() {
   }
 
   const cardWidth = Math.max(50, width - 4);
-  const subsectionWidth = cardWidth - 6;
 
   // Footer key hint components (matching search.tsx style)
   const Key = ({ k }: { k: string }) => <Text color="white">{k}</Text>;
@@ -324,11 +415,19 @@ function ConfigApp() {
           <Text color="gray">│</Text>
         </Box>
 
+        {/* Credential status message when not connected and no creds */}
+        {!claudeCodeConnected && !credentialStatus?.isAuthenticated && (
+          <Box>
+            <Text color="gray">│  </Text>
+            <Text dimColor>Log in to Claude Code first to connect</Text>
+          </Box>
+        )}
+
         {/* Menu items */}
-        {selectableItems.filter(i => i.section === 'claude-code' || i.section === undefined).map((item) => {
+        {selectableItems.filter(i => i.section === 'claude-code').map((item) => {
           const actualIdx = selectableItems.indexOf(item);
           const isSelected = actualIdx === selectedIndex;
-          const isDisconnect = item.id === 'disconnect';
+          const isDisconnect = item.id === 'claude-disconnect';
 
           return (
             <Box key={item.id}>
@@ -342,86 +441,6 @@ function ConfigApp() {
           );
         })}
 
-        {/* Titles subsection */}
-        {claudeCodeConnected && (
-          <>
-            <Box>
-              <Text color="gray">│</Text>
-            </Box>
-            <Box>
-              <Text color="gray">│  ╭─ </Text>
-              <Text dimColor>Titles from past conversations</Text>
-              <Text color="gray"> {'─'.repeat(Math.max(0, subsectionWidth - 30))}╮</Text>
-            </Box>
-
-            {generationProgress ? (
-              <>
-                <Box>
-                  <Text color="gray">│  │  </Text>
-                  <ProgressBar
-                    current={generationProgress.completed}
-                    total={generationProgress.total}
-                    width={Math.min(40, subsectionWidth - 4)}
-                  />
-                </Box>
-                {/* Deduplicate by title for display */}
-                {generationProgress.recentTitles
-                  .slice(-6)
-                  .filter((item, idx, arr) => arr.findIndex(x => x.title === item.title) === idx)
-                  .slice(-3)
-                  .map((item) => (
-                  <Box key={item.id}>
-                    <Text color="gray">│  │  </Text>
-                    <Text color="green">✓ </Text>
-                    <Text>{item.title.length > 50 ? item.title.slice(0, 47) + '...' : item.title}</Text>
-                  </Box>
-                ))}
-                {generationProgress.inFlight > 0 && (
-                  <Box>
-                    <Text color="gray">│  │  </Text>
-                    <Text color="cyan">{spinner[frame]} </Text>
-                    <Text dimColor>{generationProgress.inFlight} generating...</Text>
-                  </Box>
-                )}
-              </>
-            ) : (
-              <>
-                {untitledCount === 0 ? (
-                  <Box>
-                    <Text color="gray">│  │  </Text>
-                    <Text color="green">✓ </Text>
-                    <Text dimColor>All conversations have titles</Text>
-                  </Box>
-                ) : (
-                  <Box>
-                    <Text color="gray">│  │  </Text>
-                    <Text dimColor>{untitledCount} untitled conversation{untitledCount === 1 ? '' : 's'} found</Text>
-                  </Box>
-                )}
-                {selectableItems.filter(i => i.section === 'titles').map((item) => {
-                  const actualIdx = selectableItems.indexOf(item);
-                  const isSelected = actualIdx === selectedIndex;
-                  const isReset = item.id === 'reset';
-
-                  return (
-                    <Box key={item.id}>
-                      <Text color="gray">│  │  </Text>
-                      <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▸ ' : '  '}</Text>
-                      <Text color={isSelected ? 'cyan' : isReset ? 'yellow' : 'blue'}>
-                        [{isReset ? `Reset ${recentlyGeneratedIds.length}` : 'Generate Now'}]
-                      </Text>
-                    </Box>
-                  );
-                })}
-              </>
-            )}
-
-            <Box>
-              <Text color="gray">│  ╰{'─'.repeat(Math.max(0, subsectionWidth))}╯</Text>
-            </Box>
-          </>
-        )}
-
         {/* Card bottom */}
         <Box>
           <Text color="gray">└{'─'.repeat(Math.max(0, cardWidth))}┘</Text>
@@ -429,21 +448,147 @@ function ConfigApp() {
       </Box>
 
       {/* Codex Card */}
-      <Box flexDirection="column" paddingX={1}>
+      <Box flexDirection="column" paddingX={1} marginBottom={1}>
         <Box>
           <Text color="gray">┌─ </Text>
-          <Text bold>Codex</Text>
-          <Text color="gray"> {'─'.repeat(Math.max(0, cardWidth - 7))}</Text>
+          <Text bold>Codex (ChatGPT)</Text>
+          <Text color="gray"> {'─'.repeat(Math.max(0, cardWidth - 17))}</Text>
         </Box>
+
+        {/* Status row */}
         <Box>
           <Text color="gray">│  </Text>
-          <Text color="yellow">○ Not connected</Text>
-          <Text dimColor>  Coming soon</Text>
+          {codexConnected ? (
+            <Text color="green">● Connected</Text>
+          ) : authenticating ? (
+            <>
+              <Text color="cyan">{spinner[frame]} </Text>
+              <Text>Authenticating...</Text>
+            </>
+          ) : (
+            <Text color="yellow">○ Not connected</Text>
+          )}
         </Box>
+
+        <Box>
+          <Text color="gray">│</Text>
+        </Box>
+
+        {/* Menu items */}
+        {selectableItems.filter(i => i.section === 'codex').map((item) => {
+          const actualIdx = selectableItems.indexOf(item);
+          const isSelected = actualIdx === selectedIndex;
+          const isDisconnect = item.id === 'codex-disconnect';
+          const isConnect = item.id === 'codex-connect';
+
+          return (
+            <Box key={item.id}>
+              <Text color="gray">│  </Text>
+              <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▸ ' : '  '}</Text>
+              {item.type === 'toggle' && (
+                <Text color={item.value ? 'green' : 'gray'}>[{item.value ? '✓' : ' '}] </Text>
+              )}
+              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isConnect ? 'green' : 'white'}>
+                {item.label}
+              </Text>
+            </Box>
+          );
+        })}
+
+        {/* Card bottom */}
         <Box>
           <Text color="gray">└{'─'.repeat(Math.max(0, cardWidth))}┘</Text>
         </Box>
       </Box>
+
+      {/* Titles Section - shown when any provider is connected */}
+      {anyProviderConnected && (
+        <Box flexDirection="column" paddingX={1}>
+          <Box>
+            <Text color="gray">╭─ </Text>
+            <Text dimColor>Titles from past conversations</Text>
+            <Text color="gray"> {'─'.repeat(Math.max(0, cardWidth - 31))}╮</Text>
+          </Box>
+
+          {/* Show which provider will be used */}
+          {(() => {
+            const activeProvider = getActiveEnrichmentProvider();
+            return activeProvider && (
+              <Box>
+                <Text color="gray">│  </Text>
+                <Text dimColor>Using: </Text>
+                <Text color="cyan">{activeProvider}</Text>
+              </Box>
+            );
+          })()}
+
+          {generationProgress ? (
+            <>
+              <Box>
+                <Text color="gray">│  </Text>
+                <ProgressBar
+                  current={generationProgress.completed}
+                  total={generationProgress.total}
+                  width={Math.min(40, cardWidth - 4)}
+                />
+              </Box>
+              {/* Deduplicate by title for display */}
+              {generationProgress.recentTitles
+                .slice(-6)
+                .filter((item, idx, arr) => arr.findIndex(x => x.title === item.title) === idx)
+                .slice(-3)
+                .map((item) => (
+                <Box key={item.id}>
+                  <Text color="gray">│  </Text>
+                  <Text color="green">✓ </Text>
+                  <Text>{item.title.length > 50 ? item.title.slice(0, 47) + '...' : item.title}</Text>
+                </Box>
+              ))}
+              {generationProgress.inFlight > 0 && (
+                <Box>
+                  <Text color="gray">│  </Text>
+                  <Text color="cyan">{spinner[frame]} </Text>
+                  <Text dimColor>{generationProgress.inFlight} generating...</Text>
+                </Box>
+              )}
+            </>
+          ) : (
+            <>
+              {untitledCount === 0 ? (
+                <Box>
+                  <Text color="gray">│  </Text>
+                  <Text color="green">✓ </Text>
+                  <Text dimColor>All conversations have titles</Text>
+                </Box>
+              ) : (
+                <Box>
+                  <Text color="gray">│  </Text>
+                  <Text dimColor>{untitledCount} untitled conversation{untitledCount === 1 ? '' : 's'} found</Text>
+                </Box>
+              )}
+              {selectableItems.filter(i => i.section === 'titles').map((item) => {
+                const actualIdx = selectableItems.indexOf(item);
+                const isSelected = actualIdx === selectedIndex;
+                const isReset = item.id === 'reset';
+
+                return (
+                  <Box key={item.id}>
+                    <Text color="gray">│  </Text>
+                    <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▸ ' : '  '}</Text>
+                    <Text color={isSelected ? 'cyan' : isReset ? 'yellow' : 'blue'}>
+                      [{isReset ? `Reset ${recentlyGeneratedIds.length}` : 'Generate Now'}]
+                    </Text>
+                  </Box>
+                );
+              })}
+            </>
+          )}
+
+          <Box>
+            <Text color="gray">╰{'─'.repeat(Math.max(0, cardWidth))}╯</Text>
+          </Box>
+        </Box>
+      )}
 
       {/* Spacer */}
       <Box flexGrow={1} />

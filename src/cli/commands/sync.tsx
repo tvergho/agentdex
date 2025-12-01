@@ -505,7 +505,10 @@ export async function runSync(
 
     // ========== PHASE 7: Enrich untitled conversations (if enabled) ==========
     const config = loadConfig();
-    if (config.providers.claudeCode.enabled && config.providers.claudeCode.autoEnrichSummaries) {
+    const claudeEnrichEnabled = config.providers.claudeCode.enabled && config.providers.claudeCode.autoEnrichSummaries;
+    const codexEnrichEnabled = config.providers.codex.enabled && config.providers.codex.autoEnrichSummaries;
+
+    if (claudeEnrichEnabled || codexEnrichEnabled) {
       progress.phase = 'enriching';
       progress.currentSource = undefined;
       progress.currentProject = undefined;
