@@ -373,6 +373,8 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
     const files: RawFile[] = [];
     const fileEdits: RawFileEdit[] = [];
 
+    const isAssistant = msg.role === 'assistant';
+    
     for (const part of parts) {
       if (part.type === 'text' && part.text) {
         content += part.text;
@@ -385,6 +387,16 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
           filePath: part.state.input ? extractFilePath(part.state.input) : undefined,
         };
         toolCalls.push(tc);
+
+        // For assistant messages, interleave tool output in content
+        if (isAssistant && tc.output) {
+          const fileName = tc.filePath ? tc.filePath.split('/').pop() : '';
+          content += '\n\n---\n';
+          content += `**${tc.name}**${fileName ? ` \`${fileName}\`` : ''}\n`;
+          content += '```\n';
+          content += tc.output;
+          content += '\n```\n---\n';
+        }
 
         // Extract file from tool call
         if (tc.filePath && !seenPaths.has(tc.filePath)) {

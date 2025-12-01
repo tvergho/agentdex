@@ -588,6 +588,24 @@ export function extractConversations(dbPath: string): RawConversation[] {
         }
       }
 
+      // Append file edit content to assistant bubbles
+      for (const bubble of bubbles) {
+        if (bubble.type === 'assistant' && bubble.fileEdits.length > 0) {
+          for (const edit of bubble.fileEdits) {
+            if (edit.newContent) {
+              const fileName = edit.filePath.split('/').pop() || edit.filePath;
+              bubble.text += '\n\n---\n';
+              bubble.text += `**Edit** \`${fileName}\` (+${edit.linesAdded}/-${edit.linesRemoved})\n`;
+              bubble.text += '```\n';
+              bubble.text += edit.newContent;
+              bubble.text += '\n```\n---';
+              // Clear newContent after appending to avoid duplicate display
+              edit.newContent = undefined;
+            }
+          }
+        }
+      }
+
       // Calculate per-bubble line totals
       for (const bubble of bubbles) {
         const totalAdded = bubble.fileEdits.reduce((sum, e) => sum + e.linesAdded, 0);

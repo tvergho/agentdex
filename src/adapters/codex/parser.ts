@@ -476,6 +476,21 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
         const files = msg.role === 'assistant' ? currentFiles : [];
         const fileEdits = msg.role === 'assistant' ? currentEdits : [];
 
+        // For assistant messages, append tool outputs to content
+        let finalContent = content;
+        if (msg.role === 'assistant' && toolCalls.length > 0) {
+          for (const tc of toolCalls) {
+            if (tc.output) {
+              const fileName = tc.filePath ? tc.filePath.split('/').pop() : '';
+              finalContent += '\n\n---\n';
+              finalContent += `**${tc.name}**${fileName ? ` \`${fileName}\`` : ''}\n`;
+              finalContent += '```\n';
+              finalContent += tc.output;
+              finalContent += '\n```\n---';
+            }
+          }
+        }
+
         // Calculate per-message line totals
         const totalLinesAdded = fileEdits.reduce((sum, e) => sum + e.linesAdded, 0);
         const totalLinesRemoved = fileEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
@@ -483,7 +498,7 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
         messages.push({
           index: messageIndex++,
           role: msg.role,
-          content,
+          content: finalContent,
           timestamp: entry.timestamp,
           toolCalls,
           files,
