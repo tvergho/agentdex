@@ -17,7 +17,7 @@ export function HighlightedText({
 }: HighlightedTextProps) {
   const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
   if (terms.length === 0) {
-    return <Text dimColor={dimColor}>{text}</Text>;
+    return <Text dimColor={dimColor} wrap="truncate-end">{text}</Text>;
   }
 
   // Build regex to match any term

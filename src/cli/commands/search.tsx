@@ -346,11 +346,23 @@ function SearchApp({
 
   let footerContent: React.ReactNode;
   if (navState.viewMode === 'message') {
-    footerContent = (
+    footerContent = navState.toolNavigationMode ? (
+      // Tool navigation mode footer
+      <>
+        <Text color="cyan" bold>TOOLS </Text>
+        <Key k="j/k" /><Text dimColor>: nav tools</Text><Sep />
+        <Key k="Enter/Space" /><Text dimColor>: expand</Text><Sep />
+        <Key k="Tab" /><Text dimColor>: exit</Text><Sep />
+        <Key k="Esc" /><Text dimColor>: back</Text><Sep />
+        <Key k="q" /><Text dimColor>: quit</Text>
+      </>
+    ) : (
+      // Normal scroll mode footer
       <>
         <Key k="e" /><Text dimColor>: export</Text><Sep />
         <Key k="j/k" /><Text dimColor>: scroll</Text><Sep />
-        <Key k="n/p" /><Text dimColor>: next/prev</Text><Sep />
+        <Key k="Tab" /><Text dimColor>: tools</Text><Sep />
+        <Key k="n/p" /><Text dimColor>: msg</Text><Sep />
         <Key k="Esc" /><Text dimColor>: back</Text><Sep />
         <Key k="q" /><Text dimColor>: quit</Text>
       </>
@@ -433,8 +445,10 @@ function SearchApp({
           <MessageDetailView
             message={navState.combinedMessages[navState.selectedMessageIndex]!}
             messageFiles={navState.conversationMessageFiles}
-            toolCalls={navState.conversationToolCalls}
-            fileEdits={navState.conversationFileEdits}
+            toolOutputBlocks={navState.toolOutputBlocks}
+            contentSegments={navState.contentSegments}
+            expandedToolIndices={navState.expandedToolIndices}
+            focusedToolIndex={navState.focusedToolIndex}
             width={width - 2}
             height={availableHeight}
             scrollOffset={navState.messageScrollOffset}
@@ -471,7 +485,7 @@ function SearchApp({
             const convFileMatches = fileMatches.get(result.conversation.id);
             const isChecked = selectedIds.has(result.conversation.id);
             return (
-              <Box key={result.conversation.id} flexDirection="row">
+              <Box key={result.conversation.id} flexDirection="row" marginBottom={1}>
                 {multiSelectMode && (
                   <Text color={isChecked ? 'green' : 'gray'}>
                     {isChecked ? '[✓] ' : '[ ] '}

@@ -780,6 +780,7 @@ function UnifiedApp() {
             message={navState.combinedMessages[navState.selectedMessageIndex]!}
             messageFiles={navState.conversationMessageFiles}
             toolOutputBlocks={navState.toolOutputBlocks}
+            contentSegments={navState.contentSegments}
             expandedToolIndices={navState.expandedToolIndices}
             focusedToolIndex={navState.focusedToolIndex}
             width={width - 2}
@@ -818,14 +819,15 @@ function UnifiedApp() {
             const actualIndex = scrollOffset + idx;
             if (!item?.conversation) return null;
             return (
-              <ResultRow
-                key={item.conversation.id}
-                result={item}
-                isSelected={actualIndex === navState.selectedIndex}
-                width={width - 2}
-                query={activeQuery}
-                index={actualIndex}
-              />
+              <Box key={item.conversation.id} marginBottom={1}>
+                <ResultRow
+                  result={item}
+                  isSelected={actualIndex === navState.selectedIndex}
+                  width={width - 2}
+                  query={activeQuery}
+                  index={actualIndex}
+                />
+              </Box>
             );
           })
         ) : (
@@ -885,24 +887,42 @@ function UnifiedApp() {
                 <Text color="gray"> back</Text>
               </>
             ) : navState.viewMode === 'message' ? (
-              <>
-                <Text color="white" bold>e</Text>
-                <Text color="gray"> export · </Text>
-                <Text color="white" bold>j</Text>
-                <Text color="gray">/</Text>
-                <Text color="white" bold>k</Text>
-                <Text color="gray"> scroll · </Text>
-                <Text color="white" bold>Enter</Text>
-                <Text color="gray">/</Text>
-                <Text color="white" bold>Space</Text>
-                <Text color="gray"> expand · </Text>
-                <Text color="white" bold>n</Text>
-                <Text color="gray">/</Text>
-                <Text color="white" bold>p</Text>
-                <Text color="gray"> nav · </Text>
-                <Text color="white" bold>Esc</Text>
-                <Text color="gray"> back</Text>
-              </>
+              navState.toolNavigationMode ? (
+                // Tool navigation mode
+                <>
+                  <Text color="cyan" bold>TOOLS </Text>
+                  <Text color="white" bold>j</Text>
+                  <Text color="gray">/</Text>
+                  <Text color="white" bold>k</Text>
+                  <Text color="gray"> nav tools · </Text>
+                  <Text color="white" bold>Enter</Text>
+                  <Text color="gray">/</Text>
+                  <Text color="white" bold>Space</Text>
+                  <Text color="gray"> expand · </Text>
+                  <Text color="white" bold>Tab</Text>
+                  <Text color="gray"> exit · </Text>
+                  <Text color="white" bold>Esc</Text>
+                  <Text color="gray"> back</Text>
+                </>
+              ) : (
+                // Normal scroll mode
+                <>
+                  <Text color="white" bold>e</Text>
+                  <Text color="gray"> export · </Text>
+                  <Text color="white" bold>j</Text>
+                  <Text color="gray">/</Text>
+                  <Text color="white" bold>k</Text>
+                  <Text color="gray"> scroll · </Text>
+                  <Text color="white" bold>Tab</Text>
+                  <Text color="gray"> tools · </Text>
+                  <Text color="white" bold>n</Text>
+                  <Text color="gray">/</Text>
+                  <Text color="white" bold>p</Text>
+                  <Text color="gray"> msg · </Text>
+                  <Text color="white" bold>Esc</Text>
+                  <Text color="gray"> back</Text>
+                </>
+              )
             ) : navState.viewMode === 'matches' ? (
               <>
                 <Text color="white" bold>e</Text>

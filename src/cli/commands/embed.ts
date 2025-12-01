@@ -6,7 +6,7 @@
  * Uses llama-server for fast batch embedding with fallback to node-llama-cpp
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable } from '../../db/index';
 import {
   downloadModel,
   initEmbeddings,
@@ -260,6 +260,11 @@ async function runBackgroundEmbedding(): Promise<void> {
 
   try {
     await connect();
+
+    // Compact the table to materialize any deletions from force sync.
+    // This is required before mergeInsert can work on tables with many deleted rows.
+    console.log('Compacting messages table...');
+    await compactMessagesTable();
 
     // Get messages that need embedding
     const messages = await getAllMessagesNeedingEmbedding();

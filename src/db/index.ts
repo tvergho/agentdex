@@ -391,6 +391,16 @@ export async function rebuildVectorIndex(): Promise<void> {
   });
 }
 
+/**
+ * Compact the messages table to materialize deletions.
+ * This must be called after force sync (which deletes many rows) before
+ * mergeInsert operations can work on the table.
+ */
+export async function compactMessagesTable(): Promise<void> {
+  const table = await getMessagesTable();
+  await table.optimize();
+}
+
 export async function needsVectorMigration(): Promise<boolean> {
   const table = await getMessagesTable();
 

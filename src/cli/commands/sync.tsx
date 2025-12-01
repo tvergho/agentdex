@@ -220,14 +220,14 @@ function spawnBackgroundEmbedding(): void {
   // This minimizes impact on user's foreground work
   // On macOS/Linux, nice lowers scheduling priority; on Windows it's ignored
   const isWindows = process.platform === 'win32';
-  const command = isWindows ? 'bun' : 'nice';
-  const args = isWindows
-    ? ['run', embedScript]
-    : ['-n', '19', 'bun', 'run', embedScript];
+  const command = isWindows
+    ? `bun run "${embedScript}"`
+    : `nice -n 19 bun run "${embedScript}"`;
 
-  const child = spawn(command, args, {
+  const child = spawn(command, [], {
     detached: true,
     stdio: 'ignore',
+    shell: true, // Use shell to ensure PATH is resolved correctly
   });
 
   child.unref();
@@ -255,10 +255,6 @@ export async function runSync(
   }
 
   try {
-    // Kill any running embedding processes to prevent conflicts during sync
-    // The embedding will be restarted after sync if new data was added
-    await killEmbeddingProcesses();
-
     // Connect to database
     await connect();
 
@@ -335,6 +331,10 @@ export async function runSync(
     let existingIds = new Set<string>();
 
     if (options.force) {
+      // Kill any running embedding processes to prevent conflicts during sync
+      // Only kill if we're actually going to modify the database (force mode with data)
+      await killEmbeddingProcesses();
+
       // Force mode: delete all existing data and re-sync everything
       // Track what to delete by source
       const deleteBySource = new Map<string, Set<string>>();
@@ -381,6 +381,12 @@ export async function runSync(
       return;
     }
 
+    // For incremental mode, kill embedding processes only if we have work to do
+    // (Force mode already killed processes above before deletions)
+    if (!options.force) {
+      await killEmbeddingProcesses();
+    }
+
     // ========== PHASE 3: Collect data from NEW conversations only ==========
     const newConvRows: Parameters<typeof conversationRepo.upsert>[0][] = [];
     const newMessages: Parameters<typeof messageRepo.bulkInsert>[0] = [];
@@ -390,11 +396,14 @@ export async function runSync(
     const newFileEdits: Parameters<typeof fileEditsRepo.bulkInsert>[0] = [];
 
     for (const { normalized } of conversationsToSync) {
-      newConvRows.push(normalized.conversation);
-
-      if (normalized.messages.length > 0) {
-        newMessages.push(...normalized.messages);
+      // Skip conversations with no messages (empty/abandoned)
+      if (normalized.messages.length === 0) {
+        continue;
       }
+
+      newConvRows.push(normalized.conversation);
+      newMessages.push(...normalized.messages);
+
       if (normalized.toolCalls.length > 0) {
         newToolCalls.push(...normalized.toolCalls);
       }

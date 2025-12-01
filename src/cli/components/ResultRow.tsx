@@ -1,11 +1,13 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { HighlightedText } from './HighlightedText';
-import { SourceBadge } from './SourceBadge';
 import {
   formatRelativeTime,
   formatMatchCount,
   truncatePath,
+  formatTokenPair,
+  formatLineCounts,
+  formatSourceLabel,
 } from '../../utils/format';
 import type { ConversationResult } from '../../schema/index';
 import type { FileSearchMatch } from '../../db/repository';
@@ -38,6 +40,7 @@ export function ResultRow({
   // Format index with consistent width (right-aligned)
   const indexStr = index !== undefined ? `${index + 1}.` : '';
   const indexWidth = index !== undefined ? 4 : 0; // "999." max
+  const contentWidth = width - indexWidth - (indexWidth > 0 ? 1 : 0);
 
   // Calculate available width for title
   const prefixWidth = indexWidth + (indexWidth > 0 ? 1 : 0);
@@ -48,59 +51,74 @@ export function ResultRow({
     ? conversation.title.slice(0, maxTitleWidth - 1) + '…'
     : conversation.title;
 
-  // Snippet - truncate to fit width, accounting for left margin
+  // Build row 2 metadata parts for colored display
+  const sourceName = formatSourceLabel(conversation.source);
+  const tokenStr = formatTokenPair(
+    conversation.totalInputTokens,
+    conversation.totalOutputTokens,
+    conversation.totalCacheCreationTokens,
+    conversation.totalCacheReadTokens
+  );
+  const lineStr = formatLineCounts(
+    conversation.totalLinesAdded,
+    conversation.totalLinesRemoved
+  );
+
+  // Calculate how much space we have for the path
+  const fixedPartsLen = sourceName.length +
+    (tokenStr ? ` · ${tokenStr}`.length : 0) +
+    (lineStr ? ` · ${lineStr}`.length : 0);
+  const availableForPath = contentWidth - fixedPartsLen - 10; // Leave some buffer
+
+  const pathStr = conversation.workspacePath
+    ? truncatePath(conversation.workspacePath, Math.max(15, availableForPath))
+    : null;
+
+  // Snippet - truncate to fit width
   const snippetContent = bestMatch.snippet.replace(/\n/g, ' ').trim();
-  const snippetMaxWidth = Math.max(20, width - (indexWidth + (indexWidth > 0 ? 1 : 0)) - 4);
+  const snippetMaxWidth = Math.max(20, contentWidth - 2);
   const snippetText = snippetContent.length > snippetMaxWidth
     ? snippetContent.slice(0, snippetMaxWidth - 1) + '…'
     : snippetContent;
 
-  // Format workspace path
-  const workspacePath = conversation.workspacePath;
-  const minPathWidth = 20;
-  const maxPathWidth = Math.max(minPathWidth, width - 20);
-  const displayPath = workspacePath
-    ? truncatePath(workspacePath, maxPathWidth)
-    : null;
-
-  // Format file matches display
+  // Format file matches display - truncate to fit
   const hasFileMatches = fileMatches && fileMatches.length > 0;
-  const fileMatchDisplay = hasFileMatches
-    ? fileMatches
-        .slice(0, 3)
-        .map((m) => m.filePath.split('/').pop())
-        .join(', ') + (fileMatches.length > 3 ? ` +${fileMatches.length - 3}` : '')
-    : null;
+  let fileMatchDisplay = '';
+  if (hasFileMatches) {
+    fileMatchDisplay = 'Files: ' + fileMatches
+      .slice(0, 3)
+      .map((m) => m.filePath.split('/').pop())
+      .join(', ') + (fileMatches.length > 3 ? ` +${fileMatches.length - 3}` : '');
+    if (fileMatchDisplay.length > contentWidth - 2) {
+      fileMatchDisplay = fileMatchDisplay.slice(0, contentWidth - 3) + '…';
+    }
+  }
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       {/* Row 1: Index + Title + Match count + Time */}
-      <Box>
+      <Box width={width}>
         {index !== undefined && (
           <Text color={isSelected ? 'cyan' : 'gray'}>{indexStr.padStart(indexWidth)} </Text>
         )}
-        <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>{title}</Text>
+        <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected} underline={isSelected}>{title}</Text>
         <Box flexGrow={1} />
-        <Text color="gray">{matchStr} · {timeStr}</Text>
+        <Text bold color="yellow">{matchStr}</Text>
+        <Text color="gray"> · {timeStr}</Text>
       </Box>
-      {/* Row 2: Source + workspace path */}
+      {/* Row 2: Source + workspace path + tokens + lines */}
       <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)}>
-        <Text wrap="truncate-end">
-          <SourceBadge source={conversation.source} />
-          {displayPath && (
-            <Text color="magenta"> · {displayPath}</Text>
-          )}
-        </Text>
+        <Text color="yellow">{sourceName}</Text>
+        {pathStr && <Text color="magenta"> · {pathStr}</Text>}
+        {tokenStr && <Text color="cyan"> · {tokenStr}</Text>}
+        {lineStr && <Text color="gray"> · {lineStr}</Text>}
       </Box>
       {/* Row 3: Snippet or file matches */}
       <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)}>
         {hasFileMatches ? (
-          <Text wrap="truncate-end">
-            <Text color="green">Files: </Text>
-            <Text color="gray">{fileMatchDisplay}</Text>
-          </Text>
+          <Text color="gray">{fileMatchDisplay}</Text>
         ) : (
-          <HighlightedText text={snippetText} query={query} dimColor={false} />
+          <HighlightedText text={snippetText} query={query} />
         )}
       </Box>
     </Box>
