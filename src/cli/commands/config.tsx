@@ -2,11 +2,6 @@
  * Config command - Settings TUI for managing provider connections and features
  *
  * Usage: dex config
- *
- * Allows users to:
- * - Connect/disconnect providers (Claude Code, Codex)
- * - Toggle auto-enrich summaries
- * - Manually generate titles for untitled conversations
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -25,19 +20,46 @@ import {
 import {
   countUntitledConversations,
   enrichUntitledConversations,
+  type EnrichmentProgress,
 } from '../../features/enrichment/index.js';
 import { conversationRepo } from '../../db/repository.js';
 
-type MenuItemType = 'connect' | 'disconnect' | 'toggle' | 'action' | 'disabled';
+// ============ Progress Bar Component ============
 
-interface MenuItem {
+function ProgressBar({
+  current,
+  total,
+  width,
+}: {
+  current: number;
+  total: number;
+  width: number;
+}) {
+  const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+  const barWidth = Math.max(20, width - 16);
+  const filled = Math.round((current / total) * barWidth);
+  const empty = barWidth - filled;
+
+  return (
+    <Box>
+      <Text color="green">{'█'.repeat(filled)}</Text>
+      <Text color="gray">{'░'.repeat(empty)}</Text>
+      <Text dimColor> {current}/{total} </Text>
+      <Text color="cyan">{percentage}%</Text>
+    </Box>
+  );
+}
+
+// ============ Main Config App ============
+
+type MenuItem = {
   id: string;
   label: string;
-  type: MenuItemType;
+  type: 'toggle' | 'action' | 'button';
   value?: boolean;
   disabled?: boolean;
-  hidden?: boolean;
-}
+  section?: string;
+};
 
 function ConfigApp() {
   const { exit } = useApp();
@@ -49,8 +71,10 @@ function ConfigApp() {
   const [untitledCount, setUntitledCount] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [actionStatus, setActionStatus] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [enrichingProgress, setEnrichingProgress] = useState<{ current: number; total: number } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<EnrichmentProgress | null>(null);
+  const [frame, setFrame] = useState(0);
+  const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
   // Load initial state
   useEffect(() => {
@@ -66,7 +90,7 @@ function ConfigApp() {
         const count = await countUntitledConversations();
         setUntitledCount(count);
       } catch (err) {
-        setActionStatus({
+        setToast({
           message: `Failed to load: ${err instanceof Error ? err.message : String(err)}`,
           type: 'error',
         });
@@ -77,177 +101,145 @@ function ConfigApp() {
     load();
   }, []);
 
-  // Build menu items based on current state
+  // Build menu items
   const menuItems: MenuItem[] = [];
+  const claudeCodeConnected = config?.providers.claudeCode.enabled ?? false;
 
-  if (config) {
-    const claudeCodeConnected = config.providers.claudeCode.enabled;
-
-    if (!claudeCodeConnected) {
-      // Disconnected state - show Connect button
-      menuItems.push({
-        id: 'claude-code-connect',
-        label: 'Connect',
-        type: 'connect',
-        disabled: !credentialStatus?.isAuthenticated,
-      });
-    } else {
-      // Connected state - show status and options
-      menuItems.push({
-        id: 'claude-code-disconnect',
-        label: 'Disconnect',
-        type: 'disconnect',
-      });
-
-      menuItems.push({
-        id: 'claude-code-auto-enrich',
-        label: 'Auto-enrich titles',
-        type: 'toggle',
-        value: config.providers.claudeCode.autoEnrichSummaries,
-      });
-
-      if (untitledCount > 0) {
-        menuItems.push({
-          id: 'claude-code-enrich-now',
-          label: `Generate titles for ${untitledCount} untitled conversation${untitledCount === 1 ? '' : 's'}`,
-          type: 'action',
-        });
-      }
-    }
-
-    // Codex section (coming soon)
+  if (config && claudeCodeConnected) {
+    // Order matches visual layout: auto-enrich, disconnect, then generate
     menuItems.push({
-      id: 'codex-connect',
-      label: 'Codex (coming soon)',
-      type: 'disabled',
-      disabled: true,
+      id: 'auto-enrich',
+      label: 'Auto-enrich titles on sync',
+      type: 'toggle',
+      value: config.providers.claudeCode.autoEnrichSummaries,
+      section: 'claude-code',
+    });
+
+    menuItems.push({
+      id: 'disconnect',
+      label: 'Disconnect',
+      type: 'button',
+      section: 'claude-code',
+    });
+
+    if (untitledCount > 0) {
+      menuItems.push({
+        id: 'generate',
+        label: `Generate titles for ${untitledCount} untitled`,
+        type: 'action',
+        section: 'titles',
+      });
+    }
+  } else if (config && credentialStatus?.isAuthenticated) {
+    menuItems.push({
+      id: 'connect',
+      label: 'Connect',
+      type: 'button',
+      section: 'claude-code',
     });
   }
 
-  // Filter out hidden items and get selectable items
-  const visibleItems = menuItems.filter((item) => !item.hidden);
-  const selectableItems = visibleItems.filter((item) => !item.disabled);
+  const selectableItems = menuItems.filter((item) => !item.disabled);
 
   // Handle navigation
   const moveSelection = useCallback((delta: number) => {
     if (selectableItems.length === 0) return;
-
-    // Find current selectable index
-    const currentSelectableIndex = selectableItems.findIndex(
-      (item) => item === visibleItems[selectedIndex]
-    );
-
-    // Calculate new selectable index
-    let newSelectableIndex = currentSelectableIndex + delta;
-    if (newSelectableIndex < 0) newSelectableIndex = 0;
-    if (newSelectableIndex >= selectableItems.length) {
-      newSelectableIndex = selectableItems.length - 1;
-    }
-
-    // Find the visible index for this selectable item
-    const newItem = selectableItems[newSelectableIndex];
-    const newVisibleIndex = visibleItems.findIndex((item) => item === newItem);
-    if (newVisibleIndex >= 0) {
-      setSelectedIndex(newVisibleIndex);
-    }
-  }, [selectableItems, visibleItems, selectedIndex]);
+    setSelectedIndex((idx) => {
+      const newIdx = idx + delta;
+      if (newIdx < 0) return 0;
+      if (newIdx >= selectableItems.length) return selectableItems.length - 1;
+      return newIdx;
+    });
+  }, [selectableItems.length]);
 
   // Handle actions
   const handleAction = useCallback(async () => {
     if (!config) return;
 
-    const item = visibleItems[selectedIndex];
+    const item = selectableItems[selectedIndex];
     if (!item || item.disabled) return;
 
     try {
-      if (item.id === 'claude-code-connect') {
-        // Connect Claude Code
-        if (!credentialStatus?.isAuthenticated) {
-          setActionStatus({
-            message: credentialStatus?.error || 'No Claude Code credentials found',
-            type: 'error',
-          });
-          return;
-        }
-
+      if (item.id === 'connect') {
         const newConfig = updateProviderConfig('claudeCode', { enabled: true });
         setConfig(newConfig);
-        setActionStatus({
-          message: `Connected to Claude Code${credentialStatus.subscriptionType ? ` (${credentialStatus.subscriptionType})` : ''}`,
-          type: 'success',
-        });
-      } else if (item.id === 'claude-code-disconnect') {
-        // Disconnect Claude Code
+        setToast({ message: 'Connected to Claude Code', type: 'success' });
+      } else if (item.id === 'disconnect') {
         const newConfig = updateProviderConfig('claudeCode', {
           enabled: false,
           autoEnrichSummaries: false,
         });
         setConfig(newConfig);
-        setActionStatus({
-          message: 'Disconnected from Claude Code',
-          type: 'info',
-        });
-      } else if (item.id === 'claude-code-auto-enrich') {
-        // Toggle auto-enrich
+        setToast({ message: 'Disconnected', type: 'info' });
+      } else if (item.id === 'auto-enrich') {
         const newConfig = updateProviderConfig('claudeCode', {
           autoEnrichSummaries: !config.providers.claudeCode.autoEnrichSummaries,
         });
         setConfig(newConfig);
-      } else if (item.id === 'claude-code-enrich-now') {
-        // Start enrichment
-        setEnrichingProgress({ current: 0, total: untitledCount });
-        setActionStatus({ message: 'Generating titles...', type: 'info' });
-
-        const result = await enrichUntitledConversations((current, total) => {
-          setEnrichingProgress({ current, total });
+      } else if (item.id === 'generate') {
+        setGenerationProgress({
+          completed: 0,
+          total: untitledCount,
+          inFlight: 0,
+          recentTitles: [],
         });
 
-        setEnrichingProgress(null);
+        const result = await enrichUntitledConversations({
+          onProgress: (progress) => setGenerationProgress(progress),
+        });
 
-        // Refresh untitled count
+        setGenerationProgress(null);
+
         const newCount = await conversationRepo.countUntitled();
         setUntitledCount(newCount);
 
-        setActionStatus({
+        setToast({
           message: `Generated ${result.enriched} title${result.enriched === 1 ? '' : 's'}${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
           type: result.failed > 0 ? 'error' : 'success',
         });
       }
     } catch (err) {
-      setActionStatus({
-        message: `Action failed: ${err instanceof Error ? err.message : String(err)}`,
+      setGenerationProgress(null);
+      setToast({
+        message: `Failed: ${err instanceof Error ? err.message : String(err)}`,
         type: 'error',
       });
     }
-  }, [config, visibleItems, selectedIndex, credentialStatus, untitledCount]);
+  }, [config, selectableItems, selectedIndex, untitledCount]);
 
   useInput((input, key) => {
-    // Quit
     if (input === 'q' || key.escape) {
       exit();
+      // Force exit to avoid hang
+      setTimeout(() => process.exit(0), 100);
       return;
     }
 
-    // Navigation
     if (input === 'j' || key.downArrow) {
       moveSelection(1);
     } else if (input === 'k' || key.upArrow) {
       moveSelection(-1);
     }
 
-    // Actions
     if (key.return || input === ' ') {
       handleAction();
     }
   });
 
-  // Clear status after 3 seconds
+  // Toast auto-dismiss
   useEffect(() => {
-    if (actionStatus && actionStatus.type !== 'info') {
-      const timer = setTimeout(() => setActionStatus(null), 3000);
+    if (toast && toast.type !== 'info') {
+      const timer = setTimeout(() => setToast(null), 3000);
       return () => clearTimeout(timer);
     }
-  }, [actionStatus]);
+  }, [toast]);
+
+  // Spinner animation for generation
+  useEffect(() => {
+    if (!generationProgress) return;
+    const timer = setInterval(() => setFrame((f) => (f + 1) % spinner.length), 80);
+    return () => clearInterval(timer);
+  }, [generationProgress, spinner.length]);
 
   if (loading) {
     return (
@@ -257,131 +249,272 @@ function ConfigApp() {
     );
   }
 
-  const claudeCodeConnected = config?.providers.claudeCode.enabled ?? false;
+  const innerWidth = Math.max(60, width - 6);
+  const cardWidth = innerWidth - 4;
+  const subsectionWidth = cardWidth - 6;
 
   return (
     <Box width={width} height={height} flexDirection="column">
+      {/* Outer top border */}
+      <Box>
+        <Text color="gray">┌{'─'.repeat(width - 2)}┐</Text>
+      </Box>
+
       {/* Header */}
-      <Box flexDirection="column" marginBottom={1}>
-        <Box paddingX={1}>
-          <Text bold color="white">⚙  Settings</Text>
-        </Box>
-        <Box paddingX={1}>
-          <Text color="gray">{'─'.repeat(Math.max(0, width - 2))}</Text>
-        </Box>
+      <Box>
+        <Text color="gray">│</Text>
+        <Text>  </Text>
+        <Text bold>⚙  Settings</Text>
+        <Text>{' '.repeat(Math.max(0, width - 16))}</Text>
+        <Text color="gray">│</Text>
       </Box>
 
-      {/* Claude Code Section */}
-      <Box flexDirection="column" paddingX={1} marginBottom={1}>
-        <Text bold color="white">Claude Code</Text>
-        <Text color="gray">{'─'.repeat(14)}</Text>
+      {/* Header divider */}
+      <Box>
+        <Text color="gray">├{'─'.repeat(width - 2)}┤</Text>
+      </Box>
 
-        {claudeCodeConnected && credentialStatus && (
-          <Box marginTop={1}>
+      {/* Empty line */}
+      <Box>
+        <Text color="gray">│</Text>
+        <Text>{' '.repeat(width - 2)}</Text>
+        <Text color="gray">│</Text>
+      </Box>
+
+      {/* Claude Code Card */}
+      <Box>
+        <Text color="gray">│</Text>
+        <Text>  </Text>
+        <Text color="gray">┌─ </Text>
+        <Text bold>Claude Code</Text>
+        <Text color="gray"> {'─'.repeat(Math.max(0, cardWidth - 16))}</Text>
+        <Text>  </Text>
+        <Text color="gray">│</Text>
+      </Box>
+
+      {/* Status row */}
+      <Box>
+        <Text color="gray">│  │  </Text>
+        {claudeCodeConnected ? (
+          <>
             <Text color="green">● Connected</Text>
-            {credentialStatus.subscriptionType && (
-              <Text dimColor> ({credentialStatus.subscriptionType})</Text>
+            <Text>{' '.repeat(Math.max(0, cardWidth - 30))}</Text>
+            <Text dimColor>{credentialStatus?.subscriptionType || ''}</Text>
+          </>
+        ) : (
+          <>
+            <Text color="yellow">○ Not connected</Text>
+            <Text>{' '.repeat(Math.max(0, cardWidth - 16))}</Text>
+          </>
+        )}
+        <Text color="gray">  │  │</Text>
+      </Box>
+
+      {/* Empty line in card */}
+      <Box>
+        <Text color="gray">│  │</Text>
+        <Text>{' '.repeat(cardWidth)}</Text>
+        <Text color="gray">│  │</Text>
+      </Box>
+
+      {/* Menu items in Claude Code card */}
+      {selectableItems.filter(i => i.section === 'claude-code' || i.section === undefined).map((item) => {
+        const actualIdx = selectableItems.indexOf(item);
+        const isSelected = actualIdx === selectedIndex;
+        const isDisconnect = item.id === 'disconnect';
+        const labelLen = item.label.length + (item.type === 'toggle' ? 5 : 0);
+        const padding = Math.max(0, cardWidth - labelLen - 4);
+
+        return (
+          <Box key={item.id}>
+            <Text color="gray">│  │  </Text>
+            <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▸ ' : '  '}</Text>
+            {item.type === 'toggle' && (
+              <Text color={item.value ? 'green' : 'gray'}>[{item.value ? '✓' : ' '}] </Text>
             )}
+            <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : 'white'}>{item.label}</Text>
+            <Text>{' '.repeat(padding)}</Text>
+            <Text color="gray">│  │</Text>
           </Box>
-        )}
+        );
+      })}
 
-        {!claudeCodeConnected && credentialStatus && !credentialStatus.isAuthenticated && (
-          <Box marginTop={1} flexDirection="column">
-            <Text color="yellow">○ Not connected</Text>
-            <Text dimColor wrap="wrap">{credentialStatus.error}</Text>
+      {/* Titles subsection */}
+      {claudeCodeConnected && (
+        <>
+          {/* Empty line */}
+          <Box>
+            <Text color="gray">│  │</Text>
+            <Text>{' '.repeat(cardWidth)}</Text>
+            <Text color="gray">│  │</Text>
           </Box>
-        )}
 
-        {!claudeCodeConnected && credentialStatus?.isAuthenticated && (
-          <Box marginTop={1}>
-            <Text color="yellow">○ Not connected</Text>
-            <Text dimColor> (credentials available)</Text>
+          {/* Subsection header */}
+          <Box>
+            <Text color="gray">│  │  ╭─ </Text>
+            <Text dimColor>Titles from past conversations</Text>
+            <Text color="gray"> {'─'.repeat(Math.max(0, subsectionWidth - 32))}╮</Text>
+            <Text color="gray">  │  │</Text>
           </Box>
-        )}
-      </Box>
 
-      {/* Menu Items */}
-      <Box flexDirection="column" paddingX={1} flexGrow={1}>
-        {visibleItems.map((item, idx) => {
-          const isSelected = idx === selectedIndex && !item.disabled;
-          const isDisabled = item.disabled;
-
-          // Skip codex header to add space
-          if (item.id === 'codex-connect') {
-            return (
-              <Box key={item.id} flexDirection="column" marginTop={2}>
-                <Text bold color="white">Codex</Text>
-                <Text color="gray">{'─'.repeat(5)}</Text>
-                <Box marginTop={1}>
-                  <Text color={isSelected ? 'cyan' : 'gray'} dimColor={isDisabled}>
-                    {isSelected ? '▸ ' : '  '}
-                    {item.label}
-                  </Text>
-                </Box>
+          {generationProgress ? (
+            <>
+              {/* Progress bar */}
+              <Box>
+                <Text color="gray">│  │  │  </Text>
+                <ProgressBar
+                  current={generationProgress.completed}
+                  total={generationProgress.total}
+                  width={Math.min(40, subsectionWidth - 4)}
+                />
+                <Text>{' '.repeat(Math.max(0, subsectionWidth - 56))}</Text>
+                <Text color="gray">│  │  │</Text>
               </Box>
-            );
-          }
 
-          return (
-            <Box key={item.id} marginBottom={1}>
-              <Text
-                color={isSelected ? 'cyan' : isDisabled ? 'gray' : 'white'}
-                dimColor={isDisabled}
-              >
-                {isSelected ? '▸ ' : '  '}
-                {item.type === 'toggle' && (
-                  <Text color={item.value ? 'green' : 'gray'}>
-                    [{item.value ? '✓' : ' '}]{' '}
+              {/* Recent completions */}
+              {generationProgress.recentTitles.slice(-3).map((item) => (
+                <Box key={item.id}>
+                  <Text color="gray">│  │  │  </Text>
+                  <Text color="green">✓ </Text>
+                  <Text>
+                    {item.title.length > subsectionWidth - 8
+                      ? item.title.slice(0, subsectionWidth - 11) + '...'
+                      : item.title}
                   </Text>
-                )}
-                {item.type === 'action' && <Text color="blue">[◉] </Text>}
-                {(item.type === 'connect' || item.type === 'disconnect') && (
-                  <Text color={item.type === 'connect' ? 'green' : 'red'}>
-                    [{item.type === 'connect' ? '+' : '−'}]{' '}
-                  </Text>
-                )}
-                {item.label}
-              </Text>
+                  <Text>{' '.repeat(Math.max(0, subsectionWidth - item.title.length - 4))}</Text>
+                  <Text color="gray">│  │  │</Text>
+                </Box>
+              ))}
+
+              {/* In-flight indicator */}
+              {generationProgress.inFlight > 0 && (
+                <Box>
+                  <Text color="gray">│  │  │  </Text>
+                  <Text color="cyan">{spinner[frame]} </Text>
+                  <Text dimColor>{generationProgress.inFlight} generating...</Text>
+                  <Text>{' '.repeat(Math.max(0, subsectionWidth - 20))}</Text>
+                  <Text color="gray">│  │  │</Text>
+                </Box>
+              )}
+            </>
+          ) : untitledCount === 0 ? (
+            <Box>
+              <Text color="gray">│  │  │  </Text>
+              <Text color="green">✓ </Text>
+              <Text dimColor>All conversations have titles</Text>
+              <Text>{' '.repeat(Math.max(0, subsectionWidth - 32))}</Text>
+              <Text color="gray">│  │  │</Text>
             </Box>
-          );
-        })}
+          ) : (
+            <>
+              <Box>
+                <Text color="gray">│  │  │  </Text>
+                <Text dimColor>{untitledCount} untitled conversation{untitledCount === 1 ? '' : 's'} found</Text>
+                <Text>{' '.repeat(Math.max(0, subsectionWidth - 30))}</Text>
+                <Text color="gray">│  │  │</Text>
+              </Box>
+              {selectableItems.filter(i => i.section === 'titles').map((item) => {
+                const actualIdx = selectableItems.indexOf(item);
+                const isSelected = actualIdx === selectedIndex;
+
+                return (
+                  <Box key={item.id}>
+                    <Text color="gray">│  │  │  </Text>
+                    <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▸ ' : '  '}</Text>
+                    <Text color={isSelected ? 'cyan' : 'blue'}>[Generate Now]</Text>
+                    <Text>{' '.repeat(Math.max(0, subsectionWidth - 18))}</Text>
+                    <Text color="gray">│  │  │</Text>
+                  </Box>
+                );
+              })}
+            </>
+          )}
+
+          {/* Subsection bottom */}
+          <Box>
+            <Text color="gray">│  │  ╰{'─'.repeat(subsectionWidth)}╯  │  │</Text>
+          </Box>
+        </>
+      )}
+
+      {/* Card bottom */}
+      <Box>
+        <Text color="gray">│  └{'─'.repeat(cardWidth)}┘  │</Text>
       </Box>
 
-      {/* Status/Progress */}
-      {(actionStatus || enrichingProgress) && (
-        <Box paddingX={1} marginBottom={1}>
-          {enrichingProgress ? (
-            <Text color="cyan">
-              Generating title {enrichingProgress.current}/{enrichingProgress.total}...
-            </Text>
-          ) : actionStatus ? (
-            <Text
-              color={
-                actionStatus.type === 'success'
-                  ? 'green'
-                  : actionStatus.type === 'error'
-                    ? 'red'
-                    : 'cyan'
-              }
-            >
-              {actionStatus.message}
-            </Text>
-          ) : null}
+      {/* Empty line */}
+      <Box>
+        <Text color="gray">│</Text>
+        <Text>{' '.repeat(width - 2)}</Text>
+        <Text color="gray">│</Text>
+      </Box>
+
+      {/* Codex Card */}
+      <Box>
+        <Text color="gray">│</Text>
+        <Text>  </Text>
+        <Text color="gray">┌─ </Text>
+        <Text bold>Codex</Text>
+        <Text color="gray"> {'─'.repeat(Math.max(0, cardWidth - 9))}</Text>
+        <Text>  </Text>
+        <Text color="gray">│</Text>
+      </Box>
+
+      <Box>
+        <Text color="gray">│  │  </Text>
+        <Text color="yellow">○ Not connected</Text>
+        <Text>{' '.repeat(Math.max(0, cardWidth - 28))}</Text>
+        <Text dimColor>Coming soon</Text>
+        <Text color="gray">  │  │</Text>
+      </Box>
+
+      <Box>
+        <Text color="gray">│  └{'─'.repeat(cardWidth)}┘  │</Text>
+      </Box>
+
+      {/* Spacer rows */}
+      <Box flexGrow={1} flexDirection="column">
+        {Array.from({ length: Math.max(0, height - 25) }).map((_, i) => (
+          <Box key={i}>
+            <Text color="gray">│</Text>
+            <Text>{' '.repeat(width - 2)}</Text>
+            <Text color="gray">│</Text>
+          </Box>
+        ))}
+      </Box>
+
+      {/* Toast */}
+      {toast && (
+        <Box>
+          <Text color="gray">│  </Text>
+          <Text color={toast.type === 'success' ? 'green' : toast.type === 'error' ? 'red' : 'cyan'}>
+            {toast.message}
+          </Text>
+          <Text>{' '.repeat(Math.max(0, width - toast.message.length - 5))}</Text>
+          <Text color="gray">│</Text>
         </Box>
       )}
 
+      {/* Footer divider */}
+      <Box>
+        <Text color="gray">├{'─'.repeat(width - 2)}┤</Text>
+      </Box>
+
       {/* Footer */}
-      <Box flexDirection="column">
-        <Box paddingX={1}>
-          <Text color="gray">{'─'.repeat(Math.max(0, width - 2))}</Text>
-        </Box>
-        <Box paddingX={1}>
-          <Text color="gray">
-            <Text bold color="white">j/k</Text> navigate ·{' '}
-            <Text bold color="white">Space/Enter</Text> select ·{' '}
-            <Text bold color="white">q</Text> quit
-          </Text>
-        </Box>
+      <Box>
+        <Text color="gray">│</Text>
+        <Text>  </Text>
+        <Text dimColor>↑↓</Text><Text> navigate  </Text>
+        <Text dimColor>␣</Text><Text> toggle  </Text>
+        <Text dimColor>⏎</Text><Text> select  </Text>
+        <Text dimColor>q</Text><Text> quit</Text>
+        <Text>{' '.repeat(Math.max(0, width - 46))}</Text>
+        <Text color="gray">│</Text>
+      </Box>
+
+      {/* Outer bottom border */}
+      <Box>
+        <Text color="gray">└{'─'.repeat(width - 2)}┘</Text>
       </Box>
     </Box>
   );
@@ -389,7 +522,6 @@ function ConfigApp() {
 
 export async function configCommand(): Promise<void> {
   if (!process.stdin.isTTY) {
-    // Non-interactive mode: just print current config
     const config = loadConfig();
     console.log('\nDex Configuration:\n');
     console.log(JSON.stringify(config, null, 2));
@@ -400,4 +532,3 @@ export async function configCommand(): Promise<void> {
   await app.start();
   await app.waitUntilExit();
 }
-

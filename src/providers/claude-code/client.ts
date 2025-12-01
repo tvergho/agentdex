@@ -8,12 +8,17 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { homedir } from 'os';
+import { mkdirSync, existsSync } from 'fs';
 import { getClaudeCodeCredentials } from './credentials.js';
 
 // Get the absolute path to the opencode binary in node_modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const OPENCODE_BIN = join(__dirname, '..', '..', '..', 'node_modules', '.bin', 'opencode');
+
+// Use a local OpenCode data directory to avoid polluting global state
+const DEX_OPENCODE_HOME = join(homedir(), '.dex', 'opencode');
 
 export interface ClaudeCodeClient {
   /** Send a prompt and get a response */
@@ -68,15 +73,25 @@ function waitForServer(proc: ChildProcess, timeout = 30000): Promise<string> {
 }
 
 /**
- * Start the OpenCode server
+ * Start the OpenCode server with isolated data directory
  */
 async function startServer(): Promise<OpenCodeServerState> {
+  // Ensure the local OpenCode home directory exists
+  if (!existsSync(DEX_OPENCODE_HOME)) {
+    mkdirSync(DEX_OPENCODE_HOME, { recursive: true });
+  }
+
   // Find an available port (let the OS choose)
   const port = 0;
 
   const proc = spawn(OPENCODE_BIN, ['serve', `--port=${port}`], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
+    env: {
+      ...process.env,
+      // Use isolated data directory so title gen sessions don't pollute global state
+      OPENCODE_HOME: DEX_OPENCODE_HOME,
+    },
   });
 
   try {

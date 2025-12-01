@@ -51,12 +51,43 @@ export class OpenCodeAdapter implements SourceAdapter {
 
     for (const session of sessions) {
       const conversation = extractConversation(session);
-      if (conversation) {
+      if (conversation && !this.isTitleGenerationSession(conversation)) {
         conversations.push(conversation);
       }
     }
 
     return conversations;
+  }
+
+  /**
+   * Check if a conversation is a title generation session from Dex enrichment.
+   * These are characterized by:
+   * - Default "New session" titles (OpenCode's default)
+   * - Messages contain title generation prompt patterns
+   */
+  private isTitleGenerationSession(conv: RawConversation): boolean {
+    // Check ALL user messages for title generation prompt patterns
+    const titleGenPatterns = [
+      'generate a brief',
+      'descriptive title',
+      'conversation excerpt',
+      'return only the title',
+      'max 60 char',
+      'no quotes or explanation',
+    ];
+
+    for (const msg of conv.messages) {
+      if (msg.role === 'user') {
+        const content = msg.content.toLowerCase();
+        const matchCount = titleGenPatterns.filter((p) => content.includes(p)).length;
+        // If any user message matches 2+ patterns, it's a title gen session
+        if (matchCount >= 2) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   normalize(raw: RawConversation, location: SourceLocation): NormalizedConversation {
