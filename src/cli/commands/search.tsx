@@ -41,16 +41,22 @@ import { type SearchResponse, type Conversation, type ConversationResult } from 
 interface SearchOptions {
   limit?: string;
   file?: string;
+  source?: string;
+  model?: string;
 }
 
 function SearchApp({
   query,
   limit,
   filePattern,
+  sourceFilter,
+  modelFilter,
 }: {
   query: string;
   limit: number;
   filePattern?: string;
+  sourceFilter?: string;
+  modelFilter?: string;
 }) {
   const { exit } = useApp();
   const { width, height } = useScreenSize();
@@ -123,6 +129,21 @@ function SearchApp({
         await connect();
         const startTime = Date.now();
 
+        // Helper to filter results by source/model
+        const applyFilters = (results: ConversationResult[]): ConversationResult[] => {
+          let filtered = results;
+          if (sourceFilter) {
+            filtered = filtered.filter((r) => r.conversation.source === sourceFilter);
+          }
+          if (modelFilter) {
+            const modelLower = modelFilter.toLowerCase();
+            filtered = filtered.filter((r) =>
+              r.conversation.model?.toLowerCase().includes(modelLower)
+            );
+          }
+          return filtered;
+        };
+
         if (filePattern && !query) {
           // File-only search
           const fileResults = await searchByFilePath(filePattern, limit);
@@ -137,7 +158,7 @@ function SearchApp({
             Array.from(convIdToMatches.keys()).map((id) => conversationRepo.findById(id))
           );
 
-          const results = conversations
+          const results = applyFilters(conversations
             .filter((conv): conv is NonNullable<typeof conv> => conv !== null)
             .map((conv) => {
               const matches = convIdToMatches.get(conv.id) ?? [];
@@ -158,7 +179,7 @@ function SearchApp({
                 totalMatches: matches.length,
               };
             })
-            .sort((a, b) => b.bestMatch.score - a.bestMatch.score);
+            .sort((a, b) => b.bestMatch.score - a.bestMatch.score));
 
           setResponse({
             query: filePattern,
@@ -174,7 +195,7 @@ function SearchApp({
           const convIds = new Set(result.results.map((r) => r.conversation.id));
           const fileMatchMap = await getFileMatchesForConversations(convIds, filePattern);
 
-          const filteredResults = result.results
+          const filteredResults = applyFilters(result.results
             .filter((r) => (fileMatchMap.get(r.conversation.id) ?? []).length > 0)
             .map((r) => {
               const matches = fileMatchMap.get(r.conversation.id) ?? [];
@@ -184,7 +205,7 @@ function SearchApp({
                 bestMatch: { ...r.bestMatch, score: r.bestMatch.score + fileBoost },
               };
             })
-            .sort((a, b) => b.bestMatch.score - a.bestMatch.score)
+            .sort((a, b) => b.bestMatch.score - a.bestMatch.score))
             .slice(0, limit);
 
           setResponse({
@@ -197,7 +218,12 @@ function SearchApp({
         } else {
           // Standard search
           const result = await search(query, limit);
-          setResponse(result);
+          const filteredResults = applyFilters(result.results);
+          setResponse({
+            ...result,
+            results: filteredResults,
+            totalConversations: filteredResults.length,
+          });
           setFileMatches(new Map());
         }
       } catch (err) {
@@ -207,7 +233,7 @@ function SearchApp({
       }
     }
     runSearch();
-  }, [query, limit, filePattern]);
+  }, [query, limit, filePattern, sourceFilter, modelFilter]);
 
   // Scroll offset for list view
   const scrollOffset = useMemo(() => {
@@ -457,6 +483,7 @@ function SearchApp({
                   width={multiSelectMode ? width - 6 : width - 2}
                   query={query}
                   fileMatches={convFileMatches}
+                  index={actualIndex}
                 />
               </Box>
             );
@@ -502,13 +529,35 @@ function SearchApp({
   );
 }
 
-async function plainSearch(query: string, limit: number, filePattern?: string): Promise<void> {
+async function plainSearch(
+  query: string,
+  limit: number,
+  filePattern?: string,
+  sourceFilter?: string,
+  modelFilter?: string
+): Promise<void> {
   await connect();
   const startTime = Date.now();
 
-  let results: { conversation: { id: string; title: string; source: string; workspacePath?: string; updatedAt?: string }; totalMatches: number; snippet: string }[] = [];
+  type PlainResult = { conversation: { id: string; title: string; source: string; model?: string; workspacePath?: string; updatedAt?: string }; totalMatches: number; snippet: string };
+  let results: PlainResult[] = [];
   let totalConversations = 0;
   let totalMessages = 0;
+
+  // Helper to filter results by source/model
+  const applyFilters = (items: PlainResult[]): PlainResult[] => {
+    let filtered = items;
+    if (sourceFilter) {
+      filtered = filtered.filter((r) => r.conversation.source === sourceFilter);
+    }
+    if (modelFilter) {
+      const modelLower = modelFilter.toLowerCase();
+      filtered = filtered.filter((r) =>
+        r.conversation.model?.toLowerCase().includes(modelLower)
+      );
+    }
+    return filtered;
+  };
 
   if (filePattern && !query) {
     const fileResults = await searchByFilePath(filePattern, limit);
@@ -523,7 +572,7 @@ async function plainSearch(query: string, limit: number, filePattern?: string): 
       Array.from(convIdToMatches.keys()).map((id) => conversationRepo.findById(id))
     );
 
-    results = conversations
+    results = applyFilters(conversations
       .filter((conv): conv is NonNullable<typeof conv> => conv !== null)
       .map((conv) => {
         const matches = convIdToMatches.get(conv.id) ?? [];
@@ -532,40 +581,50 @@ async function plainSearch(query: string, limit: number, filePattern?: string): 
           totalMatches: matches.length,
           snippet: matches.slice(0, 3).map((m) => m.filePath.split('/').pop()).join(', '),
         };
-      });
+      }));
     totalConversations = results.length;
   } else if (filePattern && query) {
     const result = await search(query, limit * 2);
     const convIds = new Set(result.results.map((r) => r.conversation.id));
     const fileMatchMap = await getFileMatchesForConversations(convIds, filePattern);
 
-    results = result.results
+    results = applyFilters(result.results
       .filter((r) => (fileMatchMap.get(r.conversation.id) ?? []).length > 0)
       .slice(0, limit)
       .map((r) => ({
         conversation: r.conversation,
         totalMatches: r.totalMatches,
         snippet: r.bestMatch.snippet,
-      }));
+      })));
     totalConversations = results.length;
     totalMessages = result.totalMessages;
+  } else if (sourceFilter || modelFilter) {
+    // Filter-only query (no text search)
+    const convs = await conversationRepo.list({ source: sourceFilter, model: modelFilter, limit });
+    results = convs.map((conv) => ({
+      conversation: conv,
+      totalMatches: 0,
+      snippet: conv.subtitle || '',
+    }));
+    totalConversations = results.length;
   } else {
     const result = await search(query, limit);
-    results = result.results.map((r) => ({
+    results = applyFilters(result.results.map((r) => ({
       conversation: r.conversation,
       totalMatches: r.totalMatches,
       snippet: r.bestMatch.snippet,
-    }));
-    totalConversations = result.totalConversations;
+    })));
+    totalConversations = results.length;
     totalMessages = result.totalMessages;
   }
 
   const searchTimeMs = Date.now() - startTime;
-  const searchLabel = filePattern && !query
-    ? `--file "${filePattern}"`
-    : filePattern
-      ? `"${query}" --file "${filePattern}"`
-      : `"${query}"`;
+  const filterParts: string[] = [];
+  if (query) filterParts.push(`"${query}"`);
+  if (filePattern) filterParts.push(`--file "${filePattern}"`);
+  if (sourceFilter) filterParts.push(`--source ${sourceFilter}`);
+  if (modelFilter) filterParts.push(`--model ${modelFilter}`);
+  const searchLabel = filterParts.join(' ');
 
   console.log(`\nSearch: ${searchLabel}`);
   console.log(
@@ -594,18 +653,28 @@ async function plainSearch(query: string, limit: number, filePattern?: string): 
 export async function searchCommand(query: string, options: SearchOptions): Promise<void> {
   const limit = parseInt(options.limit ?? '20', 10);
   const filePattern = options.file;
+  const sourceFilter = options.source;
+  const modelFilter = options.model;
 
-  if (!query && !filePattern) {
-    console.error('Error: Please provide a search query or --file pattern');
+  if (!query && !filePattern && !sourceFilter && !modelFilter) {
+    console.error('Error: Please provide a search query, --file pattern, or filter options');
     process.exit(1);
   }
 
   if (!process.stdin.isTTY) {
-    await plainSearch(query, limit, filePattern);
+    await plainSearch(query, limit, filePattern, sourceFilter, modelFilter);
     return;
   }
 
-  const app = withFullScreen(<SearchApp query={query} limit={limit} filePattern={filePattern} />);
+  const app = withFullScreen(
+    <SearchApp
+      query={query}
+      limit={limit}
+      filePattern={filePattern}
+      sourceFilter={sourceFilter}
+      modelFilter={modelFilter}
+    />
+  );
   await app.start();
   await app.waitUntilExit();
 }

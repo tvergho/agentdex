@@ -16,6 +16,7 @@ export interface ResultRowProps {
   width: number;
   query: string;
   fileMatches?: FileSearchMatch[];
+  index?: number;
 }
 
 /**
@@ -27,14 +28,19 @@ export function ResultRow({
   width,
   query,
   fileMatches,
+  index,
 }: ResultRowProps) {
   const { conversation, bestMatch, totalMatches } = result;
 
   const timeStr = formatRelativeTime(conversation.updatedAt);
   const matchStr = formatMatchCount(totalMatches);
 
+  // Format index with consistent width (right-aligned)
+  const indexStr = index !== undefined ? `${index + 1}.` : '';
+  const indexWidth = index !== undefined ? 4 : 0; // "999." max
+
   // Calculate available width for title
-  const prefixWidth = 3;
+  const prefixWidth = indexWidth + (indexWidth > 0 ? 1 : 0);
   const timeWidth = timeStr.length + matchStr.length + 5;
   const maxTitleWidth = Math.max(20, width - prefixWidth - timeWidth - 4);
 
@@ -57,15 +63,17 @@ export function ResultRow({
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {/* Row 1: Selection + Title + Match count + Time */}
+      {/* Row 1: Index + Title + Match count + Time */}
       <Box>
-        <SelectionIndicator isSelected={isSelected} />
+        {index !== undefined && (
+          <Text color={isSelected ? 'cyan' : 'gray'}>{indexStr.padStart(indexWidth)} </Text>
+        )}
         <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>{title}</Text>
         <Box flexGrow={1} />
         <Text color="gray">{matchStr} · {timeStr}</Text>
       </Box>
       {/* Row 2: Source + snippet or file matches */}
-      <Box marginLeft={3}>
+      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 3)}>
         <SourceBadge source={conversation.source} />
         <Text color="gray"> · </Text>
         {hasFileMatches ? (

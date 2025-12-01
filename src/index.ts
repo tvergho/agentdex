@@ -28,6 +28,8 @@ program
   .description('Full-text search across conversations')
   .option('-l, --limit <number>', 'Maximum number of results', '20')
   .option('-f, --file <pattern>', 'Filter by file path (e.g., auth.ts, src/components)')
+  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex, opencode)')
+  .option('-m, --model <model>', 'Filter by model (opus, sonnet, gpt-4, etc.)')
   .action((queryParts: string[], options) => searchCommand(queryParts.join(' '), options));
 
 program

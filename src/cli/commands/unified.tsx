@@ -142,20 +142,74 @@ const LOGO = `
 // Unified view mode includes home and stats in addition to navigation modes
 type UnifiedViewMode = 'home' | 'stats' | NavigationViewMode;
 
+// Help overlay component
+function HelpOverlay({ width, height }: { width: number; height: number }) {
+  const boxWidth = Math.min(50, width - 4);
+
+  return (
+    <Box
+      position="absolute"
+      width={width}
+      height={height}
+      flexDirection="column"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor="cyan"
+        paddingX={2}
+        paddingY={1}
+        width={boxWidth}
+      >
+        <Box marginBottom={1}>
+          <Text bold color="cyan">Search Syntax</Text>
+        </Box>
+
+        <Box flexDirection="column">
+          <Text><Text color="yellow">source:</Text><Text color="gray">name</Text>  Filter by source</Text>
+          <Text color="gray">  cursor, claude-code, codex, opencode</Text>
+          <Text> </Text>
+          <Text><Text color="yellow">model:</Text><Text color="gray">name</Text>   Filter by model</Text>
+          <Text color="gray">  opus, sonnet, gpt-4, etc.</Text>
+        </Box>
+
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color="white">Examples</Text>
+          <Text color="gray">  source:codex</Text>
+          <Text color="gray">  model:opus fix bug</Text>
+          <Text color="gray">  source:claude-code model:sonnet</Text>
+        </Box>
+
+        <Box marginTop={1}>
+          <Text color="gray">Press any key to close</Text>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
 const ConversationListItem = React.memo(function ConversationListItem({
   conversation,
   isSelected,
   width,
+  index,
 }: {
   conversation: Conversation;
   isSelected: boolean;
   width: number;
+  index: number;
 }) {
   const timeStr = formatRelativeTime(conversation.updatedAt);
   const msgCount = conversation.messageCount;
 
+  // Format index with consistent width (right-aligned)
+  const indexStr = `${index + 1}.`;
+  const indexWidth = 4; // "999." max
+
   // Calculate available width for title
-  const prefixWidth = 3;
+  const prefixWidth = indexWidth + 1; // index + space
   const timeWidth = timeStr.length + 2;
   const maxTitleWidth = Math.max(20, width - prefixWidth - timeWidth - 4);
 
@@ -177,14 +231,14 @@ const ConversationListItem = React.memo(function ConversationListItem({
   return (
     <Box flexDirection="column">
       <Box>
-        <SelectionIndicator isSelected={isSelected} />
+        <Text color={isSelected ? 'cyan' : 'gray'}>{indexStr.padStart(indexWidth)} </Text>
         <Text color={isSelected ? 'cyan' : 'white'} bold={isSelected}>
           {title}
         </Text>
         <Box flexGrow={1} />
         <Text color="gray">{timeStr}</Text>
       </Box>
-      <Box marginLeft={3}>
+      <Box marginLeft={indexWidth + 1}>
         <SourceBadge source={conversation.source} />
         <Text color="gray"> · {msgCount} msgs</Text>
         {tokenStr && <Text color="gray"> · {tokenStr}</Text>}
@@ -270,12 +324,12 @@ function HomeScreen({
       <Box flexDirection="column" alignItems="center">
         <Box>
           <Text color="gray">Type to search · </Text>
+          <Text color="white" bold>?</Text>
+          <Text color="gray"> help · </Text>
           <Text color="white" bold>Tab</Text>
           <Text color="gray"> recent · </Text>
           <Text color="white" bold>^s</Text>
           <Text color="gray"> stats · </Text>
-          <Text color="white" bold>Enter</Text>
-          <Text color="gray"> go · </Text>
           <Text color="white" bold>q</Text>
           <Text color="gray"> quit</Text>
         </Box>
@@ -297,6 +351,7 @@ function UnifiedApp() {
   // Input state
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // Sync state
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ phase: 'idle' });
@@ -544,6 +599,12 @@ function UnifiedApp() {
       return;
     }
 
+    // Handle help overlay - any key closes it
+    if (showHelp) {
+      setShowHelp(false);
+      return;
+    }
+
     // Quit from home/list (but not from deeper views)
     if (input === 'q' && (unifiedViewMode === 'home' || unifiedViewMode === 'list')) {
       exit();
@@ -556,6 +617,10 @@ function UnifiedApp() {
     if (unifiedViewMode === 'home') {
       if (key.escape) {
         if (searchQuery) setSearchQuery('');
+        return;
+      }
+      if (input === '?') {
+        setShowHelp(true);
         return;
       }
       if (key.tab) {
@@ -621,14 +686,17 @@ function UnifiedApp() {
   // Home screen
   if (unifiedViewMode === 'home') {
     return (
-      <HomeScreen
-        width={width}
-        height={height}
-        searchQuery={searchQuery}
-        syncStatus={syncStatus}
-        conversationCount={conversationCount}
-        isSearching={isSearching}
-      />
+      <Box width={width} height={height}>
+        <HomeScreen
+          width={width}
+          height={height}
+          searchQuery={searchQuery}
+          syncStatus={syncStatus}
+          conversationCount={conversationCount}
+          isSearching={isSearching}
+        />
+        {showHelp && <HelpOverlay width={width} height={height} />}
+      </Box>
     );
   }
 
@@ -727,6 +795,7 @@ function UnifiedApp() {
                 isSelected={actualIndex === navState.selectedIndex}
                 width={width - 2}
                 query={activeQuery}
+                index={actualIndex}
               />
             );
           })
@@ -742,6 +811,7 @@ function UnifiedApp() {
                   conversation={item.conversation}
                   isSelected={actualIndex === navState.selectedIndex}
                   width={width - 2}
+                  index={actualIndex}
                 />
                 {!isLast && <Box height={1} />}
               </Box>
