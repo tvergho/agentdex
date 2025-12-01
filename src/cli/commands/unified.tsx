@@ -144,48 +144,76 @@ type UnifiedViewMode = 'home' | 'stats' | NavigationViewMode;
 
 // Help overlay component
 function HelpOverlay({ width, height }: { width: number; height: number }) {
-  const boxWidth = Math.min(50, width - 4);
+  const menuWidth = Math.min(50, width - 4);
+  const innerWidth = menuWidth - 2;
+
+  // Center the menu
+  const leftPadding = Math.floor((width - menuWidth) / 2);
+  const topPadding = Math.floor((height - 12) / 2);
+
+  // Build each row with solid background (similar to ExportActionMenu)
+  const buildRow = (content: string, bgColor: string = 'gray', fgColor: string = 'white') => {
+    const padded = content.padEnd(innerWidth);
+    return (
+      <Text>
+        <Text backgroundColor="gray" color="white">│</Text>
+        <Text backgroundColor={bgColor as any} color={fgColor as any}>{padded}</Text>
+        <Text backgroundColor="gray" color="white">│</Text>
+      </Text>
+    );
+  };
 
   return (
     <Box
       position="absolute"
-      width={width}
-      height={height}
+      marginLeft={leftPadding}
+      marginTop={topPadding}
+      width={menuWidth}
       flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
     >
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        width={boxWidth}
-      >
-        <Box marginBottom={1}>
-          <Text bold color="cyan">Search Syntax</Text>
-        </Box>
+      {/* Top border */}
+      <Text backgroundColor="gray" color="white">
+        {'┌' + '─'.repeat(innerWidth) + '┐'}
+      </Text>
 
-        <Box flexDirection="column">
-          <Text><Text color="yellow">source:</Text><Text color="gray">name</Text>  Filter by source</Text>
-          <Text color="gray">  cursor, claude-code, codex, opencode</Text>
-          <Text> </Text>
-          <Text><Text color="yellow">model:</Text><Text color="gray">name</Text>   Filter by model</Text>
-          <Text color="gray">  opus, sonnet, gpt-4, etc.</Text>
-        </Box>
+      {/* Title */}
+      {buildRow(' Search Syntax', 'gray', 'cyan')}
 
-        <Box marginTop={1} flexDirection="column">
-          <Text bold color="white">Examples</Text>
-          <Text color="gray">  source:codex</Text>
-          <Text color="gray">  model:opus fix bug</Text>
-          <Text color="gray">  source:claude-code model:sonnet</Text>
-        </Box>
+      {/* Divider */}
+      <Text backgroundColor="gray" color="white">
+        {'├' + '─'.repeat(innerWidth) + '┤'}
+      </Text>
 
-        <Box marginTop={1}>
-          <Text color="gray">Press any key to close</Text>
-        </Box>
-      </Box>
+      {/* Content */}
+      {buildRow(' source:name  Filter by source')}
+      {buildRow('   cursor, claude-code, codex, opencode', 'gray', 'gray')}
+      {buildRow(' ')}
+      {buildRow(' model:name   Filter by model')}
+      {buildRow('   opus, sonnet, gpt-4, etc.', 'gray', 'gray')}
+
+      {/* Divider */}
+      <Text backgroundColor="gray" color="white">
+        {'├' + '─'.repeat(innerWidth) + '┤'}
+      </Text>
+
+      {/* Examples */}
+      {buildRow(' Examples', 'gray', 'white')}
+      {buildRow('   source:codex', 'gray', 'gray')}
+      {buildRow('   model:opus fix bug', 'gray', 'gray')}
+      {buildRow('   source:claude-code model:sonnet', 'gray', 'gray')}
+
+      {/* Divider */}
+      <Text backgroundColor="gray" color="white">
+        {'├' + '─'.repeat(innerWidth) + '┤'}
+      </Text>
+
+      {/* Footer */}
+      {buildRow(' Press any key to close')}
+
+      {/* Bottom border */}
+      <Text backgroundColor="gray" color="white">
+        {'└' + '─'.repeat(innerWidth) + '┘'}
+      </Text>
     </Box>
   );
 }
@@ -751,8 +779,9 @@ function UnifiedApp() {
           <MessageDetailView
             message={navState.combinedMessages[navState.selectedMessageIndex]!}
             messageFiles={navState.conversationMessageFiles}
-            toolCalls={navState.conversationToolCalls}
-            fileEdits={navState.conversationFileEdits}
+            toolOutputBlocks={navState.toolOutputBlocks}
+            expandedToolIndices={navState.expandedToolIndices}
+            focusedToolIndex={navState.focusedToolIndex}
             width={width - 2}
             height={availableHeight}
             scrollOffset={navState.messageScrollOffset}
@@ -863,6 +892,10 @@ function UnifiedApp() {
                 <Text color="gray">/</Text>
                 <Text color="white" bold>k</Text>
                 <Text color="gray"> scroll · </Text>
+                <Text color="white" bold>Enter</Text>
+                <Text color="gray">/</Text>
+                <Text color="white" bold>Space</Text>
+                <Text color="gray"> expand · </Text>
                 <Text color="white" bold>n</Text>
                 <Text color="gray">/</Text>
                 <Text color="white" bold>p</Text>

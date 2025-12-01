@@ -1,11 +1,11 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { HighlightedText } from './HighlightedText';
-import { SelectionIndicator } from './SelectableRow';
 import { SourceBadge } from './SourceBadge';
 import {
   formatRelativeTime,
   formatMatchCount,
+  truncatePath,
 } from '../../utils/format';
 import type { ConversationResult } from '../../schema/index';
 import type { FileSearchMatch } from '../../db/repository';
@@ -48,9 +48,20 @@ export function ResultRow({
     ? conversation.title.slice(0, maxTitleWidth - 1) + '…'
     : conversation.title;
 
-  // Snippet - truncate to reasonable length
+  // Snippet - truncate to fit width, accounting for left margin
   const snippetContent = bestMatch.snippet.replace(/\n/g, ' ').trim();
-  const snippetText = snippetContent.slice(0, Math.max(20, width - 6));
+  const snippetMaxWidth = Math.max(20, width - (indexWidth + (indexWidth > 0 ? 1 : 0)) - 4);
+  const snippetText = snippetContent.length > snippetMaxWidth
+    ? snippetContent.slice(0, snippetMaxWidth - 1) + '…'
+    : snippetContent;
+
+  // Format workspace path
+  const workspacePath = conversation.workspacePath;
+  const minPathWidth = 20;
+  const maxPathWidth = Math.max(minPathWidth, width - 20);
+  const displayPath = workspacePath
+    ? truncatePath(workspacePath, maxPathWidth)
+    : null;
 
   // Format file matches display
   const hasFileMatches = fileMatches && fileMatches.length > 0;
@@ -72,10 +83,15 @@ export function ResultRow({
         <Box flexGrow={1} />
         <Text color="gray">{matchStr} · {timeStr}</Text>
       </Box>
-      {/* Row 2: Source + snippet or file matches */}
-      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 3)}>
+      {/* Row 2: Source + workspace path */}
+      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)}>
         <SourceBadge source={conversation.source} />
-        <Text color="gray"> · </Text>
+        {displayPath && (
+          <Text color="magenta"> · {displayPath}</Text>
+        )}
+      </Box>
+      {/* Row 3: Snippet or file matches */}
+      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)}>
         {hasFileMatches ? (
           <>
             <Text color="green">Files: </Text>
