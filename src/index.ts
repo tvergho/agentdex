@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { Command } from 'commander';
 import { syncCommand } from './cli/commands/sync';
 import { searchCommand } from './cli/commands/search';

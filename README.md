@@ -29,11 +29,15 @@ agentdex indexes conversations from AI coding assistants (Cursor, Claude Code, C
 
 ## Installation
 
-### Prerequisites
+```bash
+npm install -g agentdex
+```
 
-- [Bun](https://bun.sh) (recommended) or Node.js 18+
+This installs the `dex` command globally.
 
 ### From Source
+
+Requires [Bun](https://bun.sh) or Node.js 18+:
 
 ```bash
 git clone https://github.com/tvergho/agentdex.git
@@ -45,16 +49,16 @@ bun install
 
 ```bash
 # Index your conversations
-bun run dev sync
+dex sync
 
 # Search for something
-bun run dev search "authentication middleware"
+dex search "authentication middleware"
 
 # List all conversations
-bun run dev list
+dex list
 
 # View a specific conversation
-bun run dev show <conversation-id>
+dex show <conversation-id>
 ```
 
 ## Usage
@@ -63,18 +67,18 @@ bun run dev show <conversation-id>
 
 ```bash
 # Search by content
-bun run dev search "your query"
+dex search "your query"
 
 # Search by file path
-bun run dev search --file auth.ts
-bun run dev search --file src/components
+dex search --file auth.ts
+dex search --file src/components
 
 # Combined: content + file filter
-bun run dev search "authentication bug" --file auth.ts
+dex search "authentication bug" --file auth.ts
 
 # Filter by source or model
-bun run dev search "bug" --source cursor
-bun run dev search "refactor" --model opus
+dex search "bug" --source cursor
+dex search "refactor" --model opus
 ```
 
 Navigate the interactive TUI:
@@ -94,20 +98,20 @@ The search has 4 levels of detail:
 
 ```bash
 # Sync from all sources
-bun run dev sync
+dex sync
 
 # Force full re-sync
-bun run dev sync --force
+dex sync --force
 ```
 
 ### List
 
 ```bash
 # List recent conversations
-bun run dev list
+dex list
 
 # Limit results
-bun run dev list --limit 10
+dex list --limit 10
 ```
 
 ### Export
@@ -116,22 +120,22 @@ Export conversations as readable markdown files:
 
 ```bash
 # Export all conversations
-bun run dev export
+dex export
 
 # Export to custom directory
-bun run dev export --output ~/my-exports
+dex export --output ~/my-exports
 
 # Filter by source
-bun run dev export --source cursor
+dex export --source cursor
 
 # Filter by project (substring match)
-bun run dev export --project myapp
+dex export --project myapp
 
 # Filter by date range
-bun run dev export --from 2025-01-01 --to 2025-01-31
+dex export --from 2025-01-01 --to 2025-01-31
 
 # Export single conversation
-bun run dev export --id <conversation-id>
+dex export --id <conversation-id>
 ```
 
 Output structure:
@@ -148,13 +152,13 @@ Full database backup for migration between machines:
 
 ```bash
 # Create backup
-bun run dev backup
+dex backup
 
 # Import on another machine
-bun run dev import backup.json
+dex import backup.json
 
 # Preview import without writing
-bun run dev import backup.json --dry-run
+dex import backup.json --dry-run
 ```
 
 ### Stats
@@ -163,14 +167,14 @@ View usage analytics and statistics:
 
 ```bash
 # Interactive dashboard
-bun run dev stats
+dex stats
 
 # Quick summary (non-interactive)
-bun run dev stats --summary
+dex stats --summary
 
 # Different time periods
-bun run dev stats --period 7
-bun run dev stats --period 90
+dex stats --period 7
+dex stats --period 90
 ```
 
 ## Data Storage
@@ -189,7 +193,7 @@ All data is stored locally in `~/.dex/`:
 
 ```bash
 # Run in development mode
-bun run dev <command>
+dex <command>
 
 # Type checking
 bun run typecheck
@@ -218,7 +222,7 @@ bun run reset
 
 ```bash
 # Open interactive settings
-bun run dev config
+dex config
 ```
 
 The config menu lets you:
@@ -233,7 +237,7 @@ The config menu lets you:
 
 Example:
 ```bash
-DEX_DATA_DIR=~/my-dex-data bun run dev sync
+DEX_DATA_DIR=~/my-dex-data dex sync
 ```
 
 ## Uninstall
