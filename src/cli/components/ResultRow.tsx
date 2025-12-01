@@ -6,7 +6,7 @@ import {
   formatMatchCount,
   truncatePath,
   formatTokenPair,
-  formatLineCounts,
+  getLineCountParts,
   formatSourceLabel,
 } from '../../utils/format';
 import type { ConversationResult } from '../../schema/index';
@@ -59,15 +59,16 @@ export function ResultRow({
     conversation.totalCacheCreationTokens,
     conversation.totalCacheReadTokens
   );
-  const lineStr = formatLineCounts(
+  const lineParts = getLineCountParts(
     conversation.totalLinesAdded,
     conversation.totalLinesRemoved
   );
 
   // Calculate how much space we have for the path
+  const linePartsLen = lineParts ? ` · ${lineParts.added} / ${lineParts.removed}`.length : 0;
   const fixedPartsLen = sourceName.length +
     (tokenStr ? ` · ${tokenStr}`.length : 0) +
-    (lineStr ? ` · ${lineStr}`.length : 0);
+    linePartsLen;
   const availableForPath = contentWidth - fixedPartsLen - 10; // Leave some buffer
 
   const pathStr = conversation.workspacePath
@@ -107,20 +108,27 @@ export function ResultRow({
         <Text color="gray"> · {timeStr}</Text>
       </Box>
       {/* Row 2: Source + workspace path + tokens + lines */}
-      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)}>
-        <Text color="yellow">{sourceName}</Text>
-        {pathStr && <Text color="magenta"> · {pathStr}</Text>}
-        {tokenStr && <Text color="cyan"> · {tokenStr}</Text>}
-        {lineStr && <Text color="gray"> · {lineStr}</Text>}
+      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)} width={contentWidth}>
+        <Text wrap="truncate-end">
+          <Text color="yellow">{sourceName}</Text>
+          {pathStr && <Text color="magenta"> · {pathStr}</Text>}
+          {tokenStr && <Text color="cyan"> · {tokenStr}</Text>}
+          {lineParts && <Text color="gray"> · </Text>}
+          {lineParts && <Text color="green">{lineParts.added}</Text>}
+          {lineParts && <Text color="gray"> / </Text>}
+          {lineParts && <Text color="red">{lineParts.removed}</Text>}
+        </Text>
       </Box>
       {/* Row 3: Snippet or file matches */}
-      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)}>
+      <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)} width={contentWidth}>
         {hasFileMatches ? (
-          <Text color="gray">{fileMatchDisplay}</Text>
+          <Text color="gray" wrap="truncate-end">{fileMatchDisplay}</Text>
         ) : (
-          <HighlightedText text={snippetText} query={query} />
+          <Text color="gray" wrap="truncate-end">{snippetText}</Text>
         )}
       </Box>
+      {/* Spacer row for consistent vertical spacing */}
+      <Box height={1} />
     </Box>
   );
 }

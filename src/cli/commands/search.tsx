@@ -485,7 +485,7 @@ function SearchApp({
             const convFileMatches = fileMatches.get(result.conversation.id);
             const isChecked = selectedIds.has(result.conversation.id);
             return (
-              <Box key={result.conversation.id} flexDirection="row" marginBottom={1}>
+              <Box key={result.conversation.id} flexDirection="row">
                 {multiSelectMode && (
                   <Text color={isChecked ? 'green' : 'gray'}>
                     {isChecked ? '[✓] ' : '[ ] '}

@@ -17,7 +17,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
 import { spawn } from 'child_process';
 import { connect } from '../../db/index';
-import { conversationRepo, search } from '../../db/repository';
+import { conversationRepo, search, searchByFilePath, getFileMatchesForConversations } from '../../db/repository';
 // Note: sync runs in child process via runSyncInBackground to avoid blocking UI
 import { getLanceDBPath } from '../../utils/config';
 
@@ -190,6 +190,9 @@ function HelpOverlay({ width, height }: { width: number; height: number }) {
       {buildRow(' ')}
       {buildRow(' model:name   Filter by model')}
       {buildRow('   opus, sonnet, gpt-4, etc.', 'gray', 'gray')}
+      {buildRow(' ')}
+      {buildRow(' file:path    Filter by file path')}
+      {buildRow('   auth.ts, src/components, etc.', 'gray', 'gray')}
 
       {/* Divider */}
       <Text backgroundColor="gray" color="white">
@@ -199,8 +202,8 @@ function HelpOverlay({ width, height }: { width: number; height: number }) {
       {/* Examples */}
       {buildRow(' Examples', 'gray', 'white')}
       {buildRow('   source:codex', 'gray', 'gray')}
-      {buildRow('   model:opus fix bug', 'gray', 'gray')}
-      {buildRow('   source:claude-code model:sonnet', 'gray', 'gray')}
+      {buildRow('   file:auth.ts fix bug', 'gray', 'gray')}
+      {buildRow('   source:cursor file:components', 'gray', 'gray')}
 
       {/* Divider */}
       <Text backgroundColor="gray" color="white">
@@ -527,14 +530,16 @@ function UnifiedApp() {
     }
   }, [unifiedViewMode, dbReady, conversations.length, searchResults]);
 
-  // Parse filter prefixes from query (e.g., "source:codex model:opus some text")
+  // Parse filter prefixes from query (e.g., "source:codex model:opus file:auth.ts some text")
   const parseFilters = useCallback((query: string): {
     source?: string;
     model?: string;
+    file?: string;
     textQuery: string;
   } => {
     let source: string | undefined;
     let model: string | undefined;
+    let file: string | undefined;
     let remaining = query;
 
     // Extract source:value
@@ -551,30 +556,114 @@ function UnifiedApp() {
       remaining = remaining.replace(modelMatch[0], '').trim();
     }
 
-    return { source, model, textQuery: remaining };
+    // Extract file:value
+    const fileMatch = remaining.match(/\bfile:(\S+)/i);
+    if (fileMatch) {
+      file = fileMatch[1];
+      remaining = remaining.replace(fileMatch[0], '').trim();
+    }
+
+    return { source, model, file, textQuery: remaining };
   }, []);
 
-  // Execute search (supports filter prefixes like source:codex model:opus)
+  // Execute search (supports filter prefixes like source:codex model:opus file:auth.ts)
   const executeSearch = useCallback(async (query: string) => {
     if (!query.trim()) return;
     setIsSearching(true);
     try {
       await ensureDbReady();
 
-      const { source, model, textQuery } = parseFilters(query);
+      const { source, model, file, textQuery } = parseFilters(query);
 
-      if (textQuery) {
+      // Helper to filter results by source/model
+      const applyFilters = <T extends { conversation: { source: string; model?: string | null } }>(results: T[]): T[] => {
+        let filtered = results;
+        if (source) {
+          filtered = filtered.filter((r) => r.conversation.source === source);
+        }
+        if (model) {
+          const modelLower = model.toLowerCase();
+          filtered = filtered.filter((r) =>
+            r.conversation.model?.toLowerCase().includes(modelLower)
+          );
+        }
+        return filtered;
+      };
+
+      if (file && !textQuery) {
+        // File-only search
+        const fileResults = await searchByFilePath(file, 50);
+        const convIdToMatches = new Map<string, typeof fileResults>();
+        for (const match of fileResults) {
+          const existing = convIdToMatches.get(match.conversationId) ?? [];
+          existing.push(match);
+          convIdToMatches.set(match.conversationId, existing);
+        }
+
+        const conversations = await Promise.all(
+          Array.from(convIdToMatches.keys()).map((id) => conversationRepo.findById(id))
+        );
+
+        const results = applyFilters(conversations
+          .filter((conv): conv is NonNullable<typeof conv> => conv !== null)
+          .map((conv) => {
+            const matches = convIdToMatches.get(conv.id) ?? [];
+            const fileScore = matches.reduce((sum, m) => sum + m.score, 0);
+            return {
+              conversation: conv,
+              matches: [],
+              bestMatch: {
+                messageId: '',
+                conversationId: conv.id,
+                role: 'user' as const,
+                content: '',
+                snippet: `${matches.length} file(s) matching "${file}"`,
+                highlightRanges: [] as [number, number][],
+                score: fileScore,
+                messageIndex: 0,
+              },
+              totalMatches: matches.length,
+            };
+          })
+          .sort((a, b) => b.bestMatch.score - a.bestMatch.score));
+
+        setSearchResults({
+          query: file,
+          results,
+          totalConversations: results.length,
+          totalMessages: 0,
+          searchTimeMs: 0,
+        });
+      } else if (file && textQuery) {
+        // Combined text + file search
+        const result = await search(textQuery, 100);
+        const convIds = new Set(result.results.map((r) => r.conversation.id));
+        const fileMatchMap = await getFileMatchesForConversations(convIds, file);
+
+        const filteredResults = applyFilters(result.results
+          .filter((r) => (fileMatchMap.get(r.conversation.id) ?? []).length > 0)
+          .map((r) => {
+            const matches = fileMatchMap.get(r.conversation.id) ?? [];
+            const fileBoost = matches.reduce((sum, m) => sum + m.score * 0.5, 0);
+            return {
+              ...r,
+              bestMatch: { ...r.bestMatch, score: r.bestMatch.score + fileBoost },
+            };
+          })
+          .sort((a, b) => b.bestMatch.score - a.bestMatch.score))
+          .slice(0, 50);
+
+        setSearchResults({
+          ...result,
+          results: filteredResults,
+          totalConversations: filteredResults.length,
+        });
+      } else if (textQuery) {
         // Text search (filters applied after)
         const results = await search(textQuery, 50);
-        // Filter results by source/model if specified
-        if (source || model) {
-          results.results = results.results.filter((r) => {
-            if (source && r.conversation.source !== source) return false;
-            if (model && !r.conversation.model?.toLowerCase().includes(model.toLowerCase())) return false;
-            return true;
-          });
-          results.totalConversations = results.results.length;
-        }
+        const filteredResults = applyFilters(results.results);
+        results.results = filteredResults;
+        results.totalConversations = filteredResults.length;
         setSearchResults(results);
       } else if (source || model) {
         // Filter-only query (no text search)
@@ -819,15 +908,14 @@ function UnifiedApp() {
             const actualIndex = scrollOffset + idx;
             if (!item?.conversation) return null;
             return (
-              <Box key={item.conversation.id} marginBottom={1}>
-                <ResultRow
-                  result={item}
-                  isSelected={actualIndex === navState.selectedIndex}
-                  width={width - 2}
-                  query={activeQuery}
-                  index={actualIndex}
-                />
-              </Box>
+              <ResultRow
+                key={item.conversation.id}
+                result={item}
+                isSelected={actualIndex === navState.selectedIndex}
+                width={width - 2}
+                query={activeQuery}
+                index={actualIndex}
+              />
             );
           })
         ) : (
