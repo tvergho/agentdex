@@ -207,18 +207,23 @@ function HomeScreen({
   searchQuery,
   syncStatus,
   conversationCount,
+  isSearching,
 }: {
   width: number;
   height: number;
   searchQuery: string;
   syncStatus: SyncStatus;
   conversationCount: number;
+  isSearching: boolean;
 }) {
   const logoLines = LOGO.split('\n');
   const boxWidth = Math.min(60, width - 4);
   const innerWidth = boxWidth - 4;
 
-  const getSyncIndicator = () => {
+  const getStatusIndicator = () => {
+    if (isSearching) {
+      return <Text color="cyan">Searching...</Text>;
+    }
     switch (syncStatus.phase) {
       case 'syncing':
         return <Text color="cyan">⟳ Syncing...</Text>;
@@ -260,7 +265,7 @@ function HomeScreen({
         <Box><Text color="gray">╰{'─'.repeat(boxWidth - 2)}╯</Text></Box>
       </Box>
 
-      <Box marginBottom={2}>{getSyncIndicator()}</Box>
+      <Box marginBottom={2}>{getStatusIndicator()}</Box>
 
       <Box flexDirection="column" alignItems="center">
         <Box>
@@ -291,6 +296,7 @@ function UnifiedApp() {
 
   // Input state
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
 
   // Sync state
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ phase: 'idle' });
@@ -434,24 +440,75 @@ function UnifiedApp() {
   // Load conversations when entering list view (DB should already be ready from goToList)
   useEffect(() => {
     if (unifiedViewMode === 'list' && dbReady && conversations.length === 0 && !searchResults) {
-      conversationRepo.list({ limit: 100 }).then(setConversations);
+      conversationRepo.list({}).then(setConversations);
     }
   }, [unifiedViewMode, dbReady, conversations.length, searchResults]);
 
-  // Execute search
+  // Parse filter prefixes from query (e.g., "source:codex model:opus some text")
+  const parseFilters = useCallback((query: string): {
+    source?: string;
+    model?: string;
+    textQuery: string;
+  } => {
+    let source: string | undefined;
+    let model: string | undefined;
+    let remaining = query;
+
+    // Extract source:value
+    const sourceMatch = remaining.match(/\bsource:(\S+)/i);
+    if (sourceMatch) {
+      source = sourceMatch[1];
+      remaining = remaining.replace(sourceMatch[0], '').trim();
+    }
+
+    // Extract model:value
+    const modelMatch = remaining.match(/\bmodel:(\S+)/i);
+    if (modelMatch) {
+      model = modelMatch[1];
+      remaining = remaining.replace(modelMatch[0], '').trim();
+    }
+
+    return { source, model, textQuery: remaining };
+  }, []);
+
+  // Execute search (supports filter prefixes like source:codex model:opus)
   const executeSearch = useCallback(async (query: string) => {
     if (!query.trim()) return;
+    setIsSearching(true);
     try {
       await ensureDbReady();
-      const results = await search(query, 50);
-      setSearchResults(results);
+
+      const { source, model, textQuery } = parseFilters(query);
+
+      if (textQuery) {
+        // Text search (filters applied after)
+        const results = await search(textQuery, 50);
+        // Filter results by source/model if specified
+        if (source || model) {
+          results.results = results.results.filter((r) => {
+            if (source && r.conversation.source !== source) return false;
+            if (model && !r.conversation.model?.toLowerCase().includes(model.toLowerCase())) return false;
+            return true;
+          });
+          results.totalConversations = results.results.length;
+        }
+        setSearchResults(results);
+      } else if (source || model) {
+        // Filter-only query (no text search)
+        const convs = await conversationRepo.list({ source, model });
+        setConversations(convs);
+        setSearchResults(null); // Clear search results to show filtered list
+      }
+
       setUnifiedViewMode('list');
       navActions.setSelectedIndex(0);
       navActions.setViewMode('list');
     } catch {
       // Search failed - stay on home
+    } finally {
+      setIsSearching(false);
     }
-  }, [navActions, ensureDbReady]);
+  }, [navActions, ensureDbReady, parseFilters]);
 
   // Go to list view
   const goToList = useCallback(async () => {
@@ -570,6 +627,7 @@ function UnifiedApp() {
         searchQuery={searchQuery}
         syncStatus={syncStatus}
         conversationCount={conversationCount}
+        isSearching={isSearching}
       />
     );
   }

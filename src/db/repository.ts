@@ -256,16 +256,24 @@ export const conversationRepo = {
     limit?: number;
     offset?: number;
     source?: string;
+    model?: string;
   } = {}): Promise<Conversation[]> {
     const table = await getConversationsTable();
 
     // Fetch all to sort properly (LanceDB doesn't support ORDER BY)
     const results = await table.query().toArray();
 
-    // Filter by source if specified
+    // Filter by source and/or model if specified
     let filtered = results;
     if (opts.source) {
-      filtered = results.filter((row) => (row.source as string) === opts.source);
+      filtered = filtered.filter((row) => (row.source as string) === opts.source);
+    }
+    if (opts.model) {
+      const modelLower = opts.model.toLowerCase();
+      filtered = filtered.filter((row) => {
+        const model = (row.model as string) || '';
+        return model.toLowerCase().includes(modelLower);
+      });
     }
 
     // Sort by updated_at descending (most recent first)
@@ -275,8 +283,8 @@ export const conversationRepo = {
       return bDate.localeCompare(aDate);
     });
 
-    // Apply limit after sorting
-    const limited = filtered.slice(0, opts.limit ?? 50);
+    // Apply limit after sorting (no limit by default)
+    const limited = opts.limit ? filtered.slice(0, opts.limit) : filtered;
 
     return limited.map((row) => ({
       id: row.id as string,
