@@ -1418,6 +1418,10 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
           <MessageDetailView
             message={combinedMessages[selectedMessageIndex]!}
             messageFiles={conversationMessageFiles}
+            toolOutputBlocks={[]}
+            contentSegments={[]}
+            expandedToolIndices={new Set()}
+            focusedToolIndex={null}
             width={width - 2}
             height={contentHeight + 2}
             scrollOffset={messageScrollOffset}

@@ -432,3 +432,287 @@ export function formatToolOutputs(
 
   return lines.join('\n');
 }
+
+/**
+ * A structured tool output block for collapsible rendering
+ */
+export interface ToolOutputBlock {
+  /** Unique index within the message */
+  index: number;
+  /** Display header line: "**Edit** `config.ts` (+15/-3)" */
+  header: string;
+  /** The code block content (without the ```...``` wrapper) */
+  content: string;
+  /** Type of tool: 'Edit', 'RunCommand', etc. */
+  type: string;
+  /** Optional file path */
+  filePath?: string;
+}
+
+/**
+ * Result of parsing tool outputs into structured blocks
+ */
+export interface ParsedToolOutputs {
+  /** Structured tool output blocks */
+  blocks: ToolOutputBlock[];
+}
+
+/**
+ * Parse tool outputs into structured blocks for collapsible rendering.
+ * This extracts the same data as formatToolOutputs but returns structured data
+ * instead of a markdown string.
+ */
+export function parseToolOutputs(
+  toolCalls: { messageId: string; type: string; filePath?: string; output?: string }[],
+  fileEdits: { messageId: string; filePath: string; linesAdded: number; linesRemoved: number; newContent?: string }[],
+  messageIds: string[]
+): ParsedToolOutputs {
+  const msgToolCalls = toolCalls.filter(
+    (tc) => messageIds.includes(tc.messageId) && tc.output
+  );
+  const msgFileEdits = fileEdits.filter(
+    (fe) => messageIds.includes(fe.messageId) && fe.newContent
+  );
+
+  const blocks: ToolOutputBlock[] = [];
+  let index = 0;
+
+  for (const tc of msgToolCalls) {
+    const fileName = tc.filePath ? getFileName(tc.filePath) : '';
+    blocks.push({
+      index: index++,
+      header: `**${tc.type}**${fileName ? ` \`${fileName}\`` : ''}`,
+      content: tc.output!,
+      type: tc.type,
+      filePath: tc.filePath,
+    });
+  }
+
+  for (const fe of msgFileEdits) {
+    const fileName = getFileName(fe.filePath);
+    blocks.push({
+      index: index++,
+      header: `**Edit** \`${fileName}\` (+${fe.linesAdded}/-${fe.linesRemoved})`,
+      content: fe.newContent!,
+      type: 'Edit',
+      filePath: fe.filePath,
+    });
+  }
+
+  return { blocks };
+}
+
+/**
+ * A segment of message content - either text or a tool output
+ */
+export interface ContentSegment {
+  type: 'text' | 'tool';
+  /** For text: the text content. For tool: not used (see toolIndex) */
+  content: string;
+  /** For tool segments: index into the blocks array */
+  toolIndex?: number;
+}
+
+/**
+ * Result of parsing tool outputs from message content
+ */
+export interface ParsedMessageContent {
+  /** Content segments in order (text and tool blocks interleaved) */
+  segments: ContentSegment[];
+  /** All tool output blocks for indexing */
+  blocks: ToolOutputBlock[];
+  /** The main message content without tool outputs (for backwards compatibility) */
+  mainContent: string;
+}
+
+/**
+ * Parse tool outputs that are interleaved throughout message content.
+ * Tool outputs can appear anywhere in the message, each preceded by "---" separator.
+ * Format: ---\n**ToolType** `filename` (optional +N/-M)\n```\ncontent\n```
+ */
+export function parseToolOutputsFromContent(content: string): ParsedMessageContent {
+  const segments: ContentSegment[] = [];
+  const blocks: ToolOutputBlock[] = [];
+  let blockIndex = 0;
+
+  // Regex to match tool blocks: ---\n**ToolType** `filename` (lineinfo)\n```lang\ncontent\n```
+  // The --- separator, optional ### Tool Outputs header, then the tool block
+  const toolBlockRegex = /\n---\n+(?:### Tool Outputs\n+)?\*\*(\w+)\*\*(?:\s+`([^`]+)`)?\s*(?:\(([^)]+)\))?\s*\n```[^\n]*\n([\s\S]*?)```/g;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = toolBlockRegex.exec(content)) !== null) {
+    const [fullMatch, toolType, fileName, lineInfo, codeContent] = match;
+    const matchStart = match.index;
+
+    // Add text segment before this tool block (if any)
+    if (matchStart > lastIndex) {
+      const textContent = content.substring(lastIndex, matchStart).trim();
+      if (textContent) {
+        segments.push({ type: 'text', content: textContent });
+      }
+    }
+
+    // Build header string
+    let header = `**${toolType}**`;
+    if (fileName) {
+      header += ` \`${fileName}\``;
+    }
+    if (lineInfo) {
+      header += ` (${lineInfo})`;
+    }
+
+    // Add the tool block
+    const block: ToolOutputBlock = {
+      index: blockIndex,
+      header,
+      content: codeContent?.trim() || '',
+      type: toolType || 'Unknown',
+      filePath: fileName,
+    };
+    blocks.push(block);
+    segments.push({ type: 'tool', content: '', toolIndex: blockIndex });
+    blockIndex++;
+
+    lastIndex = matchStart + fullMatch.length;
+  }
+
+  // Add any remaining text after the last tool block
+  if (lastIndex < content.length) {
+    const textContent = content.substring(lastIndex).trim();
+    if (textContent) {
+      segments.push({ type: 'text', content: textContent });
+    }
+  }
+
+  // If no tool blocks found, the entire content is text
+  if (blocks.length === 0) {
+    return {
+      segments: [{ type: 'text', content: content }],
+      blocks: [],
+      mainContent: content,
+    };
+  }
+
+  // Build mainContent by joining all text segments (for backwards compatibility)
+  const mainContent = segments
+    .filter(s => s.type === 'text')
+    .map(s => s.content)
+    .join('\n\n');
+
+  return { segments, blocks, mainContent };
+}
+
+/**
+ * Render tool outputs with collapse indicators.
+ * Returns a markdown string with [+]/[-] indicators for each tool output.
+ *
+ * @param blocks - Parsed tool output blocks
+ * @param expandedIndices - Set of block indices that are expanded (show content)
+ * @param focusedIndex - Index of the currently focused block (for > indicator), or null
+ */
+export function renderToolOutputsWithCollapse(
+  blocks: ToolOutputBlock[],
+  expandedIndices: Set<number>,
+  focusedIndex: number | null
+): string {
+  if (blocks.length === 0) {
+    return '';
+  }
+
+  const lines: string[] = ['', '---', '', '### Tool Outputs', ''];
+
+  for (const block of blocks) {
+    const isExpanded = expandedIndices.has(block.index);
+    const isFocused = focusedIndex === block.index;
+
+    // Focus indicator: "> " or "  " for alignment
+    const focusPrefix = isFocused ? '> ' : '  ';
+    // Collapse indicator: [+] for collapsed, [-] for expanded
+    const collapseIndicator = isExpanded ? '[-]' : '[+]';
+
+    lines.push(`${focusPrefix}${collapseIndicator} ${block.header}`);
+
+    if (isExpanded) {
+      lines.push('```');
+      lines.push(block.content);
+      lines.push('```');
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render a single tool block with collapse indicator (for interleaved rendering)
+ * When focused, shows ► arrow to indicate selection
+ */
+function renderToolBlock(
+  block: ToolOutputBlock,
+  isExpanded: boolean,
+  isFocused: boolean
+): string {
+  const collapseIndicator = isExpanded ? '[-]' : '[+]';
+
+  // Use ANSI escape codes directly to bypass markdown processing
+  // \x1b[1m = bold, \x1b[33m = yellow, \x1b[0m = reset
+  const BOLD = '\x1b[1m';
+  const YELLOW = '\x1b[33m';
+  const CYAN = '\x1b[36m';
+  const RESET = '\x1b[0m';
+
+  const prefix = isFocused ? `${YELLOW}${BOLD}►${RESET}` : ' ';
+  const headerStyle = isFocused ? `${CYAN}${BOLD}` : '';
+  const headerEnd = isFocused ? RESET : '';
+
+  const lines: string[] = [
+    `${prefix} ${collapseIndicator} ${headerStyle}${block.header}${headerEnd}`,
+  ];
+
+  if (isExpanded) {
+    lines.push('```');
+    lines.push(block.content);
+    lines.push('```');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render content segments with collapsible tool outputs.
+ * Preserves interleaved text between tool blocks.
+ *
+ * @param segments - Content segments (text and tool references)
+ * @param blocks - All tool output blocks
+ * @param expandedIndices - Set of block indices that are expanded
+ * @param focusedIndex - Index of the currently focused block, or null
+ */
+export function renderSegmentsWithCollapse(
+  segments: ContentSegment[],
+  blocks: ToolOutputBlock[],
+  expandedIndices: Set<number>,
+  focusedIndex: number | null
+): string {
+  if (segments.length === 0) {
+    return '';
+  }
+
+  const parts: string[] = [];
+
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      parts.push(segment.content);
+    } else if (segment.type === 'tool' && segment.toolIndex !== undefined) {
+      const block = blocks[segment.toolIndex];
+      if (block) {
+        const isExpanded = expandedIndices.has(segment.toolIndex);
+        const isFocused = focusedIndex === segment.toolIndex;
+        parts.push(renderToolBlock(block, isExpanded, isFocused));
+      }
+    }
+  }
+
+  return parts.join('\n\n');
+}

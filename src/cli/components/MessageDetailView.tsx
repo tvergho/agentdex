@@ -2,20 +2,29 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import {
   formatPaginationInfo,
-  formatToolOutputs,
   getFileName,
   getRoleColor,
   getRoleLabel,
   renderMarkdownContent,
+  parseToolOutputsFromContent,
+  renderSegmentsWithCollapse,
   type CombinedMessage,
+  type ToolOutputBlock,
+  type ContentSegment,
 } from '../../utils/format';
-import type { MessageFile, ToolCall, FileEdit } from '../../schema/index';
+import type { MessageFile } from '../../schema/index';
 
 export interface MessageDetailViewProps {
   message: CombinedMessage;
   messageFiles: MessageFile[];
-  toolCalls?: ToolCall[];
-  fileEdits?: FileEdit[];
+  /** Parsed tool output blocks (from useNavigation) */
+  toolOutputBlocks: ToolOutputBlock[];
+  /** Content segments (text and tool references interleaved) */
+  contentSegments: ContentSegment[];
+  /** Which tool output indices are expanded */
+  expandedToolIndices: Set<number>;
+  /** Which tool is currently focused (for > indicator) */
+  focusedToolIndex: number | null;
   width: number;
   height: number;
   scrollOffset: number;
@@ -29,8 +38,10 @@ export interface MessageDetailViewProps {
 export function MessageDetailView({
   message,
   messageFiles,
-  toolCalls = [],
-  fileEdits = [],
+  toolOutputBlocks,
+  contentSegments,
+  expandedToolIndices,
+  focusedToolIndex,
   width,
   height,
   scrollOffset,
@@ -43,14 +54,19 @@ export function MessageDetailView({
     .filter((f) => message.messageIds.includes(f.messageId))
     .map((f) => getFileName(f.filePath));
 
-  // Build full content including tool outputs for assistant messages
+  // Build full content with collapsible tool outputs for assistant messages
+  // Uses segments to preserve interleaved text between tool blocks
   const fullContent = useMemo(() => {
-    let content = message.content;
-    if (message.role === 'assistant') {
-      content += formatToolOutputs(toolCalls, fileEdits, message.messageIds);
+    if (message.role !== 'assistant' || toolOutputBlocks.length === 0) {
+      return message.content;
     }
-    return content;
-  }, [message.content, message.role, message.messageIds, toolCalls, fileEdits]);
+    // Use segments passed from useNavigation (already parsed)
+    // If segments weren't passed, parse them ourselves
+    const segments = contentSegments.length > 0
+      ? contentSegments
+      : parseToolOutputsFromContent(message.content).segments;
+    return renderSegmentsWithCollapse(segments, toolOutputBlocks, expandedToolIndices, focusedToolIndex);
+  }, [message.content, message.role, toolOutputBlocks, contentSegments, expandedToolIndices, focusedToolIndex]);
 
   // Render markdown to terminal-formatted string using shared function
   const renderedContent = useMemo(() => {
@@ -66,6 +82,11 @@ export function MessageDetailView({
 
   const paginationInfo = formatPaginationInfo(scrollOffset, availableHeight, lines.length);
 
+  // Tool indicator only when actively navigating tools
+  const toolIndicator = focusedToolIndex !== null && toolOutputBlocks.length > 0
+    ? ` · Tool ${focusedToolIndex + 1}/${toolOutputBlocks.length}`
+    : '';
+
   return (
     <Box flexDirection="column" height={height}>
       <Box flexDirection="column">
@@ -76,9 +97,12 @@ export function MessageDetailView({
             <Text color="gray"> · {fileNames.join(', ')}</Text>
           )}
         </Box>
-        <Text dimColor>
-          {lines.length} lines · {paginationInfo}
-        </Text>
+        <Box>
+          <Text dimColor>
+            {lines.length} lines · {paginationInfo}
+          </Text>
+          {toolIndicator && <Text color="cyan" bold>{toolIndicator}</Text>}
+        </Box>
         <Text color="gray">{'─'.repeat(Math.max(0, width))}</Text>
       </Box>
 

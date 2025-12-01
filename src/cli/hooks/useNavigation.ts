@@ -14,15 +14,17 @@ import { messageRepo, filesRepo, messageFilesRepo, toolCallRepo, fileEditsRepo }
 import {
   combineConsecutiveMessages,
   getRenderedLineCount,
-  formatToolOutputs,
+  parseToolOutputsFromContent,
+  renderSegmentsWithCollapse,
+  renderMarkdownContent,
   type CombinedMessage,
+  type ToolOutputBlock,
+  type ContentSegment,
 } from '../../utils/format';
 import type {
-  Conversation,
   ConversationFile,
   MessageFile,
   ConversationResult,
-  MessageMatch,
   ToolCall,
   FileEdit,
 } from '../../schema/index';
@@ -54,6 +56,13 @@ export interface NavigationState {
 
   // Message detail view
   messageScrollOffset: number;
+
+  // Tool output collapse state (for message detail view)
+  toolOutputBlocks: ToolOutputBlock[];
+  contentSegments: ContentSegment[];
+  expandedToolIndices: Set<number>;
+  focusedToolIndex: number | null;
+  toolNavigationMode: boolean;
 }
 
 export interface NavigationActions {
@@ -88,6 +97,9 @@ export interface NavigationActions {
   prevMessage: () => void;
   scrollMessageToTop: () => void;
   scrollMessageToBottom: () => void;
+
+  // Tool output collapse
+  toggleToolExpanded: () => void;
 
   // State setters for external control
   setViewMode: (mode: NavigationViewMode) => void;
@@ -177,6 +189,17 @@ export function useNavigation({
 
   // Message detail view state
   const [messageScrollOffset, setMessageScrollOffset] = useState(0);
+
+  // Tool output collapse state
+  const [expandedToolIndices, setExpandedToolIndices] = useState<Set<number>>(new Set());
+  const [focusedToolIndex, setFocusedToolIndex] = useState<number | null>(null);
+  const [toolNavigationMode, setToolNavigationMode] = useState(false);
+
+  // Ref for stable callback access to tool navigation mode
+  const toolNavigationModeRef = useRef(toolNavigationMode);
+  useEffect(() => {
+    toolNavigationModeRef.current = toolNavigationMode;
+  }, [toolNavigationMode]);
 
   // Derived state
   const expandedResult = expandedIndex !== null ? displayItems[expandedIndex] ?? null : null;
@@ -407,22 +430,105 @@ export function useNavigation({
 
   // Message detail navigation - calculate line count including tool outputs
   const currentMessage = combinedMessages[selectedMessageIndex];
+
+  // Parse tool output blocks from message content (tool outputs are interleaved in content)
+  const { contentSegments, toolOutputBlocks } = useMemo(() => {
+    if (!currentMessage || currentMessage.role !== 'assistant') {
+      return {
+        contentSegments: [{ type: 'text' as const, content: currentMessage?.content || '' }],
+        toolOutputBlocks: [] as ToolOutputBlock[]
+      };
+    }
+    const parsed = parseToolOutputsFromContent(currentMessage.content);
+    return { contentSegments: parsed.segments, toolOutputBlocks: parsed.blocks };
+  }, [currentMessage]);
+
+  // Calculate content with collapsible tool outputs (renders segments with interleaved text)
   const fullContent = useMemo(() => {
     if (!currentMessage) return '';
-    let content = currentMessage.content;
-    if (currentMessage.role === 'assistant') {
-      content += formatToolOutputs(conversationToolCalls, conversationFileEdits, currentMessage.messageIds);
+    // Render segments with collapsible tool blocks
+    if (currentMessage.role === 'assistant' && toolOutputBlocks.length > 0) {
+      return renderSegmentsWithCollapse(contentSegments, toolOutputBlocks, expandedToolIndices, focusedToolIndex);
     }
-    return content;
-  }, [currentMessage, conversationToolCalls, conversationFileEdits]);
-  
+    return currentMessage.content;
+  }, [currentMessage, contentSegments, toolOutputBlocks, expandedToolIndices, focusedToolIndex]);
+
   // Memoize line count calculation - markdown rendering is expensive
   const lineCount = useMemo(() => {
     return fullContent ? getRenderedLineCount(fullContent, width) : 0;
   }, [fullContent, width]);
-  
+
+  // Calculate approximate line positions for each tool (for auto-scroll)
+  const toolLinePositions = useMemo(() => {
+    if (toolOutputBlocks.length === 0 || contentSegments.length === 0) return [];
+
+    const positions: number[] = [];
+    let currentLine = 0;
+
+    for (const segment of contentSegments) {
+      if (segment.type === 'text') {
+        const textLines = segment.content ? getRenderedLineCount(segment.content, width) : 0;
+        currentLine += textLines + 2; // text + spacing
+      } else if (segment.type === 'tool' && segment.toolIndex !== undefined) {
+        // Record position of this tool header
+        positions[segment.toolIndex] = currentLine;
+        // Tool takes: separator (1) + header (1) + optional content + spacing (2)
+        currentLine += 4;
+        if (expandedToolIndices.has(segment.toolIndex)) {
+          const block = toolOutputBlocks[segment.toolIndex];
+          if (block) {
+            currentLine += block.content.split('\n').length + 2; // ``` + content + ```
+          }
+        }
+      }
+    }
+
+    return positions;
+  }, [toolOutputBlocks, contentSegments, width, expandedToolIndices]);
+
+  // Clear tool state when leaving message view
+  useEffect(() => {
+    if (viewMode !== 'message') {
+      setFocusedToolIndex(null);
+      setToolNavigationMode(false);
+    }
+  }, [viewMode]);
+
   const visibleLines = availableHeight - 3;
   const maxMessageScrollOffset = Math.max(0, lineCount - visibleLines);
+
+  // Compute rendered content and find actual tool line positions by searching for focus indicator
+  const renderedContent = useMemo(() => {
+    return fullContent ? renderMarkdownContent(fullContent, width) : '';
+  }, [fullContent, width]);
+
+  const renderedLines = useMemo(() => renderedContent.split('\n'), [renderedContent]);
+
+  // Find the line number of the focused tool by searching for ► in rendered lines
+  const focusedToolLineNumber = useMemo(() => {
+    if (focusedToolIndex === null) return null;
+    // Search for lines containing the focus indicator (► with ANSI codes)
+    for (let i = 0; i < renderedLines.length; i++) {
+      const line = renderedLines[i];
+      if (line && line.includes('►')) {
+        return i;
+      }
+    }
+    return null;
+  }, [renderedLines, focusedToolIndex]);
+
+  // Auto-scroll to focused tool when it changes
+  const prevFocusedToolRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (focusedToolIndex !== prevFocusedToolRef.current && focusedToolIndex !== null) {
+      prevFocusedToolRef.current = focusedToolIndex;
+      if (focusedToolLineNumber !== null && toolNavigationMode) {
+        // Scroll to put the focused tool near the top with some context
+        const scrollTo = Math.max(0, focusedToolLineNumber - 2);
+        setMessageScrollOffset(Math.min(scrollTo, maxMessageScrollOffset));
+      }
+    }
+  }, [focusedToolIndex, focusedToolLineNumber, toolNavigationMode, maxMessageScrollOffset]);
 
   const scrollMessageUp = useCallback(() => {
     setMessageScrollOffset((o) => Math.max(o - 1, 0));
@@ -436,6 +542,9 @@ export function useNavigation({
     if (selectedMessageIndex < combinedMessages.length - 1) {
       setSelectedMessageIndex((i) => i + 1);
       setMessageScrollOffset(0);
+      // Reset tool state when changing messages
+      setExpandedToolIndices(new Set());
+      setFocusedToolIndex(null);
     }
   }, [selectedMessageIndex, combinedMessages.length]);
 
@@ -443,6 +552,9 @@ export function useNavigation({
     if (selectedMessageIndex > 0) {
       setSelectedMessageIndex((i) => i - 1);
       setMessageScrollOffset(0);
+      // Reset tool state when changing messages
+      setExpandedToolIndices(new Set());
+      setFocusedToolIndex(null);
     }
   }, [selectedMessageIndex]);
 
@@ -453,6 +565,37 @@ export function useNavigation({
   const scrollMessageToBottom = useCallback(() => {
     setMessageScrollOffset(maxMessageScrollOffset);
   }, [maxMessageScrollOffset]);
+
+  // Toggle expand/collapse for the focused tool output
+  const toggleToolExpanded = useCallback(() => {
+    if (focusedToolIndex === null) return;
+
+    setExpandedToolIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(focusedToolIndex)) {
+        next.delete(focusedToolIndex);
+      } else {
+        next.add(focusedToolIndex);
+      }
+      return next;
+    });
+  }, [focusedToolIndex]);
+
+  // Navigate to next tool output (scroll handled by useEffect that watches focusedToolIndex)
+  const nextTool = useCallback(() => {
+    if (toolOutputBlocks.length === 0) return;
+    setFocusedToolIndex((current) =>
+      current === null ? 0 : Math.min(current + 1, toolOutputBlocks.length - 1)
+    );
+  }, [toolOutputBlocks.length]);
+
+  // Navigate to previous tool output (scroll handled by useEffect that watches focusedToolIndex)
+  const prevTool = useCallback(() => {
+    if (toolOutputBlocks.length === 0) return;
+    setFocusedToolIndex((current) =>
+      current === null ? toolOutputBlocks.length - 1 : Math.max(current - 1, 0)
+    );
+  }, [toolOutputBlocks.length]);
 
   const resetNavigation = useCallback(() => {
     setViewMode('list');
@@ -470,6 +613,8 @@ export function useNavigation({
     setHighlightMessageIndex(undefined);
     setSelectedMessageIndex(0);
     setMessageScrollOffset(0);
+    setExpandedToolIndices(new Set());
+    setFocusedToolIndex(null);
   }, []);
 
   // Unified keyboard handler
@@ -480,6 +625,8 @@ export function useNavigation({
     return?: boolean;
     downArrow?: boolean;
     upArrow?: boolean;
+    tab?: boolean;
+    shift?: boolean;
   }): boolean => {
     // Use ref to avoid callback recreation when displayItems changes
     if (displayItemsRef.current.length === 0) return false;
@@ -492,14 +639,52 @@ export function useNavigation({
 
     switch (viewMode) {
       case 'message':
-        if (input === 'j' || key.downArrow) {
-          scrollMessageDown();
+        // Tab toggles tool navigation mode (if tools exist)
+        if (key.tab && toolOutputBlocks.length > 0) {
+          if (toolNavigationModeRef.current) {
+            // Exit tool mode
+            setToolNavigationMode(false);
+            setFocusedToolIndex(null);
+          } else {
+            // Enter tool mode, focus first tool, scroll to top to show it
+            setToolNavigationMode(true);
+            setFocusedToolIndex(0);
+            setMessageScrollOffset(0);
+          }
           return true;
         }
-        if (input === 'k' || key.upArrow) {
-          scrollMessageUp();
-          return true;
+
+        // In tool navigation mode (use ref for current value)
+        if (toolNavigationModeRef.current) {
+          // j/k navigate between tools
+          if (input === 'j' || key.downArrow) {
+            nextTool();
+            return true;
+          }
+          if (input === 'k' || key.upArrow) {
+            prevTool();
+            return true;
+          }
+          // Enter or Space toggles expand/collapse
+          if (key.return || input === ' ') {
+            toggleToolExpanded();
+            return true;
+          }
+          // Escape exits tool mode (but doesn't go back)
+          // Note: escape is handled above for goBack, so we don't need it here
+        } else {
+          // Normal scroll mode
+          if (input === 'j' || key.downArrow) {
+            scrollMessageDown();
+            return true;
+          }
+          if (input === 'k' || key.upArrow) {
+            scrollMessageUp();
+            return true;
+          }
         }
+
+        // These work in both modes
         if (input === 'n') {
           nextMessage();
           return true;
@@ -594,6 +779,11 @@ export function useNavigation({
     selectNext,
     selectPrev,
     expandSelected,
+    // Tool output collapse
+    toggleToolExpanded,
+    nextTool,
+    prevTool,
+    toolOutputBlocks.length,
   ]);
 
   return {
@@ -613,6 +803,11 @@ export function useNavigation({
       highlightMessageIndex,
       selectedMessageIndex,
       messageScrollOffset,
+      toolOutputBlocks,
+      contentSegments,
+      expandedToolIndices,
+      focusedToolIndex,
+      toolNavigationMode,
     },
     actions: {
       goToList,
@@ -637,6 +832,7 @@ export function useNavigation({
       prevMessage,
       scrollMessageToTop,
       scrollMessageToBottom,
+      toggleToolExpanded,
       setViewMode,
       setSelectedIndex,
       resetNavigation,
