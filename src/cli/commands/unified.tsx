@@ -548,6 +548,7 @@ function HomeScreen({
   syncStatus,
   conversationCount,
   isSearching,
+  searchError,
 }: {
   width: number;
   height: number;
@@ -555,12 +556,16 @@ function HomeScreen({
   syncStatus: SyncStatus;
   conversationCount: number;
   isSearching: boolean;
+  searchError: string | null;
 }) {
   const logoLines = LOGO.split('\n');
   const boxWidth = Math.min(60, width - 4);
   const innerWidth = boxWidth - 4;
 
   const getStatusIndicator = () => {
+    if (searchError) {
+      return <Text color="yellow">⚠ {searchError}</Text>;
+    }
     if (isSearching) {
       return <Text color="cyan">Searching...</Text>;
     }
@@ -661,6 +666,7 @@ function UnifiedApp() {
   // Input state
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
   // Sync state
@@ -899,6 +905,7 @@ function UnifiedApp() {
   const executeSearch = useCallback(async (query: string) => {
     if (!query.trim()) return;
     setIsSearching(true);
+    setSearchError(null);
     try {
       await ensureDbReady();
 
@@ -1004,8 +1011,16 @@ function UnifiedApp() {
       setUnifiedViewMode('list');
       navActions.setSelectedIndex(0);
       navActions.setViewMode('list');
-    } catch {
-      // Search failed - stay on home
+    } catch (err) {
+      // Search failed - show user-friendly error
+      const message = err instanceof Error ? err.message : 'Search failed';
+      if (message.includes('Model not found') || message.includes('llama-server not installed')) {
+        setSearchError('Search not ready. Run `dex sync` to set up.');
+      } else if (message.includes('failed to start')) {
+        setSearchError('Search engine failed to start. Try again.');
+      } else {
+        setSearchError('Search failed. Using basic text matching.');
+      }
     } finally {
       setIsSearching(false);
     }
@@ -1085,6 +1100,7 @@ function UnifiedApp() {
       }
       if (key.backspace || key.delete) {
         setSearchQuery((q) => q.slice(0, -1));
+        setSearchError(null); // Clear error when typing
         return;
       }
       if (input === 's' && key.ctrl) {
@@ -1093,6 +1109,7 @@ function UnifiedApp() {
       }
       if (input && input.length === 1 && !key.ctrl && !key.meta) {
         setSearchQuery((q) => q + input);
+        setSearchError(null); // Clear error when typing
         return;
       }
       return;
@@ -1154,6 +1171,7 @@ function UnifiedApp() {
           syncStatus={syncStatus}
           conversationCount={conversationCount}
           isSearching={isSearching}
+          searchError={searchError}
         />
         {showHelp && <HelpOverlay width={width} height={height} />}
       </Box>
