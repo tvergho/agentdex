@@ -1,14 +1,12 @@
-import { getLlama, LlamaEmbeddingContext, LlamaModel } from 'node-llama-cpp';
 import { existsSync, mkdirSync, createWriteStream, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { cpus } from 'os';
 import { getDataDir } from '../utils/config';
-
-// Throttling settings for background embedding
-// Use minimal threads to keep system cool
-const LOW_PRIORITY_THREADS = Math.min(2, Math.max(1, Math.floor(cpus().length * 0.125)));
-// Tiny batch size for embedding context
-const EMBEDDING_BATCH_SIZE = 32;
+import {
+  startLlamaServer,
+  stopLlamaServer,
+  embedBatchViaServer,
+  isLlamaServerInstalled,
+} from './llama-server';
 
 // Embedding progress state
 export interface EmbeddingProgress {
@@ -40,18 +38,18 @@ export function setEmbeddingProgress(progress: EmbeddingProgress): void {
   writeFileSync(getProgressPath(), JSON.stringify(progress, null, 2));
 }
 
-const MODEL_NAME = 'Qwen3-Embedding-0.6B-Q8_0.gguf';
+// EmbeddingGemma-300M: 2.5x faster than Qwen3-0.6B, half the model size
+const MODEL_NAME = 'embeddinggemma-300m-q8.gguf';
 const MODEL_URL =
-  'https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf';
-export const EMBEDDING_DIMENSIONS = 1024;
+  'https://huggingface.co/unsloth/embeddinggemma-300m-GGUF/resolve/main/embeddinggemma-300m-q8.gguf';
+export const EMBEDDING_DIMENSIONS = 768;
 
-// Max characters to keep (roughly ~8K tokens with buffer for instruction prefix)
-// Qwen3-Embedding supports 32K tokens but we'll be conservative
-const MAX_TEXT_CHARS = 24000;
+// Max characters to keep (roughly ~6K tokens)
+// EmbeddingGemma supports 8K tokens
+const MAX_TEXT_CHARS = 18000;
 
-let llamaInstance: Awaited<ReturnType<typeof getLlama>> | null = null;
-let model: LlamaModel | null = null;
-let embeddingContext: LlamaEmbeddingContext | null = null;
+// Cached server port for query embedding
+let queryServerPort: number | null = null;
 
 export function getModelsDir(): string {
   const modelsDir = join(getDataDir(), 'models');
@@ -108,33 +106,6 @@ export async function downloadModel(
   }
 }
 
-export async function initEmbeddings(lowPriority: boolean = false): Promise<void> {
-  if (embeddingContext) return;
-
-  const modelPath = getModelPath();
-
-  if (!existsSync(modelPath)) {
-    throw new Error(
-      `Model not found at ${modelPath}. Run sync to download the model first.`
-    );
-  }
-
-  // For background embedding, limit threads to minimize CPU impact
-  const threadCount = lowPriority ? LOW_PRIORITY_THREADS : undefined;
-
-  llamaInstance = await getLlama({
-    // Limit max threads for low-priority background work
-    ...(threadCount && { maxThreads: threadCount }),
-  });
-  model = await llamaInstance.loadModel({ modelPath });
-  embeddingContext = await model.createEmbeddingContext({
-    // Limit context threads for background work
-    ...(threadCount && { threads: threadCount }),
-    // Smaller batch size reduces CPU spikes
-    ...(lowPriority && { batchSize: EMBEDDING_BATCH_SIZE }),
-  });
-}
-
 function truncateText(text: string): string {
   if (text.length <= MAX_TEXT_CHARS) {
     return text;
@@ -143,47 +114,60 @@ function truncateText(text: string): string {
   return text.slice(0, MAX_TEXT_CHARS) + '...';
 }
 
-export async function embed(texts: string[]): Promise<number[][]> {
-  await initEmbeddings();
-
-  if (!embeddingContext) {
-    throw new Error('Embedding context not initialized');
+/**
+ * Ensure llama-server is running for query embedding.
+ * Starts the server if not already running.
+ */
+async function ensureQueryServer(): Promise<number> {
+  if (queryServerPort !== null) {
+    // Check if server is still healthy
+    try {
+      const response = await fetch(`http://127.0.0.1:${queryServerPort}/health`);
+      if (response.ok) {
+        return queryServerPort;
+      }
+    } catch {
+      // Server not responding, restart it
+      queryServerPort = null;
+    }
   }
 
-  // Process texts sequentially - parallel Promise.all uses too much RAM
-  const embeddings: number[][] = [];
-  for (const text of texts) {
-    const truncated = truncateText(text);
-    const prefixed = `Instruct: Retrieve relevant code conversations\nQuery: ${truncated}`;
-    const result = await embeddingContext.getEmbeddingFor(prefixed);
-    embeddings.push(Array.from(result.vector));
+  // Check prerequisites
+  const modelPath = getModelPath();
+  if (!existsSync(modelPath)) {
+    throw new Error(
+      `Model not found at ${modelPath}. Run sync to download the model first.`
+    );
   }
-  return embeddings;
+
+  if (!isLlamaServerInstalled()) {
+    throw new Error('llama-server not installed. Run sync first.');
+  }
+
+  // Start server
+  queryServerPort = await startLlamaServer(modelPath);
+  return queryServerPort;
 }
 
+/**
+ * Embed a single query using llama-server.
+ * Starts the server if not already running.
+ */
 export async function embedQuery(text: string): Promise<number[]> {
-  await initEmbeddings();
-
-  if (!embeddingContext) {
-    throw new Error('Embedding context not initialized');
-  }
-
+  const port = await ensureQueryServer();
   const truncated = truncateText(text);
-  const prefixed = `Instruct: Retrieve relevant code conversations\nQuery: ${truncated}`;
-  const result = await embeddingContext.getEmbeddingFor(prefixed);
-  return Array.from(result.vector);
+  const vectors = await embedBatchViaServer([truncated], port);
+  return vectors[0] || [];
 }
 
-export async function disposeEmbeddings(): Promise<void> {
-  if (embeddingContext) {
-    await embeddingContext.dispose();
-    embeddingContext = null;
+/**
+ * Stop the query embedding server if running.
+ */
+export async function stopQueryServer(): Promise<void> {
+  if (queryServerPort !== null) {
+    await stopLlamaServer();
+    queryServerPort = null;
   }
-  if (model) {
-    await model.dispose();
-    model = null;
-  }
-  llamaInstance = null;
 }
 
 // Clear progress file

@@ -6,15 +6,12 @@
  * Run with --benchmark to find optimal batch size for your system:
  *   bun run src/cli/commands/embed.ts --benchmark
  *
- * Uses llama-server for fast batch embedding with fallback to node-llama-cpp
+ * Uses llama-server for fast GPU-accelerated batch embedding
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions } from '../../db/index';
 import {
   downloadModel,
-  initEmbeddings,
-  embed,
-  disposeEmbeddings,
   getModelPath,
   setEmbeddingProgress,
   getEmbeddingProgress,
@@ -84,13 +81,14 @@ function applyConfig(cfg: EmbedConfig): void {
   BATCH_DELAY_MS = cfg.batchDelayMs;
 }
 
-const FALLBACK_BATCH_SIZE = 4;   // Keep small for CPU fallback
-
 // Rebuild FTS index after every batch to keep search working during embedding
 // mergeInsert invalidates the FTS index immediately, so we must rebuild each time
 const FTS_REBUILD_EVERY_BATCH = true;
-// Instruction prefix for query embeddings
-const INSTRUCTION_PREFIX = 'Instruct: Retrieve relevant code conversations\nQuery: ';
+
+// Clean up old versions every N batches to prevent disk space bloat
+// LanceDB is append-only and creates a new version for each mergeInsert.
+// Without cleanup, embedding 13K messages creates ~400 versions = 400x bloat!
+const CLEANUP_EVERY_N_BATCHES = 10;
 
 // Database row structure (snake_case column names)
 interface MessageRow {
@@ -107,13 +105,14 @@ async function getAllMessagesNeedingEmbedding(): Promise<MessageRow[]> {
   const table = await getMessagesTable();
   const allMessages = await table.query().toArray();
 
-  // Filter messages that have zero vectors (not yet embedded)
+  // Filter messages that have zero vectors or wrong dimensions (model changed)
   return allMessages.filter((row) => {
     const vector = row.vector;
     if (!vector) return true;
     // Convert to array if it's a Float32Array
     const arr = Array.isArray(vector) ? vector : Array.from(vector as Float32Array);
-    // Check if vector is all zeros (placeholder)
+    // Check for wrong dimensions (model changed) or zero vectors (not yet embedded)
+    if (arr.length !== EMBEDDING_DIMENSIONS) return true;
     return arr.every((v) => v === 0);
   }) as MessageRow[];
 }
@@ -147,7 +146,7 @@ function prepareTexts(texts: string[]): string[] {
   return texts.map((text) => {
     // Strip tool outputs before embedding to avoid embedding code
     const stripped = stripToolOutputs(text);
-    return INSTRUCTION_PREFIX + truncateText(stripped);
+    return truncateText(stripped);
   });
 }
 
@@ -174,8 +173,12 @@ async function runWithServer(
     console.log(`llama-server started on port ${port}`);
 
     // Process in batches
+    const totalBatches = Math.ceil(messages.length / SERVER_BATCH_SIZE);
     for (let i = 0; i < messages.length; i += SERVER_BATCH_SIZE) {
       const batch = messages.slice(i, i + SERVER_BATCH_SIZE);
+      const batchNum = Math.floor(i / SERVER_BATCH_SIZE) + 1;
+      const pct = Math.round((batchNum / totalBatches) * 100);
+      process.stdout.write(`\rEmbedding: ${batchNum}/${totalBatches} (${pct}%)`);
       const texts = prepareTexts(batch.map((m) => m.content));
 
       const vectors = await embedBatchViaServer(texts, port);
@@ -224,6 +227,13 @@ async function runWithServer(
         await rebuildFtsIndex();
       }
 
+      // Clean up old versions periodically to prevent disk space bloat
+      // Each mergeInsert creates a new version - without cleanup this causes 1000x+ bloat
+      const batchNumber = Math.floor(i / SERVER_BATCH_SIZE) + 1;
+      if (batchNumber % CLEANUP_EVERY_N_BATCHES === 0) {
+        await cleanupOldVersions();
+      }
+
       // Update progress
       setEmbeddingProgress({
         status: 'embedding',
@@ -238,6 +248,7 @@ async function runWithServer(
       }
     }
 
+    console.log(''); // Newline after progress
     await stopLlamaServer();
     return { success: true };
   } catch (error) {
@@ -248,74 +259,6 @@ async function runWithServer(
   }
 }
 
-async function runWithNodeLlamaCpp(
-  messages: MessageRow[],
-  table: Awaited<ReturnType<typeof getMessagesTable>>
-): Promise<void> {
-  console.log('Using node-llama-cpp fallback...');
-
-  // Use low priority mode
-  await initEmbeddings(true);
-
-  // Process in batches
-  for (let i = 0; i < messages.length; i += FALLBACK_BATCH_SIZE) {
-    const batch = messages.slice(i, i + FALLBACK_BATCH_SIZE);
-    // Strip tool outputs before embedding to avoid embedding code
-    const texts = batch.map((m) => stripToolOutputs(m.content));
-    const vectors = await embed(texts);
-
-    // Build full rows with updated vectors for batch mergeInsert
-    const updatedRows = batch
-      .map((msg, j) => {
-        const vec = vectors[j];
-        return {
-          id: msg.id,
-          conversation_id: msg.conversation_id,
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          message_index: msg.message_index,
-          vector: vec ? Array.from(vec) : Array.from(msg.vector),
-        };
-      })
-      .filter((row) => row.vector && row.vector.length > 0);
-
-    // Use mergeInsert for batch update
-    if (updatedRows.length > 0) {
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          await table.mergeInsert('id').whenMatchedUpdateAll().execute(updatedRows);
-          break;
-        } catch (err) {
-          retries--;
-          if (retries === 0) throw err;
-          await new Promise((r) => setTimeout(r, 200));
-        }
-      }
-    }
-
-    // Rebuild FTS index after every batch to keep search working
-    if (FTS_REBUILD_EVERY_BATCH) {
-      await rebuildFtsIndex();
-    }
-
-    // Update progress
-    setEmbeddingProgress({
-      status: 'embedding',
-      total: messages.length,
-      completed: Math.min(i + FALLBACK_BATCH_SIZE, messages.length),
-      startedAt: getEmbeddingProgress().startedAt,
-    });
-
-    // Same pause as server path to keep CPU cool
-    if (i + FALLBACK_BATCH_SIZE < messages.length) {
-      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-    }
-  }
-
-  await disposeEmbeddings();
-}
 
 async function runBackgroundEmbedding(): Promise<void> {
   // Check if already in progress (prevent duplicate runs)
@@ -389,22 +332,26 @@ async function runBackgroundEmbedding(): Promise<void> {
 
     const table = await getMessagesTable();
 
-    // Try server-based embedding first (faster with GPU)
-    const { success: serverSuccess, error: serverError } = await runWithServer(messages, table);
+    // Run server-based embedding (llama-server with GPU acceleration)
+    const { success, error } = await runWithServer(messages, table);
 
-    // Fall back to node-llama-cpp if server fails
-    if (!serverSuccess) {
-      console.log('Server failed, using node-llama-cpp fallback...');
-      if (serverError) {
-        console.log('Server error:', serverError);
-      }
-      await runWithNodeLlamaCpp(messages, table);
+    if (!success) {
+      throw new Error(`Embedding failed: ${error}`);
     }
 
     // Rebuild both FTS and vector indexes after all updates
     console.log('Rebuilding indexes...');
     await rebuildFtsIndex();
     await rebuildVectorIndex();
+
+    // Clean up old versions to reclaim disk space
+    // LanceDB keeps all historical versions which can cause 1000x+ storage bloat
+    console.log('Cleaning up old versions...');
+    const cleanupStats = await cleanupOldVersions();
+    if (cleanupStats.versionsRemoved > 0) {
+      const mbRemoved = Math.round(cleanupStats.bytesRemoved / 1024 / 1024);
+      console.log(`Removed ${cleanupStats.versionsRemoved} old versions (${mbRemoved}MB freed)`);
+    }
 
     // Mark as done
     setEmbeddingProgress({
@@ -424,7 +371,6 @@ async function runBackgroundEmbedding(): Promise<void> {
       completed: getEmbeddingProgress().completed,
       error: error instanceof Error ? error.message : String(error),
     });
-    await disposeEmbeddings();
     await stopLlamaServer();
     process.exit(1);
   }
@@ -471,7 +417,7 @@ async function testBatchSize(
       const batch = testMessages.slice(i, i + batchSize);
       const texts = batch.map((m) => {
         const stripped = stripToolOutputs(m.content);
-        return INSTRUCTION_PREFIX + truncateText(stripped);
+        return truncateText(stripped);
       });
 
       await embedBatchViaServer(texts, port);
@@ -526,8 +472,8 @@ async function runAutoBenchmark(): Promise<void> {
   const modelPath = getModelPath();
   const port = await startLlamaServer(modelPath);
 
-  // Test batch sizes quickly
-  const batchSizes = [8, 16, 32, 64];
+  // Test batch sizes quickly (up to 256 for GPU acceleration)
+  const batchSizes = [8, 16, 32, 64, 128, 256];
   const results: BenchmarkResult[] = [];
 
   process.stdout.write('  Testing batch sizes: ');

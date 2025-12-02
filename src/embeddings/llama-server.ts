@@ -263,14 +263,15 @@ export async function startLlamaServer(modelPath: string, threads?: number): Pro
   const useGpu = process.platform === 'darwin';
 
   // Server configuration optimized for GPU acceleration when available
+  // EmbeddingGemma-300M supports 8K tokens but we use 2048 for efficiency
   const args = [
     '--model', modelPath,
     '--port', String(serverPort),
     '--embedding',
     '--pooling', 'mean',
     '--threads', String(threadCount),
-    '--ctx-size', '8192',
-    '--batch-size', '4096',
+    '--ctx-size', '2048',
+    '--batch-size', '2048',
     '--ubatch-size', '2048',
     // GPU acceleration: offload all layers to Metal on macOS
     ...(useGpu ? ['--n-gpu-layers', '99'] : []),

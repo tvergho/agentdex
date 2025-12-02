@@ -9,7 +9,25 @@
 import React from 'react';
 import { render, Box, Text } from 'ink';
 import { getEmbeddingProgress, getModelPath, type EmbeddingProgress } from '../../embeddings/index';
-import { existsSync, statSync } from 'fs';
+import { existsSync, statSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { getDataDir } from '../../utils/config';
+
+interface EmbedConfig {
+  serverBatchSize: number;
+  throughput?: number;
+  benchmarkedAt?: string;
+}
+
+function loadEmbedConfig(): EmbedConfig | null {
+  const path = join(getDataDir(), 'embed-config.json');
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -28,7 +46,7 @@ function formatDuration(start: string, end?: string): string {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-function StatusUI({ progress }: { progress: EmbeddingProgress }) {
+function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: EmbedConfig | null }) {
   const modelPath = getModelPath();
   const modelExists = existsSync(modelPath);
   const modelSize = modelExists ? statSync(modelPath).size : 0;
@@ -46,6 +64,16 @@ function StatusUI({ progress }: { progress: EmbeddingProgress }) {
           <Text color="yellow">Not downloaded</Text>
         )}
       </Box>
+
+      {config && (
+        <Box marginTop={1}>
+          <Text>Batch size: </Text>
+          <Text color="cyan">{config.serverBatchSize}</Text>
+          {config.throughput && (
+            <Text dimColor> ({Math.round(config.throughput)} msg/s)</Text>
+          )}
+        </Box>
+      )}
 
       <Box marginTop={1}>
         <Text>Status: </Text>
@@ -106,7 +134,8 @@ function StatusUI({ progress }: { progress: EmbeddingProgress }) {
 
 export async function statusCommand(): Promise<void> {
   const progress = getEmbeddingProgress();
-  const { unmount } = render(<StatusUI progress={progress} />);
+  const config = loadEmbedConfig();
+  const { unmount } = render(<StatusUI progress={progress} config={config} />);
 
   // Exit after rendering
   setTimeout(() => {

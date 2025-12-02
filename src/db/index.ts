@@ -404,6 +404,50 @@ export async function compactMessagesTable(): Promise<void> {
   await table.optimize();
 }
 
+/**
+ * Clean up old versions from all tables to reclaim disk space.
+ * LanceDB is append-only and keeps historical versions. After many mergeInsert
+ * operations (like during embedding), this can cause massive storage bloat.
+ *
+ * This should be called after embedding completes to remove old versions.
+ */
+export async function cleanupOldVersions(): Promise<{ bytesRemoved: number; versionsRemoved: number }> {
+  if (!db) {
+    await connect();
+  }
+
+  let totalBytesRemoved = 0;
+  let totalVersionsRemoved = 0;
+
+  const tables = [
+    messagesTable,
+    conversationsTable,
+    toolCallsTable,
+    filesTable,
+    messageFilesTable,
+    fileEditsTable,
+  ];
+
+  for (const table of tables) {
+    if (table) {
+      try {
+        const stats = await table.optimize({
+          cleanupOlderThan: new Date(), // Remove all old versions
+          deleteUnverified: true,       // Force cleanup
+        });
+        if (stats.prune) {
+          totalBytesRemoved += stats.prune.bytesRemoved;
+          totalVersionsRemoved += stats.prune.oldVersionsRemoved;
+        }
+      } catch {
+        // Ignore errors for individual tables
+      }
+    }
+  }
+
+  return { bytesRemoved: totalBytesRemoved, versionsRemoved: totalVersionsRemoved };
+}
+
 export async function needsVectorMigration(): Promise<boolean> {
   const table = await getMessagesTable();
 
