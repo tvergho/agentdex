@@ -7,6 +7,7 @@ import {
   getMessageFilesTable,
   getFileEditsTable,
   withRetry,
+  stripToolOutputs,
 } from './index';
 import {
   Source,
@@ -546,6 +547,7 @@ export const messageRepo = {
       conversation_id: msg.conversationId,
       role: msg.role,
       content: msg.content,
+      indexed_content: stripToolOutputs(msg.content), // Tool outputs stripped for FTS
       timestamp: msg.timestamp ?? '',
       message_index: msg.messageIndex,
       vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings
@@ -570,6 +572,7 @@ export const messageRepo = {
       conversation_id: msg.conversationId,
       role: msg.role,
       content: msg.content,
+      indexed_content: stripToolOutputs(msg.content), // Tool outputs stripped for FTS
       timestamp: msg.timestamp ?? '',
       message_index: msg.messageIndex,
       vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings

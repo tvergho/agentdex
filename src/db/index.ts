@@ -255,6 +255,7 @@ async function ensureTables(): Promise<void> {
         conversation_id: '',
         role: 'user',
         content: '',
+        indexed_content: '', // Content with tool outputs stripped, used for FTS
         timestamp: '',
         message_index: 0,
         vector: new Array(EMBEDDING_DIMENSIONS).fill(0),
@@ -375,10 +376,22 @@ export async function rebuildFtsIndex(): Promise<void> {
 
   // LanceDB will update existing index when createIndex is called again
   // with replace: true option
-  await table.createIndex('content', {
+  // Index indexed_content (tool outputs stripped) to avoid noise from
+  // tool results like file listings, bash output, etc.
+  await table.createIndex('indexed_content', {
     config: lancedb.Index.fts(),
     replace: true,
   });
+}
+
+/**
+ * Strip tool output blocks from text.
+ * Tool outputs (bash results, file contents, etc.) add noise to search.
+ * Format: ---\n**ToolName**...\n```...```\n---
+ */
+export function stripToolOutputs(text: string): string {
+  const toolBlockPattern = /\n---\n\*\*[^*]+\*\*[^\n]*\n```[\s\S]*?```\n---\n?/g;
+  return text.replace(toolBlockPattern, '\n').trim();
 }
 
 export async function rebuildVectorIndex(): Promise<void> {
