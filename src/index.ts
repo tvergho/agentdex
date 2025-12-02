@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { createRequire } from 'module';
 import { syncCommand } from './cli/commands/sync';
 import { searchCommand } from './cli/commands/search';
 import { listCommand } from './cli/commands/list';
@@ -13,10 +14,13 @@ import { unifiedCommand } from './cli/commands/unified';
 import { configCommand } from './cli/commands/config';
 import { embedCommand } from './cli/commands/embed';
 
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json') as { version: string };
+
 const program = new Command()
   .name('dex')
   .description('Universal search for your coding agent conversations')
-  .version('0.1.3');
+  .version(packageJson.version);
 
 program
   .command('sync')
