@@ -524,15 +524,15 @@ export async function runSync(
     }
 
     // ========== PHASE 6: Rebuild FTS index ==========
-    if (progress.messagesIndexed > 0) {
-      progress.phase = 'indexing';
-      progress.currentSource = undefined;
-      progress.currentProject = undefined;
-      onProgress({ ...progress });
+    // Always rebuild FTS index, even for incremental syncs.
+    // This ensures the index stays fresh and doesn't become stale over time.
+    progress.phase = 'indexing';
+    progress.currentSource = undefined;
+    progress.currentProject = undefined;
+    onProgress({ ...progress });
 
-      await rebuildFtsIndex();
-      await rebuildScalarIndexes();
-    }
+    await rebuildFtsIndex();
+    await rebuildScalarIndexes();
 
     // ========== PHASE 6b: Spawn embedding worker if needed ==========
     // Check for pending embeddings (messages with zero vectors).
