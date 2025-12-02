@@ -9,9 +9,9 @@ import { spawn, ChildProcess } from 'child_process';
 import { cpus } from 'os';
 import { getDataDir } from '../utils/config';
 
-// Minimal thread count for background work: just 1-2 threads
-// Prioritizes keeping the system cool over embedding speed
-const LOW_PRIORITY_THREADS = Math.min(2, Math.max(1, Math.floor(cpus().length * 0.125)));
+// Background thread count: use half the cores (capped at 6) for good balance
+// between embedding speed and keeping the system responsive
+const LOW_PRIORITY_THREADS = Math.min(6, Math.max(2, Math.floor(cpus().length / 2)));
 
 // GitHub API for fetching latest release
 const GITHUB_API_LATEST = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest';
@@ -263,20 +263,22 @@ export async function startLlamaServer(modelPath: string, threads?: number): Pro
   const useGpu = process.platform === 'darwin';
 
   // Server configuration optimized for GPU acceleration when available
-  // EmbeddingGemma-300M supports 8K tokens but we use 2048 for efficiency
+  // EmbeddingGemma-300M supports 8K tokens, we use 4096 for faster embedding
   const args = [
     '--model', modelPath,
     '--port', String(serverPort),
     '--embedding',
     '--pooling', 'mean',
     '--threads', String(threadCount),
-    '--ctx-size', '2048',
-    '--batch-size', '2048',
-    '--ubatch-size', '2048',
+    '--ctx-size', '4096',
+    '--batch-size', '4096',
+    '--ubatch-size', '4096',
     // GPU acceleration: offload all layers to Metal on macOS
     ...(useGpu ? ['--n-gpu-layers', '99'] : []),
     // Flash attention: faster processing with lower memory bandwidth
     '--flash-attn', 'on',
+    // Continuous batching: process requests as they arrive for better throughput
+    '--cont-batching',
   ];
 
   // Start with low priority on Unix

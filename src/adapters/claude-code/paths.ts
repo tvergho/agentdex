@@ -103,3 +103,17 @@ export function detectClaudeCode(): boolean {
   const projectsDir = join(rootPath, 'projects');
   return existsSync(projectsDir);
 }
+
+/**
+ * Get the mtime of the projects directory (quick check for changes).
+ * Returns null if directory doesn't exist.
+ */
+export function getProjectsRootMtime(): number | null {
+  const rootPath = getClaudeCodeRootPath();
+  const projectsDir = join(rootPath, 'projects');
+  try {
+    return statSync(projectsDir).mtimeMs;
+  } catch {
+    return null;
+  }
+}

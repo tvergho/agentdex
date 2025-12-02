@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { detectClaudeCode, discoverProjects } from './paths.js';
+import { detectClaudeCode, discoverProjects, getProjectsRootMtime } from './paths.js';
 import { extractConversations, type RawConversation } from './parser.js';
 import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation, ExtractionProgress } from '../types.js';
@@ -9,6 +9,10 @@ export class ClaudeCodeAdapter implements SourceAdapter {
 
   async detect(): Promise<boolean> {
     return detectClaudeCode();
+  }
+
+  getQuickMtime(): number | null {
+    return getProjectsRootMtime();
   }
 
   async discover(): Promise<SourceLocation[]> {

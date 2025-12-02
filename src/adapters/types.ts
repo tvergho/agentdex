@@ -27,6 +27,13 @@ export interface SourceAdapter {
   /** Check if this source is available on this machine */
   detect(): Promise<boolean>;
 
+  /**
+   * Quick mtime check for the source root (O(1) stat calls).
+   * Returns the mtime of the root directory, or null if unavailable.
+   * Used by needsSync() to avoid expensive discovery when nothing changed.
+   */
+  getQuickMtime(): number | null;
+
   /** Find all instances/workspaces of this source */
   discover(): Promise<SourceLocation[]>;
 

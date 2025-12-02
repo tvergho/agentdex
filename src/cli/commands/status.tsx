@@ -46,6 +46,12 @@ function formatDuration(start: string, end?: string): string {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
+function formatTimeRemaining(seconds: number): string {
+  if (seconds < 60) return `~${Math.ceil(seconds)}s remaining`;
+  if (seconds < 3600) return `~${Math.ceil(seconds / 60)}m remaining`;
+  return `~${Math.floor(seconds / 3600)}h ${Math.ceil((seconds % 3600) / 60)}m remaining`;
+}
+
 function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: EmbedConfig | null }) {
   const modelPath = getModelPath();
   const modelExists = existsSync(modelPath);
@@ -96,9 +102,17 @@ function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: E
               {'░'.repeat(30 - Math.floor((progress.completed / progress.total) * 30))}]
             </Text>
           </Box>
-          {progress.startedAt && (
-            <Text dimColor>Elapsed: {formatDuration(progress.startedAt)}</Text>
-          )}
+          <Box>
+            {progress.startedAt && (
+              <Text dimColor>Elapsed: {formatDuration(progress.startedAt)}</Text>
+            )}
+            {config?.throughput && progress.total > progress.completed && (
+              <Text dimColor>
+                {' · '}
+                {formatTimeRemaining((progress.total - progress.completed) / config.throughput)}
+              </Text>
+            )}
+          </Box>
         </Box>
       )}
 

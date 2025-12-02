@@ -178,3 +178,17 @@ export function detectOpenCode(): boolean {
   const sessionDir = join(storagePath, 'session');
   return existsSync(sessionDir);
 }
+
+/**
+ * Get the mtime of the session directory (quick check for changes).
+ * Returns null if directory doesn't exist.
+ */
+export function getSessionRootMtime(): number | null {
+  const storagePath = getOpenCodeStoragePath();
+  const sessionDir = join(storagePath, 'session');
+  try {
+    return statSync(sessionDir).mtimeMs;
+  } catch {
+    return null;
+  }
+}

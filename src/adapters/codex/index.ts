@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { detectCodex, discoverSessions } from './paths.js';
+import { detectCodex, discoverSessions, getSessionsRootMtime } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
 import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation, ExtractionProgress } from '../types.js';
@@ -9,6 +9,10 @@ export class CodexAdapter implements SourceAdapter {
 
   async detect(): Promise<boolean> {
     return detectCodex();
+  }
+
+  getQuickMtime(): number | null {
+    return getSessionsRootMtime();
   }
 
   async discover(): Promise<SourceLocation[]> {

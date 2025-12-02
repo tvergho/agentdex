@@ -9,8 +9,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text } from 'ink';
-import { spawn, exec } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
+import { spawnBackgroundCommand } from '../../utils/spawn';
 
 const execAsync = promisify(exec);
 import { adapters } from '../../adapters/index';
@@ -39,6 +40,7 @@ import {
 import { printRichSummary } from './stats';
 import { loadConfig } from '../../config/index.js';
 import { enrichUntitledConversations } from '../../features/enrichment/index.js';
+import { updateSyncCache } from '../../utils/sync-cache';
 
 /**
  * Count messages that still need embedding (have zero vectors or wrong dimensions).
@@ -239,47 +241,7 @@ function SyncUI({ progress }: { progress: SyncProgress }) {
 function spawnBackgroundEmbedding(): void {
   // Spawn background embedding process with low priority (nice 19 = lowest priority)
   // This minimizes impact on user's foreground work
-  const isWindows = process.platform === 'win32';
-
-  // Build command to run `dex embed` in background
-  const scriptPath = process.argv[1]!;
-  const isTypeScript = scriptPath.endsWith('.ts') || scriptPath.endsWith('.tsx');
-  const isBun = process.versions.bun !== undefined;
-
-  let command: string;
-
-  if (isWindows) {
-    if (isTypeScript) {
-      // In dev mode with TypeScript - use tsx
-      command = `npx tsx "${scriptPath}" embed`;
-    } else {
-      // Production mode - use node directly
-      command = `"${process.execPath}" "${scriptPath}" embed`;
-    }
-  } else {
-    if (isTypeScript) {
-      if (isBun) {
-        // Running under bun - use bun directly
-        command = `nice -n 19 bun "${scriptPath}" embed`;
-      } else {
-        // Running under tsx/node - use tsx to run TypeScript
-        command = `nice -n 19 npx tsx "${scriptPath}" embed`;
-      }
-    } else {
-      // Production mode - use node/bun directly
-      command = `nice -n 19 "${process.execPath}" "${scriptPath}" embed`;
-    }
-  }
-
-  const child = spawn(command, [], {
-    detached: true,
-    stdio: 'ignore',
-    shell: true, // Use shell for nice command and proper quoting
-    cwd: process.cwd(), // Preserve working directory
-    env: process.env, // Preserve environment variables
-  });
-
-  child.unref();
+  spawnBackgroundCommand('embed');
 }
 
 export async function runSync(
@@ -606,6 +568,9 @@ export async function runSync(
         console.error('Enrichment failed:', err);
       }
     }
+
+    // Update sync cache for fast subsequent checks
+    updateSyncCache();
 
     progress.phase = 'done';
     progress.currentSource = undefined;

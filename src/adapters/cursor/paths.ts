@@ -32,3 +32,16 @@ export function getGlobalDatabase(): CursorGlobalDB | null {
     mtime: stats.mtimeMs,
   };
 }
+
+/**
+ * Get the mtime of the global database (quick check for changes).
+ * Returns null if database doesn't exist.
+ */
+export function getGlobalDbMtime(): number | null {
+  const dbPath = getCursorGlobalDbPath();
+  try {
+    return statSync(dbPath).mtimeMs;
+  } catch {
+    return null;
+  }
+}

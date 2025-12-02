@@ -43,7 +43,7 @@ interface EmbedConfig {
 const DEFAULT_CONFIG: EmbedConfig = {
   serverBatchSize: 32,
   maxTextChars: 2000,
-  batchDelayMs: 50,
+  batchDelayMs: 0, // No delay between batches for maximum throughput
 };
 
 function getConfigPath(): string {
@@ -242,8 +242,8 @@ async function runWithServer(
         startedAt: getEmbeddingProgress().startedAt,
       });
 
-      // Brief pause between batches
-      if (i + SERVER_BATCH_SIZE < messages.length) {
+      // Optional pause between batches (default 0 for max throughput)
+      if (BATCH_DELAY_MS > 0 && i + SERVER_BATCH_SIZE < messages.length) {
         await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
       }
     }
@@ -501,7 +501,7 @@ async function runAutoBenchmark(): Promise<void> {
   const newConfig: EmbedConfig = {
     serverBatchSize: optimal.batchSize,
     maxTextChars: 2000,
-    batchDelayMs: 50,
+    batchDelayMs: 0, // No delay for max throughput
     benchmarkedAt: new Date().toISOString(),
     throughput: optimal.throughput,
   };
@@ -613,7 +613,7 @@ async function runBenchmark(): Promise<void> {
   const newConfig: EmbedConfig = {
     serverBatchSize: recommended.batchSize,
     maxTextChars: 2000, // Keep this fixed
-    batchDelayMs: 50,
+    batchDelayMs: 0, // No delay for max throughput
     benchmarkedAt: new Date().toISOString(),
     throughput: recommended.throughput,
   };

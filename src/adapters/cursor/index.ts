@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { getGlobalDatabase } from './paths';
+import { getGlobalDatabase, getGlobalDbMtime } from './paths';
 import { extractConversations, type RawConversation, type ExtractionProgress } from './parser';
 import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index';
 import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types';
@@ -12,6 +12,10 @@ export class CursorAdapter implements SourceAdapter {
   async detect(): Promise<boolean> {
     const globalDb = getGlobalDatabase();
     return globalDb !== null;
+  }
+
+  getQuickMtime(): number | null {
+    return getGlobalDbMtime();
   }
 
   async discover(): Promise<SourceLocation[]> {

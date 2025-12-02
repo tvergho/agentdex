@@ -101,3 +101,17 @@ export function detectCodex(): boolean {
   const sessionsDir = join(rootPath, 'sessions');
   return existsSync(sessionsDir);
 }
+
+/**
+ * Get the mtime of the sessions directory (quick check for changes).
+ * Returns null if directory doesn't exist.
+ */
+export function getSessionsRootMtime(): number | null {
+  const rootPath = getCodexRootPath();
+  const sessionsDir = join(rootPath, 'sessions');
+  try {
+    return statSync(sessionsDir).mtimeMs;
+  } catch {
+    return null;
+  }
+}

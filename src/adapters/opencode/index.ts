@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { detectOpenCode, discoverProjects, discoverSessions } from './paths.js';
+import { detectOpenCode, discoverProjects, discoverSessions, getSessionRootMtime } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
 import {
   Source,
@@ -18,6 +18,10 @@ export class OpenCodeAdapter implements SourceAdapter {
 
   async detect(): Promise<boolean> {
     return detectOpenCode();
+  }
+
+  getQuickMtime(): number | null {
+    return getSessionRootMtime();
   }
 
   async discover(): Promise<SourceLocation[]> {
