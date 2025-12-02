@@ -48,7 +48,7 @@
     "reset": "rm -rf ~/.dex/lancedb ~/.dex/embed-config.json ~/.dex/embedding-progress.json 2>/dev/null; echo '✓ Database and progress reset'"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.13.0",
+    "@lancedb/lancedb": "0.22.3",
     "@opencode-ai/sdk": "1.0.123",
     "apache-arrow": "^18.0.0",
     "better-sqlite3": "^11.6.0",

@@ -395,6 +395,59 @@ export async function rebuildVectorIndex(): Promise<void> {
 }
 
 /**
+ * Create scalar indexes on frequently filtered columns.
+ * This speeds up .where() queries on conversation_id, file_path, etc.
+ */
+export async function rebuildScalarIndexes(): Promise<void> {
+  // Messages table: conversation_id is used to fetch all messages for a conversation
+  const messages = await getMessagesTable();
+  await messages.createIndex('conversation_id', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+
+  // Tool calls: filter by conversation_id and message_id
+  const toolCalls = await getToolCallsTable();
+  await toolCalls.createIndex('conversation_id', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+
+  // Conversation files: filter by conversation_id and file_path
+  const files = await getFilesTable();
+  await files.createIndex('conversation_id', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+  await files.createIndex('file_path', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+
+  // Message files: filter by conversation_id and file_path
+  const messageFiles = await getMessageFilesTable();
+  await messageFiles.createIndex('conversation_id', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+  await messageFiles.createIndex('file_path', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+
+  // File edits: filter by conversation_id and file_path
+  const fileEdits = await getFileEditsTable();
+  await fileEdits.createIndex('conversation_id', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+  await fileEdits.createIndex('file_path', {
+    config: lancedb.Index.btree(),
+    replace: true,
+  });
+}
+
+/**
  * Compact the messages table to materialize deletions.
  * This must be called after force sync (which deletes many rows) before
  * mergeInsert operations can work on the table.

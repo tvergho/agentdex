@@ -19,6 +19,7 @@ import type { SourceLocation, NormalizedConversation } from '../../adapters/type
 import {
   connect,
   rebuildFtsIndex,
+  rebuildScalarIndexes,
   acquireSyncLock,
   releaseSyncLock,
   getMessagesTable,
@@ -530,6 +531,7 @@ export async function runSync(
       onProgress({ ...progress });
 
       await rebuildFtsIndex();
+      await rebuildScalarIndexes();
     }
 
     // ========== PHASE 6b: Spawn embedding worker if needed ==========

@@ -23,6 +23,7 @@ import {
   FileEdit,
 } from '../schema/index';
 import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
+import { rerankers } from '@lancedb/lancedb';
 
 // Helper to safely parse JSON with fallback
 function safeJsonParse<T>(value: unknown, fallback: T): T {
@@ -598,7 +599,7 @@ export const messageRepo = {
     // With snake_case columns, we can use direct filtering
     const results = await table
       .query()
-      .filter(`conversation_id = '${conversationId}'`)
+      .where(`conversation_id = '${conversationId}'`)
       .toArray();
 
     return results
@@ -629,102 +630,103 @@ export const messageRepo = {
   async search(query: string, limit = 50): Promise<MessageMatch[]> {
     const table = await getMessagesTable();
 
-    // FTS-first approach: FTS results are the baseline, vector search only adds
-    // This ensures keyword matches are never demoted by vector search
-
-    // Step 1: Try FTS search first (reliable keyword matching when index is valid)
-    let ftsResults: Record<string, unknown>[] = [];
-    try {
-      ftsResults = await table
-        .search(query, 'fts')
-        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-        .limit(limit)
-        .toArray();
-    } catch {
-      // FTS index might be invalid during embedding, continue to fallback
-    }
-
-    // Build result set from FTS (these maintain their ranking)
-    const resultMap = new Map<string, { rank: number; row: Record<string, unknown>; score: number }>();
-    ftsResults.forEach((row, rank) => {
-      const content = row.content as string;
-      if (content && content.trim().length > 0) {
-        resultMap.set(row.id as string, {
-          rank,
-          row,
-          score: (row._score as number) ?? (1 / (rank + 1)) // FTS score or rank-based
-        });
-      }
-    });
-
-    // Step 1b: Fallback to basic content filtering if FTS returned no results
-    // This handles the case where FTS index is invalidated during embedding
-    if (resultMap.size === 0) {
-      const allMessages = await table
-        .query()
-        .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
-        .limit(5000) // Scan up to 5000 messages for fallback
-        .toArray();
-
-      // Simple case-insensitive substring matching
-      const queryLower = query.toLowerCase();
-      const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
-
-      let fallbackRank = 0;
-      for (const row of allMessages) {
-        const content = row.content as string;
-        if (!content) continue;
-
-        const contentLower = content.toLowerCase();
-        // Check if any query term appears in content
-        const matchCount = queryTerms.filter(term => contentLower.includes(term)).length;
-        if (matchCount > 0) {
-          resultMap.set(row.id as string, {
-            rank: fallbackRank++,
-            row,
-            score: matchCount / queryTerms.length // Score by term coverage
-          });
-          if (fallbackRank >= limit) break;
-        }
-      }
-    }
-
-    // Step 2: Try vector search to find additional semantic matches
-    // Always attempt - will only find results from already-embedded messages
-    // FTS results are preserved, vector results only add to them
+    // Try hybrid search with RRF (Reciprocal Rank Fusion)
+    // Combines FTS keyword matching with vector semantic search
     try {
       const queryVector = await embedQuery(query);
-      const vectorResults = await table
-        .query()
-        .nearestTo(queryVector)
+      const reranker = await rerankers.RRFReranker.create();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const results = await (table.search(queryVector) as any)
+        .fullTextSearch(query)
+        .rerank(reranker)
         .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
+        .limit(limit)
+        .toArray() as Record<string, unknown>[];
+
+      return results
+        .filter((row: Record<string, unknown>) => {
+          const content = row.content as string;
+          return content && content.trim().length > 0;
+        })
+        .map((row: Record<string, unknown>, index: number) => {
+          const content = row.content as string;
+          const { snippet, highlightRanges } = extractSnippet(content, query);
+
+          // After reranking, score is in _relevance_score or use rank-based score
+          const score = (row._relevance_score as number) ??
+                        (row._score as number) ??
+                        1 / (index + 1);
+
+          return {
+            messageId: row.id as string,
+            conversationId: row.conversation_id as string,
+            role: row.role as MessageMatch['role'],
+            content,
+            snippet,
+            highlightRanges,
+            score,
+            messageIndex: row.message_index as number,
+          };
+        });
+    } catch {
+      // Fallback to FTS-only if vector search unavailable
+    }
+
+    // Fallback: FTS-only search
+    try {
+      const ftsResults = await table
+        .search(query, 'fts')
+        .select(['id', 'conversation_id', 'role', 'content', 'message_index', '_score'])
         .limit(limit)
         .toArray();
 
-      // Add vector-only results (semantic matches that FTS missed)
-      // These are appended after FTS results, never replacing them
-      let appendRank = resultMap.size;
-      for (const row of vectorResults) {
-        const id = row.id as string;
-        const content = row.content as string;
-        if (!resultMap.has(id) && content && content.trim().length > 0) {
-          resultMap.set(id, {
-            rank: appendRank++,
-            row,
-            score: 0.5 / (appendRank + 1) // Lower score for vector-only results
-          });
-        }
-      }
+      return ftsResults
+        .filter((row) => {
+          const content = row.content as string;
+          return content && content.trim().length > 0;
+        })
+        .map((row, rank) => {
+          const content = row.content as string;
+          const { snippet, highlightRanges } = extractSnippet(content, query);
+
+          return {
+            messageId: row.id as string,
+            conversationId: row.conversation_id as string,
+            role: row.role as MessageMatch['role'],
+            content,
+            snippet,
+            highlightRanges,
+            score: (row._score as number) ?? 1 / (rank + 1),
+            messageIndex: row.message_index as number,
+          };
+        });
     } catch {
-      // Model not available, continue with FTS-only results
+      // FTS index might be invalid, fall back to substring matching
     }
 
-    // Return results sorted by rank (FTS first, then vector additions)
-    return Array.from(resultMap.values())
-      .sort((a, b) => a.rank - b.rank)
-      .slice(0, limit)
-      .map(({ score, row }) => {
+    // Last resort: basic substring matching
+    const allMessages = await table
+      .query()
+      .select(['id', 'conversation_id', 'role', 'content', 'message_index'])
+      .limit(5000)
+      .toArray();
+
+    const queryLower = query.toLowerCase();
+    const queryTerms = queryLower.split(/\s+/).filter((t) => t.length > 2);
+
+    return allMessages
+      .filter((row) => {
         const content = row.content as string;
+        if (!content) return false;
+        const contentLower = content.toLowerCase();
+        return queryTerms.some((term) => contentLower.includes(term));
+      })
+      .slice(0, limit)
+      .map((row, rank) => {
+        const content = row.content as string;
+        const contentLower = content.toLowerCase();
+        const matchCount = queryTerms.filter((term) => contentLower.includes(term)).length;
         const { snippet, highlightRanges } = extractSnippet(content, query);
 
         return {
@@ -734,7 +736,7 @@ export const messageRepo = {
           content,
           snippet,
           highlightRanges,
-          score,
+          score: matchCount / queryTerms.length,
           messageIndex: row.message_index as number,
         };
       });
@@ -765,7 +767,7 @@ export const toolCallRepo = {
     const table = await getToolCallsTable();
     const results = await table
       .query()
-      .filter(`file_path = '${filePath}'`)
+      .where(`file_path = '${filePath}'`)
       .toArray();
 
     return results.map((row) => ({
@@ -783,7 +785,7 @@ export const toolCallRepo = {
     const table = await getToolCallsTable();
     const results = await table
       .query()
-      .filter(`conversation_id = '${conversationId}'`)
+      .where(`conversation_id = '${conversationId}'`)
       .toArray();
 
     return results.map((row) => ({
@@ -812,7 +814,7 @@ export const syncStateRepo = {
     const table = await getSyncStateTable();
     const results = await table
       .query()
-      .filter(`source = '${source}' AND db_path = '${dbPath}'`)
+      .where(`source = '${source}' AND db_path = '${dbPath}'`)
       .limit(1)
       .toArray();
 
@@ -870,7 +872,7 @@ export const filesRepo = {
     const table = await getFilesTable();
     const results = await table
       .query()
-      .filter(`conversation_id = '${conversationId}'`)
+      .where(`conversation_id = '${conversationId}'`)
       .toArray();
 
     return results.map((row) => ({
@@ -911,7 +913,7 @@ export const messageFilesRepo = {
     const table = await getMessageFilesTable();
     const results = await table
       .query()
-      .filter(`message_id = '${messageId}'`)
+      .where(`message_id = '${messageId}'`)
       .toArray();
 
     return results.map((row) => ({
@@ -927,7 +929,7 @@ export const messageFilesRepo = {
     const table = await getMessageFilesTable();
     const results = await table
       .query()
-      .filter(`conversation_id = '${conversationId}'`)
+      .where(`conversation_id = '${conversationId}'`)
       .toArray();
 
     return results.map((row) => ({
@@ -954,7 +956,7 @@ export const fileEditsRepo = {
     const table = await getFileEditsTable();
     const results = await table
       .query()
-      .filter(`conversation_id = '${conversationId}'`)
+      .where(`conversation_id = '${conversationId}'`)
       .toArray();
     const ids = results.map((row) => row.id as string);
     return new Set(ids);
@@ -1006,7 +1008,7 @@ export const fileEditsRepo = {
     const table = await getFileEditsTable();
     const results = await table
       .query()
-      .filter(`message_id = '${messageId}'`)
+      .where(`message_id = '${messageId}'`)
       .toArray();
 
     return results.map((row) => ({
@@ -1027,7 +1029,7 @@ export const fileEditsRepo = {
     const table = await getFileEditsTable();
     const results = await table
       .query()
-      .filter(`conversation_id = '${conversationId}'`)
+      .where(`conversation_id = '${conversationId}'`)
       .toArray();
 
     return results.map((row) => ({
