@@ -3,7 +3,7 @@
  * Downloads and manages a local llama-server binary for faster batch embeddings
  */
 
-import { existsSync, mkdirSync, createWriteStream, chmodSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, createWriteStream, chmodSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { cpus } from 'os';
@@ -13,67 +13,38 @@ import { getDataDir } from '../utils/config';
 // between embedding speed and keeping the system responsive
 const LOW_PRIORITY_THREADS = Math.min(6, Math.max(2, Math.floor(cpus().length / 2)));
 
-// GitHub API for fetching latest release
-const GITHUB_API_LATEST = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest';
-
-// Cached version info
-let cachedVersion: string | null = null;
-
-async function getLatestVersion(): Promise<string> {
-  if (cachedVersion) return cachedVersion;
-
-  // Try to read cached version from disk
-  const versionFile = join(getBinDir(), 'llama-version.txt');
-  if (existsSync(versionFile)) {
-    cachedVersion = readFileSync(versionFile, 'utf-8').trim();
-    return cachedVersion;
-  }
-
-  // Fetch from GitHub API
-  const response = await fetch(GITHUB_API_LATEST);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch latest llama.cpp version: ${response.statusText}`);
-  }
-
-  const data = (await response.json()) as { tag_name: string };
-  cachedVersion = data.tag_name;
-
-  // Cache to disk
-  writeFileSync(versionFile, cachedVersion);
-
-  return cachedVersion;
-}
+// Pinned llama.cpp version - always use this exact version for consistency
+const LLAMA_VERSION = 'b7225';
 
 // Platform-specific binary names
-async function getBinaryInfo(): Promise<{ url: string; executable: string } | null> {
+function getBinaryInfo(): { url: string; executable: string } | null {
   const platform = process.platform;
   const arch = process.arch;
-  const version = await getLatestVersion();
 
-  const baseUrl = `https://github.com/ggml-org/llama.cpp/releases/download/${version}`;
+  const baseUrl = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}`;
 
   if (platform === 'darwin') {
     const archSuffix = arch === 'arm64' ? 'arm64' : 'x64';
     return {
-      url: `${baseUrl}/llama-${version}-bin-macos-${archSuffix}.zip`,
+      url: `${baseUrl}/llama-${LLAMA_VERSION}-bin-macos-${archSuffix}.zip`,
       executable: 'llama-server',
     };
   } else if (platform === 'linux') {
     if (arch === 'x64') {
       return {
-        url: `${baseUrl}/llama-${version}-bin-ubuntu-x64.zip`,
+        url: `${baseUrl}/llama-${LLAMA_VERSION}-bin-ubuntu-x64.zip`,
         executable: 'llama-server',
       };
     }
   } else if (platform === 'win32') {
     if (arch === 'x64') {
       return {
-        url: `${baseUrl}/llama-${version}-bin-win-cpu-x64.zip`,
+        url: `${baseUrl}/llama-${LLAMA_VERSION}-bin-win-cpu-x64.zip`,
         executable: 'llama-server.exe',
       };
     } else if (arch === 'arm64') {
       return {
-        url: `${baseUrl}/llama-${version}-bin-win-cpu-arm64.zip`,
+        url: `${baseUrl}/llama-${LLAMA_VERSION}-bin-win-cpu-arm64.zip`,
         executable: 'llama-server.exe',
       };
     }
@@ -103,7 +74,7 @@ export function isLlamaServerInstalled(): boolean {
 export async function downloadLlamaServer(
   onProgress?: (downloaded: number, total: number) => void
 ): Promise<void> {
-  const info = await getBinaryInfo();
+  const info = getBinaryInfo();
   if (!info) {
     throw new Error(`Unsupported platform: ${process.platform}-${process.arch}`);
   }

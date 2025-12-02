@@ -19,29 +19,33 @@ import { spawn } from 'child_process';
 import { connect, getMessagesTable } from '../../db/index';
 import { conversationRepo, search, searchByFilePath, getFileMatchesForConversations } from '../../db/repository';
 import { getLanceDBPath } from '../../utils/config';
-import { spawnDexCommand, runtimeCmd } from '../../utils/spawn';
+import { spawnDexCommand, runtimeCmd, spawnBackgroundCommand } from '../../utils/spawn';
 import { quickNeedsSync } from '../../utils/sync-cache';
+import { getEmbeddingProgress, isEmbeddingInProgress } from '../../embeddings/index';
 
 // Get count via child process to avoid blocking UI
 function getCountInBackground(): Promise<number> {
   return new Promise((resolve) => {
     const dbPath = getLanceDBPath();
+    // Use dynamic import() to work with both bun -e and node -e
     const script = `
-import * as lancedb from '@lancedb/lancedb';
-try {
-  const db = await lancedb.connect('${dbPath}');
-  const tables = await db.tableNames();
-  if (tables.includes('conversations')) {
-    const table = await db.openTable('conversations');
-    const count = await table.countRows();
-    console.log(count);
-  } else {
+(async () => {
+  const lancedb = await import('@lancedb/lancedb');
+  try {
+    const db = await lancedb.connect('${dbPath}');
+    const tables = await db.tableNames();
+    if (tables.includes('conversations')) {
+      const table = await db.openTable('conversations');
+      const count = await table.countRows();
+      console.log(count);
+    } else {
+      console.log(0);
+    }
+  } catch (e) {
     console.log(0);
   }
-} catch (e) {
-  console.log(0);
-}
-process.exit(0);
+  process.exit(0);
+})();
 `;
 
     let resolved = false;
@@ -116,22 +120,25 @@ function runSyncInBackground(
 function getMessageCountInBackground(): Promise<number> {
   return new Promise((resolve) => {
     const dbPath = getLanceDBPath();
+    // Use dynamic import() to work with both bun -e and node -e
     const script = `
-import * as lancedb from '@lancedb/lancedb';
-try {
-  const db = await lancedb.connect('${dbPath}');
-  const tables = await db.tableNames();
-  if (tables.includes('messages')) {
-    const table = await db.openTable('messages');
-    const count = await table.countRows();
-    console.log(count);
-  } else {
+(async () => {
+  const lancedb = await import('@lancedb/lancedb');
+  try {
+    const db = await lancedb.connect('${dbPath}');
+    const tables = await db.tableNames();
+    if (tables.includes('messages')) {
+      const table = await db.openTable('messages');
+      const count = await table.countRows();
+      console.log(count);
+    } else {
+      console.log(0);
+    }
+  } catch (e) {
     console.log(0);
   }
-} catch (e) {
-  console.log(0);
-}
-process.exit(0);
+  process.exit(0);
+})();
 `;
 
     let resolved = false;
@@ -756,6 +763,18 @@ function UnifiedApp() {
     // Quick check if sync is needed (O(4) stat calls, no LanceDB)
     if (!quickNeedsSync()) {
       setSyncStatus({ phase: 'done' });
+
+      // Even if sync is skipped, check if embedding needs to resume
+      // (e.g., previous embedding was interrupted)
+      const embeddingProgress = getEmbeddingProgress();
+      if (embeddingProgress.status === 'idle' && embeddingProgress.total === 0) {
+        // No embedding in progress and no pending count set - check if there are pending embeddings
+        // This is a lightweight check since we're not doing a full DB scan here
+        // The embed worker will do the full check when it starts
+        if (!isEmbeddingInProgress()) {
+          spawnBackgroundCommand('embed');
+        }
+      }
       return;
     }
 
