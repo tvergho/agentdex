@@ -292,6 +292,39 @@ async function runBackgroundEmbedding(): Promise<void> {
     return;
   }
 
+  // Set up graceful shutdown handlers
+  let isShuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    console.log(`\n[embed] Received ${signal}, cleaning up...`);
+    try {
+      // Stop llama-server first
+      await stopLlamaServer();
+
+      // Rebuild FTS index so search works with partial embeddings
+      console.log('[embed] Rebuilding FTS index...');
+      await rebuildFtsIndex();
+
+      // Update progress to show interrupted state
+      const progress = getEmbeddingProgress();
+      setEmbeddingProgress({
+        ...progress,
+        status: 'error',
+        error: `Interrupted by ${signal}`,
+      });
+    } catch (err) {
+      console.error('[embed] Error during cleanup:', err);
+    } finally {
+      releaseEmbedLock();
+      process.exit(0);
+    }
+  };
+
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
   // Immediately mark as in-progress to prevent race conditions with other dex instances
   // This must happen BEFORE any async work to ensure other processes see it
   setEmbeddingProgress({

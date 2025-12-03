@@ -39,6 +39,18 @@ export function isTransientError(error: unknown): boolean {
 }
 
 /**
+ * Check if an error indicates a corrupted FTS index (fragment not found).
+ * This happens when the FTS index references data that was deleted or compacted.
+ */
+export function isFragmentNotFoundError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message;
+    return msg.includes('fragment id') && msg.includes('does not exist');
+  }
+  return false;
+}
+
+/**
  * Retry a LanceDB operation with exponential backoff on transient errors.
  * This handles commit conflicts and race conditions during concurrent read/write operations.
  */
@@ -411,6 +423,26 @@ export async function rebuildFtsIndex(): Promise<void> {
     config: lancedb.Index.fts(),
     replace: true,
   });
+}
+
+/**
+ * Repair FTS index by compacting, cleaning up old versions, and rebuilding.
+ * Call this when you encounter a fragment-not-found error during search.
+ * This is safe to call at any time and will fix index corruption issues.
+ */
+export async function repairFtsIndex(): Promise<void> {
+  console.error('[db] Repairing FTS index...');
+
+  // Step 1: Compact the table to materialize any deletions
+  await compactMessagesTable();
+
+  // Step 2: Clean up old versions that the index might be referencing
+  await cleanupOldVersions();
+
+  // Step 3: Rebuild the FTS index from current data
+  await rebuildFtsIndex();
+
+  console.error('[db] FTS index repair complete');
 }
 
 /**

@@ -9,6 +9,8 @@ import {
   getFileEditsTable,
   withRetry,
   isTransientError,
+  isFragmentNotFoundError,
+  repairFtsIndex,
   stripToolOutputs,
 } from './index';
 import {
@@ -692,7 +694,13 @@ export const messageRepo = {
           });
         return { matches, mode: 'hybrid' as const };
       } catch (err) {
-        // Re-throw transient errors so withRetry can handle them
+        // Check for corrupted FTS index (fragment not found) - repair and rethrow to retry
+        if (isFragmentNotFoundError(err)) {
+          console.error('[search] Detected corrupted FTS index, repairing...');
+          await repairFtsIndex();
+          throw err; // Rethrow so withRetry will retry with repaired index
+        }
+        // Re-throw other transient errors so withRetry can handle them
         if (isTransientError(err)) throw err;
         // Fallback to FTS-only if vector search unavailable
       }
@@ -727,7 +735,13 @@ export const messageRepo = {
           });
         return { matches, mode: 'fts' as const };
       } catch (err) {
-        // Re-throw transient errors so withRetry can handle them
+        // Check for corrupted FTS index (fragment not found) - repair and rethrow to retry
+        if (isFragmentNotFoundError(err)) {
+          console.error('[search] Detected corrupted FTS index, repairing...');
+          await repairFtsIndex();
+          throw err; // Rethrow so withRetry will retry with repaired index
+        }
+        // Re-throw other transient errors so withRetry can handle them
         if (isTransientError(err)) throw err;
         // FTS index might be invalid, fall back to substring matching
       }
