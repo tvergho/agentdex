@@ -9,7 +9,7 @@
  * Uses llama-server for fast GPU-accelerated batch embedding
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withRetry } from '../../db/index';
 import {
   downloadModel,
   getModelPath,
@@ -104,7 +104,9 @@ interface MessageRow {
 
 async function getAllMessagesNeedingEmbedding(): Promise<MessageRow[]> {
   const table = await getMessagesTable();
-  const allMessages = await table.query().toArray();
+  // Use withRetry to handle transient LanceDB errors (e.g., "Not found" when files
+  // are cleaned up during concurrent sync/optimize operations)
+  const allMessages = await withRetry(() => table.query().toArray());
 
   // Filter messages that have zero vectors or wrong dimensions (model changed)
   return allMessages.filter((row) => {
@@ -465,7 +467,7 @@ async function runAutoBenchmark(): Promise<void> {
 
   // Get sample messages
   const table = await getMessagesTable();
-  const allMessages = await table.query().limit(200).toArray() as MessageRow[];
+  const allMessages = await withRetry(() => table.query().limit(200).toArray()) as MessageRow[];
 
   if (allMessages.length < 20) {
     console.log('  Not enough messages to benchmark, using defaults');
@@ -545,7 +547,7 @@ async function runBenchmark(): Promise<void> {
 
   // Get sample messages for testing
   const table = await getMessagesTable();
-  const allMessages = await table.query().limit(200).toArray() as MessageRow[];
+  const allMessages = await withRetry(() => table.query().limit(200).toArray()) as MessageRow[];
 
   if (allMessages.length < 50) {
     console.log('Not enough messages to benchmark (need at least 50). Run sync first.');
@@ -628,7 +630,7 @@ async function runBenchmark(): Promise<void> {
 
   // Estimate time for full embedding
   const messagesTable = await getMessagesTable();
-  const totalMessages = (await messagesTable.query().toArray()).length;
+  const totalMessages = (await withRetry(() => messagesTable.query().toArray())).length;
   const estimatedMinutes = Math.ceil(totalMessages / recommended.throughput / 60);
   console.log(`\n📊 With ${totalMessages} messages, estimated embedding time: ~${estimatedMinutes} minutes`);
 }
