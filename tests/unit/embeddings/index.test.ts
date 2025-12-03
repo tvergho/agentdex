@@ -148,19 +148,27 @@ describe('clearEmbeddingProgress', () => {
 });
 
 describe('isEmbeddingInProgress', () => {
+  // Note: isEmbeddingInProgress now also checks for actual running processes,
+  // not just status file. In tests without actual processes running, it returns
+  // false for 'downloading'/'embedding' status because no process is found.
+
   it('returns false for idle status', () => {
     setEmbeddingProgress({ status: 'idle', total: 0, completed: 0 });
     expect(isEmbeddingInProgress()).toBe(false);
   });
 
-  it('returns true for downloading status', () => {
+  it('returns false for downloading status when no process is running', () => {
+    // In test environment, no actual embed process is running
+    // so this should return false even with 'downloading' status
     setEmbeddingProgress({ status: 'downloading', total: 100, completed: 50 });
-    expect(isEmbeddingInProgress()).toBe(true);
+    expect(isEmbeddingInProgress()).toBe(false);
   });
 
-  it('returns true for embedding status', () => {
+  it('returns false for embedding status when no process is running', () => {
+    // In test environment, no actual embed process is running
+    // so this should return false even with 'embedding' status
     setEmbeddingProgress({ status: 'embedding', total: 100, completed: 50 });
-    expect(isEmbeddingInProgress()).toBe(true);
+    expect(isEmbeddingInProgress()).toBe(false);
   });
 
   it('returns false for done status', () => {

@@ -191,7 +191,52 @@ export function clearEmbeddingProgress(): void {
 }
 
 // Check if embedding is currently in progress
+// Returns false if no embedding process is running, even if status shows 'embedding'
+// (handles the case where a previous process crashed)
 export function isEmbeddingInProgress(): boolean {
   const progress = getEmbeddingProgress();
-  return progress.status === 'downloading' || progress.status === 'embedding';
+  if (progress.status !== 'downloading' && progress.status !== 'embedding') {
+    return false;
+  }
+
+  // Check if the embedding process is actually still running by checking for llama-server
+  // or embed.ts processes. If no process is running, the status file is stale.
+  try {
+    // Use pgrep to check for running embed.ts or llama-server processes
+    // This is a lightweight check that doesn't require spawning a shell
+    const { execSync } = require('child_process');
+    if (process.platform !== 'win32') {
+      try {
+        execSync('pgrep -f "bun.*embed\\.ts" 2>/dev/null', { stdio: 'pipe' });
+        return true; // Process found
+      } catch {
+        // No embed.ts process found, check llama-server
+        try {
+          execSync('pgrep -f "llama-server" 2>/dev/null', { stdio: 'pipe' });
+          return true; // Process found
+        } catch {
+          // No embedding processes found - status is stale
+          return false;
+        }
+      }
+    } else {
+      // On Windows, use tasklist to check for processes
+      try {
+        execSync('tasklist /FI "IMAGENAME eq bun.exe" /FI "WINDOWTITLE eq *embed.ts*" 2>nul', { stdio: 'pipe' });
+        return true; // Process found
+      } catch {
+        try {
+          execSync('tasklist /FI "IMAGENAME eq llama-server.exe" 2>nul', { stdio: 'pipe' });
+          return true; // Process found
+        } catch {
+          // No embedding processes found - status is stale
+          return false;
+        }
+      }
+    }
+  } catch {
+    // On error checking for processes, assume no process is running
+    // (safer to return false than true when we can't verify)
+    return false;
+  }
 }

@@ -16,6 +16,7 @@ import {
   setEmbeddingProgress,
   getEmbeddingProgress,
   isEmbeddingInProgress,
+  clearEmbeddingProgress,
   EMBEDDING_DIMENSIONS,
 } from '../../embeddings/index';
 import {
@@ -261,11 +262,15 @@ async function runWithServer(
 
 
 async function runBackgroundEmbedding(): Promise<void> {
-  // Check if already in progress (prevent duplicate runs)
+  // Check if another embedding process is actually running
+  // isEmbeddingInProgress now checks for actual processes, not just status file
   if (isEmbeddingInProgress()) {
     console.log('Embedding already in progress, exiting');
     return;
   }
+
+  // Clear any stale progress state from crashed runs
+  clearEmbeddingProgress();
 
   try {
     await connect();

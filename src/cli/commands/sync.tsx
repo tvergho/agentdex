@@ -594,9 +594,9 @@ export async function runSync(
     progress.currentProject = undefined;
     onProgress({ ...progress });
 
-    // Force exit after a brief delay to let UI render and embed process spawn
-    // This avoids LanceDB native binding cleanup crash
-    setTimeout(() => process.exit(0), 1000);
+    // Note: We no longer force exit here. The caller (SyncApp) will handle process exit
+    // after the UI has properly rendered. This avoids race conditions where the embed
+    // process spawn might not complete before exit.
   } catch (error) {
     progress.phase = 'error';
     progress.error = error instanceof Error ? error.message : String(error);
@@ -619,9 +619,16 @@ function SyncApp({ options }: { options: SyncOptions }) {
   });
 
   useEffect(() => {
-    runSync(options, setProgress).catch(() => {
-      // Error is already captured in progress
-    });
+    runSync(options, setProgress)
+      .then(() => {
+        // Give UI time to render final state, then exit
+        // The embed process is already spawned and detached by runSync
+        setTimeout(() => process.exit(0), 500);
+      })
+      .catch(() => {
+        // Error is already captured in progress, exit with error code
+        setTimeout(() => process.exit(1), 500);
+      });
   }, []);
 
   return <SyncUI progress={progress} />;

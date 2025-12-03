@@ -231,32 +231,34 @@ export const conversationRepo = {
   },
 
   async findById(id: string): Promise<Conversation | null> {
-    const table = await getConversationsTable();
-    const results = await table.query().where(`id = '${id}'`).limit(1).toArray();
+    return withRetry(async () => {
+      const table = await getConversationsTable();
+      const results = await table.query().where(`id = '${id}'`).limit(1).toArray();
 
-    if (results.length === 0) return null;
+      if (results.length === 0) return null;
 
-    const row = results[0]!;
-    return {
-      id: row.id as string,
-      source: row.source as Conversation['source'],
-      title: row.title as string,
-      subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspace_path as string) || undefined,
-      projectName: (row.project_name as string) || undefined,
-      model: (row.model as string) || undefined,
-      mode: (row.mode as string) || undefined,
-      createdAt: (row.created_at as string) || undefined,
-      updatedAt: (row.updated_at as string) || undefined,
-      messageCount: (row.message_count as number) || 0,
-      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-      totalInputTokens: (row.total_input_tokens as number) || undefined,
-      totalOutputTokens: (row.total_output_tokens as number) || undefined,
-      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-      totalLinesAdded: (row.total_lines_added as number) || undefined,
-      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-    };
+      const row = results[0]!;
+      return {
+        id: row.id as string,
+        source: row.source as Conversation['source'],
+        title: row.title as string,
+        subtitle: (row.subtitle as string) || undefined,
+        workspacePath: (row.workspace_path as string) || undefined,
+        projectName: (row.project_name as string) || undefined,
+        model: (row.model as string) || undefined,
+        mode: (row.mode as string) || undefined,
+        createdAt: (row.created_at as string) || undefined,
+        updatedAt: (row.updated_at as string) || undefined,
+        messageCount: (row.message_count as number) || 0,
+        sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
+        totalInputTokens: (row.total_input_tokens as number) || undefined,
+        totalOutputTokens: (row.total_output_tokens as number) || undefined,
+        totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+        totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+        totalLinesAdded: (row.total_lines_added as number) || undefined,
+        totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+      };
+    });
   },
 
   async list(opts: {
@@ -265,60 +267,64 @@ export const conversationRepo = {
     source?: string;
     model?: string;
   } = {}): Promise<Conversation[]> {
-    const table = await getConversationsTable();
+    return withRetry(async () => {
+      const table = await getConversationsTable();
 
-    // Fetch all to sort properly (LanceDB doesn't support ORDER BY)
-    const results = await table.query().toArray();
+      // Fetch all to sort properly (LanceDB doesn't support ORDER BY)
+      const results = await table.query().toArray();
 
-    // Filter by source and/or model if specified
-    let filtered = results;
-    if (opts.source) {
-      filtered = filtered.filter((row) => (row.source as string) === opts.source);
-    }
-    if (opts.model) {
-      const modelLower = opts.model.toLowerCase();
-      filtered = filtered.filter((row) => {
-        const model = (row.model as string) || '';
-        return model.toLowerCase().includes(modelLower);
+      // Filter by source and/or model if specified
+      let filtered = results;
+      if (opts.source) {
+        filtered = filtered.filter((row) => (row.source as string) === opts.source);
+      }
+      if (opts.model) {
+        const modelLower = opts.model.toLowerCase();
+        filtered = filtered.filter((row) => {
+          const model = (row.model as string) || '';
+          return model.toLowerCase().includes(modelLower);
+        });
+      }
+
+      // Sort by updated_at descending (most recent first)
+      filtered.sort((a, b) => {
+        const aDate = (a.updated_at as string) || '';
+        const bDate = (b.updated_at as string) || '';
+        return bDate.localeCompare(aDate);
       });
-    }
 
-    // Sort by updated_at descending (most recent first)
-    filtered.sort((a, b) => {
-      const aDate = (a.updated_at as string) || '';
-      const bDate = (b.updated_at as string) || '';
-      return bDate.localeCompare(aDate);
+      // Apply limit after sorting (no limit by default)
+      const limited = opts.limit ? filtered.slice(0, opts.limit) : filtered;
+
+      return limited.map((row) => ({
+        id: row.id as string,
+        source: row.source as Conversation['source'],
+        title: row.title as string,
+        subtitle: (row.subtitle as string) || undefined,
+        workspacePath: (row.workspace_path as string) || undefined,
+        projectName: (row.project_name as string) || undefined,
+        model: (row.model as string) || undefined,
+        mode: (row.mode as string) || undefined,
+        createdAt: (row.created_at as string) || undefined,
+        updatedAt: (row.updated_at as string) || undefined,
+        messageCount: (row.message_count as number) || 0,
+        sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
+        totalInputTokens: (row.total_input_tokens as number) || undefined,
+        totalOutputTokens: (row.total_output_tokens as number) || undefined,
+        totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+        totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+        totalLinesAdded: (row.total_lines_added as number) || undefined,
+        totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+      }));
     });
-
-    // Apply limit after sorting (no limit by default)
-    const limited = opts.limit ? filtered.slice(0, opts.limit) : filtered;
-
-    return limited.map((row) => ({
-      id: row.id as string,
-      source: row.source as Conversation['source'],
-      title: row.title as string,
-      subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspace_path as string) || undefined,
-      projectName: (row.project_name as string) || undefined,
-      model: (row.model as string) || undefined,
-      mode: (row.mode as string) || undefined,
-      createdAt: (row.created_at as string) || undefined,
-      updatedAt: (row.updated_at as string) || undefined,
-      messageCount: (row.message_count as number) || 0,
-      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-      totalInputTokens: (row.total_input_tokens as number) || undefined,
-      totalOutputTokens: (row.total_output_tokens as number) || undefined,
-      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-      totalLinesAdded: (row.total_lines_added as number) || undefined,
-      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-    }));
   },
 
   async count(): Promise<number> {
-    const table = await getConversationsTable();
-    const results = await table.query().select(['id']).toArray();
-    return results.length;
+    return withRetry(async () => {
+      const table = await getConversationsTable();
+      const results = await table.query().select(['id']).toArray();
+      return results.length;
+    });
   },
 
   async delete(id: string): Promise<void> {
@@ -532,8 +538,10 @@ export const conversationRepo = {
 
 export const messageRepo = {
   async count(): Promise<number> {
-    const table = await getMessagesTable();
-    return table.countRows();
+    return withRetry(async () => {
+      const table = await getMessagesTable();
+      return table.countRows();
+    });
   },
 
   async getExistingIds(conversationId: string): Promise<Set<string>> {

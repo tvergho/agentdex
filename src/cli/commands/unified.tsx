@@ -758,16 +758,11 @@ function UnifiedApp() {
     if (!quickNeedsSync()) {
       setSyncStatus({ phase: 'done' });
 
-      // Even if sync is skipped, check if embedding needs to resume
-      // (e.g., previous embedding was interrupted)
-      const embeddingProgress = getEmbeddingProgress();
-      if (embeddingProgress.status === 'idle' && embeddingProgress.total === 0) {
-        // No embedding in progress and no pending count set - check if there are pending embeddings
-        // This is a lightweight check since we're not doing a full DB scan here
-        // The embed worker will do the full check when it starts
-        if (!isEmbeddingInProgress()) {
-          spawnBackgroundCommand('embed');
-        }
+      // Even if sync is skipped, always spawn embed worker
+      // It will check for pending embeddings and exit quickly if none needed
+      // This handles: interrupted embeddings, first-run after model download, etc.
+      if (!isEmbeddingInProgress()) {
+        spawnBackgroundCommand('embed');
       }
       return;
     }
@@ -775,6 +770,7 @@ function UnifiedApp() {
     setSyncStatus({ phase: 'syncing', message: 'Syncing...' });
 
     // Run sync in separate child process to avoid blocking UI
+    // Note: sync process will spawn embed worker when it completes
     runSyncInBackground((result, error) => {
       if (result) {
         setConversationCount(result.newCount);
@@ -800,19 +796,22 @@ function UnifiedApp() {
           setFirstLoadProgress(progress);
         });
 
-        if (result) {
-          setConversationCount(result.newCount);
+        // First sync complete (or failed) - connect to DB and show UI
+        // Even if sync failed, we should still show the UI so user can retry
+        try {
+          await connect();
+          setDbReady(true);
+          const count = await conversationRepo.count();
+          setConversationCount(result?.newCount ?? count);
+          setFirstLoadComplete(true);
+          setSyncStatus({ phase: 'done', newConversations: result?.newCount ?? count });
+          // Pre-warm llama-server for fast searches
+          warmupQueryServer();
+        } catch (err) {
+          // DB connection failed - still show UI
+          setFirstLoadComplete(true);
+          setSyncStatus({ phase: 'error', message: err instanceof Error ? err.message : 'DB connection failed' });
         }
-
-        // First sync complete - connect to DB and show UI
-        await connect();
-        setDbReady(true);
-        const count = await conversationRepo.count();
-        setConversationCount(count);
-        setFirstLoadComplete(true);
-        setSyncStatus({ phase: 'done', newConversations: count });
-        // Pre-warm llama-server for fast searches
-        warmupQueryServer();
       } else {
         // Not first load - show UI immediately and sync in background
         setIsFirstLoad(false);
