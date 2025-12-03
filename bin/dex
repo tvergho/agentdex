@@ -2,4 +2,15 @@
 # Wrapper to set LANCEDB_LOG before running dex
 # This suppresses LanceDB deprecation warnings from the Rust layer
 export LANCEDB_LOG="${LANCEDB_LOG:-error}"
-exec node "$(dirname "$0")/../dist/index.js" "$@"
+
+# Resolve symlinks to find the actual script location
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  # If SOURCE is relative, resolve it relative to the symlink's directory
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+exec node "$SCRIPT_DIR/../dist/index.js" "$@"
