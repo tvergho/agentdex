@@ -17,8 +17,11 @@ import {
   getClaudeCodeCredentialStatus,
   getCodexCredentialStatus,
   runCodexAuth,
+  ensureOpenCodeConfig,
+  testConnection,
   type CredentialStatus,
   type CodexCredentialStatus,
+  type TestResult,
 } from '../../providers/index.js';
 import {
   countUntitledBySource,
@@ -83,6 +86,7 @@ function ConfigApp() {
   const [generatingProvider, setGeneratingProvider] = useState<ProviderId | null>(null);
   const [recentlyGeneratedIds, setRecentlyGeneratedIds] = useState<{ provider: ProviderId; ids: string[] } | null>(null);
   const [frame, setFrame] = useState(0);
+  const [testingProvider, setTestingProvider] = useState<'anthropic' | 'openai' | null>(null);
   const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
   // Throttle progress updates to reduce flickering
@@ -138,6 +142,13 @@ function ConfigApp() {
     });
 
     menuItems.push({
+      id: 'claude-test',
+      label: 'Test Connection',
+      type: 'action',
+      section: 'claude-code',
+    });
+
+    menuItems.push({
       id: 'claude-disconnect',
       label: 'Disconnect',
       type: 'button',
@@ -179,6 +190,13 @@ function ConfigApp() {
       label: 'Auto-enrich titles on sync',
       type: 'toggle',
       value: config.providers.codex.autoEnrichSummaries,
+      section: 'codex',
+    });
+
+    menuItems.push({
+      id: 'codex-test',
+      label: 'Test Connection',
+      type: 'action',
       section: 'codex',
     });
 
@@ -263,6 +281,12 @@ function ConfigApp() {
       }
       // Codex actions
       else if (item.id === 'codex-connect') {
+        // Ensure OpenCode has the Codex plugin configured before auth
+        const configCreated = ensureOpenCodeConfig();
+        if (configCreated) {
+          setToast({ message: 'Configured OpenCode with Codex plugin...', type: 'info' });
+        }
+
         // Check if we need to authenticate
         const currentStatus = getCodexCredentialStatus();
         if (!currentStatus.isAuthenticated) {
@@ -311,6 +335,32 @@ function ConfigApp() {
           autoEnrichSummaries: !config.providers.codex.autoEnrichSummaries,
         });
         setConfig(newConfig);
+      }
+      // Test connection actions
+      else if (item.id === 'claude-test') {
+        setTestingProvider('anthropic');
+        setToast({ message: 'Testing Claude Code connection...', type: 'info' });
+
+        const result = await testConnection('anthropic');
+        setTestingProvider(null);
+
+        if (result.success) {
+          setToast({ message: result.message, type: 'success' });
+        } else {
+          setToast({ message: result.message, type: 'error' });
+        }
+      } else if (item.id === 'codex-test') {
+        setTestingProvider('openai');
+        setToast({ message: 'Testing Codex connection...', type: 'info' });
+
+        const result = await testConnection('openai');
+        setTestingProvider(null);
+
+        if (result.success) {
+          setToast({ message: result.message, type: 'success' });
+        } else {
+          setToast({ message: result.message, type: 'error' });
+        }
       }
       // Title generation actions (provider-specific)
       else if (item.id === 'claude-generate' || item.id === 'codex-generate') {
@@ -428,12 +478,12 @@ function ConfigApp() {
     }
   }, [toast]);
 
-  // Spinner animation for generation
+  // Spinner animation for generation/testing
   useEffect(() => {
-    if (!generationProgress && !authenticating) return;
+    if (!generationProgress && !authenticating && !testingProvider) return;
     const timer = setInterval(() => setFrame((f) => (f + 1) % spinner.length), 120);
     return () => clearInterval(timer);
-  }, [generationProgress, authenticating, spinner.length]);
+  }, [generationProgress, authenticating, testingProvider, spinner.length]);
 
   if (loading) {
     return (
@@ -503,6 +553,8 @@ function ConfigApp() {
           const isDisconnect = item.id === 'claude-disconnect';
           const isGenerate = item.id === 'claude-generate';
           const isReset = item.id === 'claude-reset';
+          const isTest = item.id === 'claude-test';
+          const isTesting = isTest && testingProvider === 'anthropic';
 
           return (
             <Box key={item.id}>
@@ -511,8 +563,9 @@ function ConfigApp() {
               {item.type === 'toggle' && (
                 <Text color={item.value ? 'green' : 'gray'}>[{item.value ? '✓' : ' '}] </Text>
               )}
-              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isGenerate ? 'magenta' : isReset ? 'yellow' : 'white'}>
-                {item.label}
+              {isTesting && <Text color="cyan">{spinner[frame]} </Text>}
+              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isGenerate ? 'magenta' : isReset ? 'yellow' : isTest ? 'blue' : 'white'}>
+                {isTesting ? 'Testing...' : item.label}
               </Text>
             </Box>
           );
@@ -591,6 +644,8 @@ function ConfigApp() {
           const isConnect = item.id === 'codex-connect';
           const isGenerate = item.id === 'codex-generate';
           const isReset = item.id === 'codex-reset';
+          const isTest = item.id === 'codex-test';
+          const isTesting = isTest && testingProvider === 'openai';
 
           return (
             <Box key={item.id}>
@@ -599,8 +654,9 @@ function ConfigApp() {
               {item.type === 'toggle' && (
                 <Text color={item.value ? 'green' : 'gray'}>[{item.value ? '✓' : ' '}] </Text>
               )}
-              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isConnect ? 'green' : isGenerate ? 'magenta' : isReset ? 'yellow' : 'white'}>
-                {item.label}
+              {isTesting && <Text color="cyan">{spinner[frame]} </Text>}
+              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isConnect ? 'green' : isGenerate ? 'magenta' : isReset ? 'yellow' : isTest ? 'blue' : 'white'}>
+                {isTesting ? 'Testing...' : item.label}
               </Text>
             </Box>
           );
