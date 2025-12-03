@@ -542,7 +542,7 @@ function HomeScreen({
   height: number;
   searchQuery: string;
   syncStatus: SyncStatus;
-  conversationCount: number;
+  conversationCount: number | null;
   isSearching: boolean;
   searchError: string | null;
 }) {
@@ -567,7 +567,10 @@ function HomeScreen({
       case 'error':
         return <Text color="red">✗ {syncStatus.message}</Text>;
       default:
-        return <Text color="gray">{conversationCount} conversations</Text>;
+        // Show count only after loaded to avoid visual bounce
+        return conversationCount !== null
+          ? <Text color="gray">{conversationCount} conversations</Text>
+          : <Text color="gray"> </Text>;
     }
   };
 
@@ -649,7 +652,7 @@ function UnifiedApp() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResponse | null>(null);
   const [dbReady, setDbReady] = useState(false);
-  const [conversationCount, setConversationCount] = useState(0);
+  const [conversationCount, setConversationCount] = useState<number | null>(null);
 
   // Input state
   const [searchQuery, setSearchQuery] = useState('');

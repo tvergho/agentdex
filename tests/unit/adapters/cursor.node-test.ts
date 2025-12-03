@@ -108,7 +108,7 @@ describe('Cursor parser', () => {
     const conversation = createMockConversation('comp-1', bubbles, { name: 'Greeting Chat' });
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations.length, 1);
     assert.strictEqual(conversations[0]!.name, 'Greeting Chat');
@@ -127,7 +127,7 @@ describe('Cursor parser', () => {
     );
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations[0]!.mode, 'agent');
   });
@@ -141,7 +141,7 @@ describe('Cursor parser', () => {
     );
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations[0]!.model, 'gpt-4-turbo');
   });
@@ -157,7 +157,7 @@ describe('Cursor parser', () => {
     const conversation = createMockConversation('comp-1', bubbles);
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     // Input tokens = MAX (peak context), output = SUM
     assert.strictEqual(conversations[0]!.totalInputTokens, 800);
@@ -173,7 +173,7 @@ describe('Cursor parser', () => {
     );
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations[0]!.files.length, 2);
     assert.strictEqual(conversations[0]!.files[0]!.path, '/home/user/project/src/index.ts');
@@ -191,7 +191,7 @@ describe('Cursor parser', () => {
     const conversation = createMockConversation('comp-1', bubbles);
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     const apiFile = conversations[0]!.files.find((f) => f.path === '/home/user/project/src/api.ts');
     assert.ok(apiFile);
@@ -204,7 +204,7 @@ describe('Cursor parser', () => {
     const conv2 = createMockConversation('comp-2', [createMockBubble('user', 'Second')], { name: 'Second Chat' });
     
     await createDatabase(dbPath, [conv1, conv2]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations.length, 2);
     const names = conversations.map((c) => c.name).sort();
@@ -217,7 +217,7 @@ describe('Cursor parser', () => {
     const validConv = createMockConversation('comp-2', [createMockBubble('user', 'Hello')], { name: 'Valid' });
     
     await createDatabase(dbPath, [emptyConv, validConv]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations.length, 1);
     assert.strictEqual(conversations[0]!.name, 'Valid');
@@ -229,7 +229,7 @@ describe('Cursor parser', () => {
     delete (conversation as any).name;
     
     await createDatabase(dbPath, [conversation]);
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations[0]!.name, 'Untitled');
   });
@@ -245,7 +245,7 @@ describe('Cursor parser', () => {
     insert.run('composerData:good', JSON.stringify(validConv));
     db.close();
 
-    const conversations = extractConversations(dbPath);
+    const conversations = await extractConversations(dbPath);
 
     assert.strictEqual(conversations.length, 1);
     assert.strictEqual(conversations[0]!.name, 'Valid');
