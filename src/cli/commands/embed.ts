@@ -93,6 +93,10 @@ const FTS_REBUILD_EVERY_BATCH = true;
 // Without cleanup, embedding 13K messages creates ~400 versions = 400x bloat!
 const CLEANUP_EVERY_N_BATCHES = 10;
 
+// Rebuild vector index every N messages to enable semantic search during embedding
+// Without this, vector search works but does brute-force scan until embedding completes
+const VECTOR_INDEX_REBUILD_EVERY_N_MESSAGES = 500;
+
 // Database row structure (snake_case column names)
 interface MessageRow {
   id: string;
@@ -237,6 +241,15 @@ async function runWithServer(
       const batchNumber = Math.floor(i / SERVER_BATCH_SIZE) + 1;
       if (batchNumber % CLEANUP_EVERY_N_BATCHES === 0) {
         await cleanupOldVersions();
+      }
+
+      // Rebuild vector index periodically so semantic search works during embedding
+      const messagesEmbedded = Math.min(i + SERVER_BATCH_SIZE, messages.length);
+      const previousMilestone = Math.floor(i / VECTOR_INDEX_REBUILD_EVERY_N_MESSAGES);
+      const currentMilestone = Math.floor(messagesEmbedded / VECTOR_INDEX_REBUILD_EVERY_N_MESSAGES);
+      if (currentMilestone > previousMilestone) {
+        process.stdout.write(' (rebuilding vector index...)');
+        await rebuildVectorIndex();
       }
 
       // Update progress
