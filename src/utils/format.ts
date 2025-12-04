@@ -537,13 +537,14 @@ export function parseToolOutputsFromContent(content: string): ParsedMessageConte
 
   // Regex to match tool blocks: ---\n**ToolType** `filename` (lineinfo)\n```lang\ncontent\n```
   // The --- separator, optional ### Tool Outputs header, then the tool block
-  const toolBlockRegex = /\n---\n+(?:### Tool Outputs\n+)?\*\*(\w+)\*\*(?:\s+`([^`]+)`)?\s*(?:\(([^)]+)\))?\s*\n```[^\n]*\n([\s\S]*?)```/g;
+  // Supports both 3 and 4 backticks (4 is used when content may contain code blocks)
+  const toolBlockRegex = /\n---\n+(?:### Tool Outputs\n+)?\*\*(\w+)\*\*(?:\s+`([^`]+)`)?\s*(?:\(([^)]+)\))?\s*\n(`{3,4})[^\n]*\n([\s\S]*?)\4/g;
 
   let lastIndex = 0;
   let match;
 
   while ((match = toolBlockRegex.exec(content)) !== null) {
-    const [fullMatch, toolType, fileName, lineInfo, codeContent] = match;
+    const [fullMatch, toolType, fileName, lineInfo, _backticks, codeContent] = match;
     const matchStart = match.index;
 
     // Add text segment before this tool block (if any)

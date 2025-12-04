@@ -27,10 +27,16 @@ interface ClaudeMessage {
   usage?: ClaudeMessageUsage;
 }
 
+// Content in toolUseResult can be a string or an array of text blocks
+interface ToolUseContentBlock {
+  type: string;
+  text?: string;
+}
+
 interface ToolUseResult {
   type?: string; // 'text', 'create', etc.
   filePath?: string;
-  content?: string;
+  content?: string | ToolUseContentBlock[];
   stdout?: string;
   stderr?: string;
   file?: {
@@ -46,6 +52,21 @@ interface ToolUseResult {
   numFiles?: number;
   filenames?: string[];
   numLines?: number;
+}
+
+/**
+ * Extract text from toolUseResult.content which can be a string or an array of text blocks
+ */
+function extractContentText(content: string | ToolUseContentBlock[] | undefined): string | undefined {
+  if (!content) return undefined;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block) => block.type === 'text' && block.text)
+      .map((block) => block.text!)
+      .join('\n');
+  }
+  return undefined;
 }
 
 interface ClaudeEntry {
@@ -184,19 +205,20 @@ function extractTextContent(
         const output = result.stdout ||
                        result.file?.content ||
                        result.newString ||
-                       result.content;
+                       extractContentText(result.content);
 
         if (output) {
           const filePath = result.filePath || result.file?.filePath;
           const fileName = filePath ? filePath.split('/').pop() : '';
 
           // Format as inline tool output block
+          // Use 4 backticks to avoid conflicts with code blocks in the output
           parts.push('');
           parts.push(`---`);
           parts.push(`**${c.name}**${fileName ? ` \`${fileName}\`` : ''}`);
-          parts.push('```');
+          parts.push('````');
           parts.push(output);
-          parts.push('```');
+          parts.push('````');
           parts.push('---');
           parts.push('');
         }
@@ -231,10 +253,10 @@ function extractToolCalls(
       // - Write: content or file.content
       let output: string | undefined;
       if (result) {
-        output = result.stdout || 
-                 result.file?.content || 
+        output = result.stdout ||
+                 result.file?.content ||
                  result.newString ||
-                 result.content;
+                 extractContentText(result.content);
       }
       toolCalls.push({
         id: c.id,

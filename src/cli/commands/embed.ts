@@ -147,7 +147,8 @@ function truncateText(text: string): string {
 function stripToolOutputs(text: string): string {
   // Match tool output blocks: ---\n**ToolName**...\n```...```\n---
   // Use a regex to match these blocks and remove them
-  const toolBlockPattern = /\n---\n\*\*[^*]+\*\*[^\n]*\n```[\s\S]*?```\n---\n?/g;
+  // Supports both 3 and 4 backticks (4 is used when content may contain code blocks)
+  const toolBlockPattern = /\n---\n\*\*[^*]+\*\*[^\n]*\n(`{3,4})[\s\S]*?\1\n---\n?/g;
   return text.replace(toolBlockPattern, '\n').trim();
 }
 

@@ -451,7 +451,8 @@ export async function repairFtsIndex(): Promise<void> {
  * Format: ---\n**ToolName**...\n```...```\n---
  */
 export function stripToolOutputs(text: string): string {
-  const toolBlockPattern = /\n---\n\*\*[^*]+\*\*[^\n]*\n```[\s\S]*?```\n---\n?/g;
+  // Match tool blocks with 3 or 4 backticks (4 is used when content may contain code blocks)
+  const toolBlockPattern = /\n---\n\*\*[^*]+\*\*[^\n]*\n(`{3,4})[\s\S]*?\1\n---\n?/g;
   return text.replace(toolBlockPattern, '\n').trim();
 }
 
