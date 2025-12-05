@@ -9,6 +9,8 @@
 
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
+import { execSync } from 'child_process';
+import { homedir } from 'os';
 
 /**
  * Find the package root by walking up from the entry script
@@ -58,8 +60,31 @@ export function getPackageRoot(): string {
 }
 
 /**
- * Get the path to the opencode binary in node_modules
+ * Find the opencode binary from system PATH or common install locations
  */
 export function getOpencodeBinPath(): string {
-  return join(getPackageRoot(), 'node_modules', '.bin', 'opencode');
+  // Check if opencode is in PATH
+  try {
+    const which = execSync('which opencode', { encoding: 'utf-8' }).trim();
+    if (which) {
+      return which;
+    }
+  } catch {
+    // Not in PATH
+  }
+
+  // Check common installation locations
+  const candidates = [
+    join(homedir(), '.opencode', 'bin', 'opencode'),
+    join(homedir(), '.local', 'share', 'opencode', 'bin', 'opencode'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Fallback to 'opencode' and let spawn fail with a clear error
+  return 'opencode';
 }

@@ -55,7 +55,7 @@ export async function startMcpServer(): Promise<void> {
 
   const server = new McpServer({
     name: 'dex',
-    version: '0.3.1',
+    version: '0.3.2',
   });
 
   // ============ dex_stats ============
