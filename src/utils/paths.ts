@@ -60,10 +60,27 @@ export function getPackageRoot(): string {
 }
 
 /**
- * Find the opencode binary from system PATH or common install locations
+ * Find the opencode binary - bundled with agentdex or from system
  */
 export function getOpencodeBinPath(): string {
-  // Check if opencode is in PATH
+  const packageRoot = getPackageRoot();
+
+  // Check bundled locations (works for both local dev and global installs)
+  const bundledLocations = [
+    // Local dev / npm nested node_modules
+    join(packageRoot, 'node_modules', 'opencode-ai', 'bin', 'opencode'),
+    join(packageRoot, 'node_modules', '.bin', 'opencode'),
+    // Bun global install (hoisted to sibling)
+    join(packageRoot, '..', 'opencode-ai', 'bin', 'opencode'),
+  ];
+
+  for (const loc of bundledLocations) {
+    if (existsSync(loc)) {
+      return loc;
+    }
+  }
+
+  // Fall back to system PATH
   try {
     const which = execSync('which opencode', { encoding: 'utf-8' }).trim();
     if (which) {
@@ -73,18 +90,18 @@ export function getOpencodeBinPath(): string {
     // Not in PATH
   }
 
-  // Check common installation locations
-  const candidates = [
+  // Check common user installation locations
+  const userLocations = [
     join(homedir(), '.opencode', 'bin', 'opencode'),
     join(homedir(), '.local', 'share', 'opencode', 'bin', 'opencode'),
   ];
 
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
+  for (const loc of userLocations) {
+    if (existsSync(loc)) {
+      return loc;
     }
   }
 
-  // Fallback to 'opencode' and let spawn fail with a clear error
+  // Fallback - let spawn fail with a clear error
   return 'opencode';
 }
