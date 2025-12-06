@@ -72,6 +72,10 @@ export class CursorAdapter implements SourceAdapter {
       }
     }
 
+    // Filter to main messages (with content)
+    // Tool-only bubbles (empty text) are excluded from the count to be consistent with other providers
+    const mainBubbles = raw.bubbles.filter((bubble) => bubble.text.trim().length > 0);
+
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
@@ -84,16 +88,13 @@ export class CursorAdapter implements SourceAdapter {
       mode: raw.mode,
       createdAt,
       updatedAt,
-      messageCount: raw.bubbles.length,
+      messageCount: mainBubbles.length,
       sourceRef,
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
     };
-
-    // Filter to main messages (with content)
-    const mainBubbles = raw.bubbles.filter((bubble) => bubble.text.trim().length > 0);
 
     // Propagate stats from tool-only bubbles to the nearest visible assistant bubble
     // Tool-only bubbles (empty text but have tokens/line edits) get filtered out, but we want

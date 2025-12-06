@@ -131,6 +131,10 @@ export class OpenCodeAdapter implements SourceAdapter {
       }
     }
 
+    // Filter to messages with content
+    // Tool-only messages (empty content) are excluded from the count to be consistent with other providers
+    const mainMessages = raw.messages.filter((m) => m.content.trim().length > 0);
+
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
@@ -143,7 +147,7 @@ export class OpenCodeAdapter implements SourceAdapter {
       mode: raw.mode || 'agent', // OpenCode is typically agent mode
       createdAt,
       updatedAt,
-      messageCount: raw.messages.length,
+      messageCount: mainMessages.length,
       sourceRef,
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
@@ -152,9 +156,6 @@ export class OpenCodeAdapter implements SourceAdapter {
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
     };
-
-    // Filter to messages with content
-    const mainMessages = raw.messages.filter((m) => m.content.trim().length > 0);
 
     // Propagate stats from tool-only assistant messages to the nearest visible assistant message
     const mainMessageIds = new Set(mainMessages.map((m) => m.id));
