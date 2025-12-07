@@ -75,6 +75,10 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       }
     }
 
+    // Filter to main messages (non-sidechain with content)
+    // Tool-only messages (empty content) are excluded from the count to be consistent with other providers
+    const mainMessages = raw.messages.filter((m) => !m.isSidechain && m.content.trim().length > 0);
+
     // Build conversation
     const conversation: Conversation = {
       id: conversationId,
@@ -87,7 +91,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       mode: 'agent', // Claude Code is always agent mode
       createdAt,
       updatedAt,
-      messageCount: raw.messages.length,
+      messageCount: mainMessages.length,
       sourceRef,
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
@@ -96,9 +100,6 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
     };
-
-    // Filter to main messages (non-sidechain with content)
-    const mainMessages = raw.messages.filter((m) => !m.isSidechain && m.content.trim().length > 0);
 
     // Propagate stats from tool-only assistant messages to the nearest visible assistant message
     // Tool-only messages (empty content but have tokens/line edits) get filtered out, but we want
