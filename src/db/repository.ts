@@ -185,6 +185,7 @@ export const conversationRepo = {
       total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
       total_lines_added: conv.totalLinesAdded ?? 0,
       total_lines_removed: conv.totalLinesRemoved ?? 0,
+      compact_count: conv.compactCount ?? 0,
     };
 
     if (existing.length > 0) {
@@ -250,6 +251,7 @@ export const conversationRepo = {
       total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
       total_lines_added: conv.totalLinesAdded ?? 0,
       total_lines_removed: conv.totalLinesRemoved ?? 0,
+      compact_count: conv.compactCount ?? 0,
     }));
 
     // Bulk insert all rows
@@ -283,6 +285,7 @@ export const conversationRepo = {
         totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
         totalLinesAdded: (row.total_lines_added as number) || undefined,
         totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+        compactCount: (row.compact_count as number) || undefined,
       };
     });
   },
@@ -372,6 +375,7 @@ export const conversationRepo = {
         totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
         totalLinesAdded: (row.total_lines_added as number) || undefined,
         totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+        compactCount: (row.compact_count as number) || undefined,
       }));
       return { conversations, total };
     });
@@ -442,6 +446,7 @@ export const conversationRepo = {
       totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
       totalLinesAdded: (row.total_lines_added as number) || undefined,
       totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+      compactCount: (row.compact_count as number) || undefined,
     }));
   },
 
@@ -512,6 +517,7 @@ export const conversationRepo = {
       totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
       totalLinesAdded: (row.total_lines_added as number) || undefined,
       totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+      compactCount: (row.compact_count as number) || undefined,
     }));
   },
 
@@ -588,6 +594,7 @@ export const conversationRepo = {
       totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
       totalLinesAdded: (row.total_lines_added as number) || undefined,
       totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+      compactCount: (row.compact_count as number) || undefined,
     }));
   },
 };
@@ -630,6 +637,7 @@ export const messageRepo = {
       cache_read_tokens: msg.cacheReadTokens ?? 0,
       total_lines_added: msg.totalLinesAdded ?? 0,
       total_lines_removed: msg.totalLinesRemoved ?? 0,
+      is_compact_summary: msg.isCompactSummary ?? false,
     }));
 
     await table.add(rows);
@@ -655,6 +663,7 @@ export const messageRepo = {
       cache_read_tokens: msg.cacheReadTokens ?? 0,
       total_lines_added: msg.totalLinesAdded ?? 0,
       total_lines_removed: msg.totalLinesRemoved ?? 0,
+      is_compact_summary: msg.isCompactSummary ?? false,
     }));
 
     await table.add(rows);
@@ -693,6 +702,7 @@ export const messageRepo = {
           cacheReadTokens: (row.cache_read_tokens as number) || undefined,
           totalLinesAdded: (row.total_lines_added as number) || undefined,
           totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+          isCompactSummary: (row.is_compact_summary as boolean) || undefined,
         }))
         .sort((a, b) => a.messageIndex - b.messageIndex);
     });

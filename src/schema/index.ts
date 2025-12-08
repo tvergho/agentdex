@@ -78,6 +78,8 @@ export const Message = z.object({
   // Line edit tracking (aggregated from file_edits)
   totalLinesAdded: z.number().optional(),
   totalLinesRemoved: z.number().optional(),
+  // Compact summary flag (Claude Code only) - marks messages that are context restoration summaries
+  isCompactSummary: z.boolean().optional(),
 });
 export type Message = z.infer<typeof Message>;
 
@@ -115,6 +117,8 @@ export const Conversation = z.object({
   // Line edit tracking (aggregated from file_edits)
   totalLinesAdded: z.number().optional(),
   totalLinesRemoved: z.number().optional(),
+  // Context compaction tracking (Claude Code only)
+  compactCount: z.number().optional(),
 });
 export type Conversation = z.infer<typeof Conversation>;
 

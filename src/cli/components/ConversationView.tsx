@@ -100,6 +100,9 @@ export function ConversationView({
         </Text>
         <Text>
           <Text color="gray">{formatMessageCount(messages.length)} · {paginationInfo}</Text>
+          {conversation.compactCount && conversation.compactCount > 0 && (
+            <Text color="yellow"> · ⟳{conversation.compactCount} compacted</Text>
+          )}
           {tokenTotals && <Text color="cyan"> · {tokenTotals}</Text>}
           {lineCountTotals && (
             <>
@@ -119,8 +122,11 @@ export function ConversationView({
           const actualIdx = scrollOffset + idx;
           const isHighlighted = actualIdx === highlightMessageIndex;
           const isSelected = actualIdx === selectedIndex;
-          const roleLabel = getRoleLabel(msg.role);
-          const roleColor = getRoleColor(msg.role);
+          const isCompactSummary = msg.isCompactSummary;
+
+          // For compact summaries, show special styling
+          const roleLabel = isCompactSummary ? '📋 Summary' : getRoleLabel(msg.role);
+          const roleColor = isCompactSummary ? 'yellow' : getRoleColor(msg.role);
 
           // Get files for all messages in this combined group
           const msgFiles = messageFiles.filter((f) => msg.messageIds.includes(f.messageId));
@@ -151,17 +157,21 @@ export function ConversationView({
             <Box
               key={msg.messageIds[0]}
               flexDirection="column"
-              height={3}
+              height={isCompactSummary ? 4 : 3}
             >
+              {/* Compact separator line before compact summary messages */}
+              {isCompactSummary && (
+                <Text color="yellow">{'─'.repeat(Math.floor(width * 0.3))} ⟳ CONTEXT COMPACTED {'─'.repeat(Math.floor(width * 0.3))}</Text>
+              )}
               <Box>
                 <Text backgroundColor={isSelected ? 'cyan' : isHighlighted ? 'yellow' : undefined} color={showIndicator ? 'black' : undefined}>
                   {isSelected ? ' ▸ ' : isHighlighted ? ' ★ ' : '   '}
                 </Text>
-                <Box width={14}>
+                <Box width={isCompactSummary ? 16 : 14}>
                   <Text color={roleColor} bold>
                     {roleLabel}
                   </Text>
-                  <Text color="gray"> #{msg.combinedIndex + 1}</Text>
+                  {!isCompactSummary && <Text color="gray"> #{msg.combinedIndex + 1}</Text>}
                 </Box>
                 {filesDisplay && (
                   <Text color="gray" wrap="truncate"> ({filesDisplay})</Text>
@@ -177,7 +187,7 @@ export function ConversationView({
                 )}
               </Box>
               <Box marginLeft={3}>
-                <Text bold={isSelected || isHighlighted} wrap="truncate">
+                <Text bold={isSelected || isHighlighted} color={isCompactSummary ? 'yellow' : undefined} wrap="truncate">
                   {truncatedContent}
                   {isTruncated && <Text color="gray"> ({totalLines} lines)</Text>}
                 </Text>

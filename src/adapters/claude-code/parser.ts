@@ -83,6 +83,8 @@ interface ClaudeEntry {
   message?: ClaudeMessage;
   summary?: string;
   toolUseResult?: ToolUseResult;
+  // Compact summary flag - marks messages that are context restoration summaries
+  isCompactSummary?: boolean;
 }
 
 // Parsed/normalized types
@@ -102,6 +104,8 @@ export interface RawMessage {
   cacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
+  // Compact summary flag - marks messages that are context restoration summaries
+  isCompactSummary?: boolean;
 }
 
 export interface RawToolCall {
@@ -143,6 +147,8 @@ export interface RawConversation {
   totalCacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
+  // Number of context compactions in this conversation
+  compactCount?: number;
 }
 
 /**
@@ -495,6 +501,7 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
         cacheReadTokens: usage?.cache_read_input_tokens,
         totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
         totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
+        isCompactSummary: entry.isCompactSummary,
       });
     }
 
@@ -523,6 +530,9 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
     const totalLinesAdded = allEdits.reduce((sum, e) => sum + e.linesAdded, 0);
     const totalLinesRemoved = allEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
 
+    // Count compact summaries
+    const compactCount = messages.filter((m) => m.isCompactSummary).length;
+
     conversations.push({
       sessionId,
       title,
@@ -541,6 +551,7 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
       totalCacheReadTokens: totalCacheReadTokens > 0 ? totalCacheReadTokens : undefined,
       totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
       totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
+      compactCount: compactCount > 0 ? compactCount : undefined,
     });
   }
 

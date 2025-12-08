@@ -100,6 +100,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       totalCacheReadTokens: raw.totalCacheReadTokens,
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
+      compactCount: raw.compactCount,
     };
 
     // Propagate stats from tool-only assistant messages to the nearest visible assistant message
@@ -193,6 +194,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         cacheReadTokens: stats?.peakCacheReadTokens,
         totalLinesAdded: stats && stats.added > 0 ? stats.added : undefined,
         totalLinesRemoved: stats && stats.removed > 0 ? stats.removed : undefined,
+        isCompactSummary: msg.isCompactSummary,
       };
     });
 

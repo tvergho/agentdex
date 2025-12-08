@@ -280,6 +280,7 @@ async function ensureTables(): Promise<void> {
         total_cache_read_tokens: 0,
         total_lines_added: 0,
         total_lines_removed: 0,
+        compact_count: 0, // Claude Code: number of context compactions
       },
     ]);
     // Delete placeholder row
@@ -306,6 +307,7 @@ async function ensureTables(): Promise<void> {
         cache_read_tokens: 0,
         total_lines_added: 0,
         total_lines_removed: 0,
+        is_compact_summary: false, // Claude Code: marks context restoration summaries
       },
     ]);
     await messagesTable.delete("id = '_placeholder_'");
@@ -623,6 +625,7 @@ export async function recreateMessagesTable(): Promise<void> {
       cache_read_tokens: 0,
       total_lines_added: 0,
       total_lines_removed: 0,
+      is_compact_summary: false,
     },
   ]);
   await messagesTable.delete("id = '_placeholder_'");

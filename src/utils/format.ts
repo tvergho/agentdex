@@ -230,6 +230,8 @@ export interface CombinedMessage {
   totalLinesAdded?: number;
   /** Total lines removed for this message group */
   totalLinesRemoved?: number;
+  /** Whether this is a compact summary message (Claude Code only) */
+  isCompactSummary?: boolean;
 }
 
 /**
@@ -258,6 +260,7 @@ export function combineConsecutiveMessages<T extends {
   cacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
+  isCompactSummary?: boolean;
 }>(messages: T[]): CombinedMessagesResult {
   if (messages.length === 0) {
     return { messages: [], indexMap: new Map() };
@@ -295,6 +298,8 @@ export function combineConsecutiveMessages<T extends {
         const totalOutputTokens = currentGroup.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
         const totalLinesAdded = currentGroup.reduce((sum, m) => sum + (m.totalLinesAdded || 0), 0);
         const totalLinesRemoved = currentGroup.reduce((sum, m) => sum + (m.totalLinesRemoved || 0), 0);
+        // A combined message is a compact summary if any of its parts is
+        const isCompactSummary = currentGroup.some(m => m.isCompactSummary);
         combined.push({
           messageIds: currentGroup.map(m => m.id),
           content: currentGroup.map(m => m.content).join('\n\n'),
@@ -308,6 +313,7 @@ export function combineConsecutiveMessages<T extends {
           cacheReadTokens: totalCacheReadTokens > 0 ? totalCacheReadTokens : undefined,
           totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
           totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
+          isCompactSummary: isCompactSummary || undefined,
         });
         // Map all original indices to this combined index
         for (const m of currentGroup) {
@@ -341,6 +347,8 @@ export function combineConsecutiveMessages<T extends {
     const totalOutputTokens = currentGroup.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
     const totalLinesAdded = currentGroup.reduce((sum, m) => sum + (m.totalLinesAdded || 0), 0);
     const totalLinesRemoved = currentGroup.reduce((sum, m) => sum + (m.totalLinesRemoved || 0), 0);
+    // A combined message is a compact summary if any of its parts is
+    const isCompactSummary = currentGroup.some(m => m.isCompactSummary);
     combined.push({
       messageIds: currentGroup.map(m => m.id),
       content: currentGroup.map(m => m.content).join('\n\n'),
@@ -354,6 +362,7 @@ export function combineConsecutiveMessages<T extends {
       cacheReadTokens: totalCacheReadTokens > 0 ? totalCacheReadTokens : undefined,
       totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
       totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
+      isCompactSummary: isCompactSummary || undefined,
     });
     for (const m of currentGroup) {
       indexMap.set(m.messageIndex, combinedIdx);

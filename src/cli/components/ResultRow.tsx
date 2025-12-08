@@ -135,11 +135,14 @@ export function ResultRow({
         <Text bold color="yellow">{matchStr}</Text>
         <Text color="gray"> · {timeStr}</Text>
       </Text>
-      {/* Row 2: Source + workspace path + tokens + lines */}
+      {/* Row 2: Source + workspace path + tokens + lines + compact count */}
       <Box marginLeft={indexWidth + (indexWidth > 0 ? 1 : 0)} width={contentWidth}>
         <Text wrap="truncate-end">
           <Text color="yellow">{sourceName}</Text>
           {pathStr && <Text color="magenta"> · {pathStr}</Text>}
+          {conversation.compactCount && conversation.compactCount > 0 && (
+            <Text color="yellow"> · ⟳{conversation.compactCount}</Text>
+          )}
           {tokenStr && <Text color="cyan"> · {tokenStr}</Text>}
           {lineParts && <Text color="gray"> · </Text>}
           {lineParts && <Text color="green">{lineParts.added}</Text>}

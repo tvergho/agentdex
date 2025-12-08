@@ -88,6 +88,8 @@ export interface NavigationActions {
   selectPrevMessage: () => void;
   scrollToTop: () => void;
   scrollToBottom: () => void;
+  jumpToNextCompact: () => void;
+  jumpToPrevCompact: () => void;
   openMessageDetail: () => void;
 
   // Message detail navigation
@@ -424,6 +426,42 @@ export function useNavigation({
     setSelectedMessageIndex(combinedMessages.length - 1);
   }, [maxConversationScrollOffset, combinedMessages.length]);
 
+  // Jump to next compact summary
+  const jumpToNextCompact = useCallback(() => {
+    const currentIdx = selectedMessageIndex;
+    for (let i = currentIdx + 1; i < combinedMessages.length; i++) {
+      if (combinedMessages[i]?.isCompactSummary) {
+        setSelectedMessageIndex(i);
+        // Scroll to show the compact message
+        if (i >= conversationScrollOffset + messagesPerPage) {
+          setConversationScrollOffset(Math.min(i - Math.floor(messagesPerPage / 2), maxConversationScrollOffset));
+        } else if (i < conversationScrollOffset) {
+          setConversationScrollOffset(i);
+        }
+        return;
+      }
+    }
+    // No more compact summaries ahead - stay at current position
+  }, [selectedMessageIndex, combinedMessages, conversationScrollOffset, messagesPerPage, maxConversationScrollOffset]);
+
+  // Jump to previous compact summary
+  const jumpToPrevCompact = useCallback(() => {
+    const currentIdx = selectedMessageIndex;
+    for (let i = currentIdx - 1; i >= 0; i--) {
+      if (combinedMessages[i]?.isCompactSummary) {
+        setSelectedMessageIndex(i);
+        // Scroll to show the compact message
+        if (i < conversationScrollOffset) {
+          setConversationScrollOffset(i);
+        } else if (i >= conversationScrollOffset + messagesPerPage) {
+          setConversationScrollOffset(Math.min(i - Math.floor(messagesPerPage / 2), maxConversationScrollOffset));
+        }
+        return;
+      }
+    }
+    // No more compact summaries behind - stay at current position
+  }, [selectedMessageIndex, combinedMessages, conversationScrollOffset, messagesPerPage, maxConversationScrollOffset]);
+
   const openMessageDetail = useCallback(() => {
     goToMessage();
   }, [goToMessage]);
@@ -720,6 +758,14 @@ export function useNavigation({
           scrollToBottom();
           return true;
         }
+        if (input === 'c') {
+          jumpToNextCompact();
+          return true;
+        }
+        if (input === 'C') {
+          jumpToPrevCompact();
+          return true;
+        }
         if (key.return) {
           openMessageDetail();
           return true;
@@ -772,6 +818,8 @@ export function useNavigation({
     selectPrevMessage,
     scrollToTop,
     scrollToBottom,
+    jumpToNextCompact,
+    jumpToPrevCompact,
     openMessageDetail,
     selectNextMatch,
     selectPrevMatch,
@@ -825,6 +873,8 @@ export function useNavigation({
       selectPrevMessage,
       scrollToTop,
       scrollToBottom,
+      jumpToNextCompact,
+      jumpToPrevCompact,
       openMessageDetail,
       scrollMessageUp,
       scrollMessageDown,

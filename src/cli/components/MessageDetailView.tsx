@@ -46,8 +46,9 @@ export function MessageDetailView({
   height,
   scrollOffset,
 }: MessageDetailViewProps) {
-  const roleLabel = getRoleLabel(message.role);
-  const roleColor = getRoleColor(message.role);
+  const isCompactSummary = message.isCompactSummary;
+  const roleLabel = isCompactSummary ? '📋 Context Summary' : getRoleLabel(message.role);
+  const roleColor = isCompactSummary ? 'yellow' : getRoleColor(message.role);
 
   // Get file names for all messages in this combined group
   const fileNames = messageFiles
@@ -90,9 +91,13 @@ export function MessageDetailView({
   return (
     <Box flexDirection="column" height={height}>
       <Box flexDirection="column">
+        {/* Compact summary header */}
+        {isCompactSummary && (
+          <Text color="yellow">{'─'.repeat(Math.floor(width * 0.3))} ⟳ CONTEXT COMPACTED {'─'.repeat(Math.floor(width * 0.3))}</Text>
+        )}
         <Box>
           <Text color={roleColor} bold>{roleLabel}</Text>
-          <Text color="gray"> #{message.combinedIndex + 1}</Text>
+          {!isCompactSummary && <Text color="gray"> #{message.combinedIndex + 1}</Text>}
           {fileNames.length > 0 && (
             <Text color="gray"> · {fileNames.join(', ')}</Text>
           )}
