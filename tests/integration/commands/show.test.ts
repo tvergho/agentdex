@@ -28,7 +28,7 @@ describe('show command', () => {
       const { showCommand } = await import('../../../src/cli/commands/show');
 
       try {
-        await showCommand('non-existent-id');
+        await showCommand(['non-existent-id']);
       } catch (e) {
         // Expected - process.exit was called
       }
@@ -47,7 +47,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('My Test Conversation');
@@ -58,7 +58,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Cursor');
@@ -72,7 +72,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Cursor · gpt-4-turbo');
@@ -85,7 +85,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('/home/user/my-project');
@@ -96,7 +96,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('15 messages');
@@ -114,7 +114,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv], messages });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('[You]');
@@ -139,7 +139,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv], messages });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('[System]');
@@ -155,7 +155,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv], messages });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('… (truncated)');
@@ -172,7 +172,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv], files });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Files:');
@@ -188,7 +188,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv], files });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Files:');
@@ -205,7 +205,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Empty Conv');
@@ -222,7 +222,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Claude-code');
@@ -234,7 +234,7 @@ describe('show command', () => {
       await db.seed({ conversations: [conv] });
 
       const { showCommand } = await import('../../../src/cli/commands/show');
-      await showCommand(conv.id);
+      await showCommand([conv.id]);
 
       const output = cli.getOutput();
       expect(output).toContain('Codex');
