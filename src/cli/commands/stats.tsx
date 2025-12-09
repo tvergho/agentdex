@@ -12,7 +12,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
 import { connect } from '../../db/index';
 import { messageRepo, filesRepo, messageFilesRepo, conversationRepo } from '../../db/repository';
-import { ExportActionMenu, StatusToast, getSourceColor } from '../components/index';
+import { ExportActionMenu, StatusToast, getSourceColor, SourceTokenTrend } from '../components/index';
 import {
   exportConversationsToFile,
   exportConversationsToClipboard,
@@ -21,6 +21,7 @@ import {
   createPeriodFilter,
   getOverviewStats,
   getDailyActivity,
+  getDailyTokensBySource,
   getStatsBySource,
   getStatsByModel,
   getTopConversationsByTokens,
@@ -38,6 +39,7 @@ import {
   getFileTypeStats,
   type OverviewStats,
   type DayActivity,
+  type DailyTokensBySource,
   type SourceStats,
   type ModelStats,
   type LinesGeneratedStats,
@@ -79,6 +81,7 @@ type TabId = 'overview' | 'tokens' | 'activity' | 'projects' | 'files';
 interface AllData {
   overview: OverviewStats;
   daily: DayActivity[];
+  dailyTokensBySource: DailyTokensBySource[];
   sources: SourceStats[];
   models: ModelStats[];
   topConversations: Conversation[];
@@ -318,7 +321,7 @@ function TokensTab({
   focusSection: FocusSection;
   selectedIndex: number;
 }) {
-  const { overview, daily, models, topConversations, lines, cache, sources } = data;
+  const { overview, daily, dailyTokensBySource, models, topConversations, lines, cache, sources } = data;
 
   // Calculate totals (overview.totalInputTokens now includes cache tokens)
   const totalTokens = overview.totalInputTokens + overview.totalOutputTokens;
@@ -349,9 +352,15 @@ function TokensTab({
         <Text color="cyan">Input: {formatLargeNumber(overview.totalInputTokens)}</Text>
         <Text color="gray">    </Text>
         <Text color="magenta">Output: {formatLargeNumber(overview.totalOutputTokens)}</Text>
-        <Text color="gray">    </Text>
-        <Text color="gray">Trend: </Text>
-        <Sparkline data={tokenTrend} width={20} color="cyan" showTrend />
+      </Box>
+
+      {/* Token usage over time by source - hero visualization */}
+      <Box flexDirection="column" marginBottom={1}>
+        <Text bold color="white">Usage by Source Over Time</Text>
+        <Box paddingX={0}>
+          <Text color="gray">{'─'.repeat(Math.max(0, width - 2))}</Text>
+        </Box>
+        <SourceTokenTrend data={dailyTokensBySource} width={width} showDateAxis />
       </Box>
 
       {/* Models breakdown */}
@@ -972,9 +981,10 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
         const periodFilter = createPeriodFilter(period);
 
         // Load all data in parallel
-        const [overview, daily, sources, models, topConversations, lines, cache, hourly, weekly, streak, recentConversations, projectStats, fileStats, editTypeBreakdown, fileTypeStats] = await Promise.all([
+        const [overview, daily, dailyTokensBySource, sources, models, topConversations, lines, cache, hourly, weekly, streak, recentConversations, projectStats, fileStats, editTypeBreakdown, fileTypeStats] = await Promise.all([
           getOverviewStats(periodFilter),
           getDailyActivity(periodFilter),
+          getDailyTokensBySource(periodFilter),
           getStatsBySource(periodFilter),
           getStatsByModel(periodFilter),
           getTopConversationsByTokens(periodFilter, 5),
@@ -993,6 +1003,7 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
         setData({
           overview,
           daily,
+          dailyTokensBySource,
           sources,
           models,
           topConversations,

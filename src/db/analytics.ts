@@ -108,6 +108,15 @@ export interface FileTypeStats {
   linesAdded: number;
 }
 
+export interface DailyTokensBySource {
+  date: string;           // YYYY-MM-DD
+  cursor: number;         // Tokens from Cursor
+  claudeCode: number;     // Tokens from Claude Code
+  codex: number;          // Tokens from Codex
+  opencode: number;       // Tokens from OpenCode
+  total: number;          // Combined total
+}
+
 // --- Helper Functions ---
 
 function formatDate(date: Date): string {
@@ -215,6 +224,80 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
 
   // Sort by date
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function getDailyTokensBySource(period: PeriodFilter): Promise<DailyTokensBySource[]> {
+  await connect();
+  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
+
+  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
+
+  // Group by date, tracking tokens per source
+  const byDate = new Map<string, DailyTokensBySource>();
+
+  for (const conv of filtered) {
+    const createdAt = conv.created_at as string;
+    const date = createdAt?.split('T')[0];
+    if (!date) continue;
+
+    const source = (conv.source as string) || 'unknown';
+    const tokens = ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
+      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+
+    const existing = byDate.get(date) || {
+      date,
+      cursor: 0,
+      claudeCode: 0,
+      codex: 0,
+      opencode: 0,
+      total: 0,
+    };
+
+    // Add tokens to the appropriate source
+    switch (source) {
+      case Source.Cursor:
+        existing.cursor += tokens;
+        break;
+      case Source.ClaudeCode:
+        existing.claudeCode += tokens;
+        break;
+      case Source.Codex:
+        existing.codex += tokens;
+        break;
+      case Source.OpenCode:
+        existing.opencode += tokens;
+        break;
+    }
+    existing.total += tokens;
+
+    byDate.set(date, existing);
+  }
+
+  // Fill in missing dates within the period to ensure continuous data
+  const result: DailyTokensBySource[] = [];
+  const current = new Date(period.startDate);
+  const end = new Date(period.endDate);
+
+  while (current <= end) {
+    const dateStr = formatDate(current);
+    const existing = byDate.get(dateStr);
+    if (existing) {
+      result.push(existing);
+    } else {
+      // Add empty entry for days with no activity
+      result.push({
+        date: dateStr,
+        cursor: 0,
+        claudeCode: 0,
+        codex: 0,
+        opencode: 0,
+        total: 0,
+      });
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return result;
 }
 
 export async function getStatsBySource(period: PeriodFilter): Promise<SourceStats[]> {
