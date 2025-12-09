@@ -101,7 +101,7 @@ export function ConversationView({
         <Text>
           <Text color="gray">{formatMessageCount(messages.length)} · {paginationInfo}</Text>
           {conversation.compactCount && conversation.compactCount > 0 && (
-            <Text color="yellow"> · ⟳{conversation.compactCount} compacted</Text>
+            <Text color="yellow"> · ⟳ {conversation.compactCount} compacted</Text>
           )}
           {tokenTotals && <Text color="cyan"> · {tokenTotals}</Text>}
           {lineCountTotals && (

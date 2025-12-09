@@ -9,7 +9,7 @@
  * Uses llama-server for fast GPU-accelerated batch embedding
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withRetry } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery } from '../../db/index';
 import {
   downloadModel,
   getModelPath,
@@ -116,9 +116,9 @@ interface MessageRow {
 
 async function getAllMessagesNeedingEmbedding(): Promise<MessageRow[]> {
   const table = await getMessagesTable();
-  // Use withRetry to handle transient LanceDB errors (e.g., "Not found" when files
+  // Use withConnectionRecovery to handle transient LanceDB errors (e.g., "Not found" when files
   // are cleaned up during concurrent sync/optimize operations)
-  const allMessages = await withRetry(() => table.query().toArray());
+  const allMessages = await withConnectionRecovery(() => table.query().toArray());
 
   // Filter messages that have zero vectors or wrong dimensions (model changed)
   return allMessages.filter((row) => {
@@ -681,7 +681,7 @@ async function runAutoBenchmark(): Promise<void> {
 
   // Get sample messages (need at least 1000 for accurate benchmark across all batch sizes)
   const table = await getMessagesTable();
-  const allMessages = await withRetry(() => table.query().limit(1000).toArray()) as MessageRow[];
+  const allMessages = await withConnectionRecovery(() => table.query().limit(1000).toArray()) as MessageRow[];
 
   if (allMessages.length < 500) {
     console.log('  Not enough messages to benchmark, using defaults');
@@ -775,7 +775,7 @@ async function runBenchmark(): Promise<void> {
 
   // Get sample messages for testing (need 1000 for accurate benchmark)
   const table = await getMessagesTable();
-  const allMessages = await withRetry(() => table.query().limit(1000).toArray()) as MessageRow[];
+  const allMessages = await withConnectionRecovery(() => table.query().limit(1000).toArray()) as MessageRow[];
 
   if (allMessages.length < 500) {
     console.log('Not enough messages to benchmark (need at least 500). Run sync first.');
@@ -873,7 +873,7 @@ async function runBenchmark(): Promise<void> {
 
   // Estimate time for full embedding
   const messagesTable = await getMessagesTable();
-  const totalMessages = (await withRetry(() => messagesTable.query().toArray())).length;
+  const totalMessages = (await withConnectionRecovery(() => messagesTable.query().toArray())).length;
   const estimatedMinutes = Math.ceil(totalMessages / recommended.throughput / 60);
   console.log(`\n📊 With ${totalMessages} messages, estimated embedding time: ~${estimatedMinutes} minutes`);
 }

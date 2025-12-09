@@ -2,7 +2,7 @@
  * Analytics query functions for the stats dashboard
  */
 
-import { connect, getConversationsTable, getFilesTable, getFileEditsTable, withRetry, isTransientError } from './index';
+import { connect, getConversationsTable, getFilesTable, getFileEditsTable, withConnectionRecovery, isTransientError } from './index';
 import type { Table } from '@lancedb/lancedb';
 import { Source, type Conversation } from '../schema/index';
 
@@ -139,7 +139,7 @@ async function queryTableWithRetry<T>(
   getTable: () => Promise<Table>,
   query: (table: Table) => Promise<T>
 ): Promise<T> {
-  return withRetry(async () => {
+  return withConnectionRecovery(async () => {
     const table = await getTable();
     return query(table);
   });

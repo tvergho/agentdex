@@ -23,19 +23,86 @@ function isCommitConflict(error: unknown): boolean {
 
 /**
  * Check if an error is a transient LanceDB error that can be retried.
- * This includes commit conflicts and "Not found" errors that occur when
- * old data files are cleaned up while a query is running.
+ * This includes commit conflicts and race conditions during concurrent read/write.
+ * Note: Does NOT include .lance file errors as those may be permanent corruption.
  */
 export function isTransientError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message;
+    // Only retry commit conflicts and concurrent access issues
+    // Don't retry missing file errors - those could be permanent corruption
     return isCommitConflict(error) ||
-           msg.includes('Not found') ||
-           msg.includes('Failed to get next batch') ||
-           msg.includes('.lance') ||  // Any .lance file error
-           msg.includes('LanceError');
+           (msg.includes('LanceError') && !msg.includes('Not found') && !msg.includes('.lance'));
   }
   return false;
+}
+
+/**
+ * Check if an error indicates a corrupted database (missing .lance data files).
+ * This happens when metadata references data files that no longer exist.
+ */
+export function isCorruptedDatabaseError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message;
+    // Missing .lance data file - permanent corruption
+    return (msg.includes('Not found') && msg.includes('.lance')) ||
+           (msg.includes('Failed to get next batch') && msg.includes('.lance'));
+  }
+  return false;
+}
+
+/**
+ * Extract the table name from a corruption error message.
+ * Error format: "...~/.dex/lancedb/TABLE_NAME.lance/data/..."
+ */
+export function extractCorruptedTableName(error: unknown): string | null {
+  if (error instanceof Error) {
+    // Pattern: /lancedb/TABLE_NAME.lance/
+    const match = error.message.match(/lancedb\/([^/]+)\.lance\//);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+/**
+ * Reset connection and retry an operation when stale table references cause errors.
+ * This handles the case where cleanup removed files that a cached table still references.
+ */
+export async function withConnectionRecovery<T>(
+  operation: () => Promise<T>,
+  maxRetries = 2
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      // If it's a stale reference error (missing .lance files), reset connection and retry
+      if (isCorruptedDatabaseError(error) && attempt < maxRetries) {
+        console.error(`[db] Stale table reference detected, resetting connection (attempt ${attempt + 1}/${maxRetries})...`);
+        resetConnection();
+        // Small delay to let any pending operations complete
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+
+      // For transient errors, use standard retry logic
+      if (isTransientError(error) && attempt < maxRetries) {
+        const delay = 100 * Math.pow(2, attempt) + Math.random() * 50;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError;
 }
 
 /**
@@ -162,15 +229,103 @@ let filesTable: Table | null = null;
 let messageFilesTable: Table | null = null;
 let fileEditsTable: Table | null = null;
 
+/**
+ * Safely connect to LanceDB with timeout protection.
+ * If the database is corrupted and hangs, this will timeout and allow recovery.
+ */
+async function safeConnect(dbPath: string, timeoutMs = 10000): Promise<lancedb.Connection> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Timeout connecting to LanceDB at "${dbPath}" - database may be corrupted`));
+    }, timeoutMs);
+
+    lancedb.connect(dbPath)
+      .then((connection) => {
+        clearTimeout(timeout);
+        resolve(connection);
+      })
+      .catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+  });
+}
+
 export async function connect(): Promise<lancedb.Connection> {
   if (db) return db;
 
   const dbPath = getLanceDBPath();
   console.error('[db] Connecting to LanceDB at', dbPath);
-  db = await lancedb.connect(dbPath);
+
+  try {
+    db = await safeConnect(dbPath);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`[db] Connection issue: ${errorMsg}`);
+
+    // First attempt: Try connecting without timeout (maybe just slow, not corrupted)
+    console.error('[db] Retrying connection...');
+    try {
+      db = await lancedb.connect(dbPath);
+      console.error('[db] Retry successful');
+    } catch (retryError) {
+      // Second attempt: Check if specific table directories are corrupted
+      console.error('[db] Retry failed. Checking for corrupted tables...');
+      const { existsSync, readdirSync, rmSync } = await import('fs');
+
+      if (existsSync(dbPath)) {
+        const entries = readdirSync(dbPath);
+        for (const entry of entries) {
+          if (entry.endsWith('.lance')) {
+            const tablePath = join(dbPath, entry);
+            console.error(`[db] Removing potentially corrupted table: ${entry}`);
+            try {
+              rmSync(tablePath, { recursive: true, force: true });
+            } catch {
+              // Ignore
+            }
+          }
+        }
+      }
+
+      // Third attempt: Connect to cleaned database
+      console.error('[db] Attempting connection after cleanup...');
+      try {
+        db = await lancedb.connect(dbPath);
+      } catch (finalError) {
+        // Last resort: Full reset
+        console.error('[db] All recovery attempts failed. Resetting database...');
+        try {
+          rmSync(dbPath, { recursive: true, force: true });
+        } catch {
+          // Ignore
+        }
+        db = await lancedb.connect(dbPath);
+        console.error('[db] Database reset complete. Run "dex sync --force" to rebuild data.');
+      }
+    }
+  }
+
   console.error('[db] LanceDB connected, ensuring tables...');
 
-  await ensureTables();
+  try {
+    await ensureTables();
+  } catch (error) {
+    // If table initialization fails due to corruption, try to recover
+    if (isCorruptedDatabaseError(error)) {
+      const tableName = extractCorruptedTableName(error);
+      console.error(`[db] Detected corrupted table${tableName ? ` "${tableName}"` : ''}, attempting recovery...`);
+
+      // Drop corrupted tables and recreate
+      await recoverFromCorruption(tableName);
+
+      // Retry table initialization
+      await ensureTables();
+      console.error('[db] Recovery successful. Run "dex sync --force" to rebuild data.');
+    } else {
+      throw error;
+    }
+  }
   console.error('[db] Tables ready');
 
   return db;
@@ -252,6 +407,30 @@ export async function getFileEditsTable(): Promise<Table> {
   return fileEditsTable!;
 }
 
+/**
+ * Safely open a table with timeout protection.
+ * If the table is corrupted and hangs, this will timeout and throw.
+ */
+async function safeOpenTable(tableName: string, timeoutMs = 10000): Promise<Table> {
+  if (!db) throw new Error('Database not connected');
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Timeout opening table "${tableName}" - table may be corrupted. Not found: ~/.dex/lancedb/${tableName}.lance`));
+    }, timeoutMs);
+
+    db!.openTable(tableName)
+      .then((table) => {
+        clearTimeout(timeout);
+        resolve(table);
+      })
+      .catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+  });
+}
+
 async function ensureTables(): Promise<void> {
   if (!db) throw new Error('Database not connected');
 
@@ -286,7 +465,7 @@ async function ensureTables(): Promise<void> {
     // Delete placeholder row
     await conversationsTable.delete("id = '_placeholder_'");
   } else {
-    conversationsTable = await db.openTable('conversations');
+    conversationsTable = await safeOpenTable('conversations');
   }
 
   // Messages table - primary search target with vector embeddings
@@ -313,7 +492,7 @@ async function ensureTables(): Promise<void> {
     await messagesTable.delete("id = '_placeholder_'");
     // Note: FTS and vector indexes will be created/rebuilt after sync when data exists
   } else {
-    messagesTable = await db.openTable('messages');
+    messagesTable = await safeOpenTable('messages');
   }
 
   // Tool calls table
@@ -331,7 +510,7 @@ async function ensureTables(): Promise<void> {
     ]);
     await toolCallsTable.delete("id = '_placeholder_'");
   } else {
-    toolCallsTable = await db.openTable('tool_calls');
+    toolCallsTable = await safeOpenTable('tool_calls');
   }
 
   // Sync state table
@@ -347,7 +526,7 @@ async function ensureTables(): Promise<void> {
     ]);
     await syncStateTable.delete("workspace_path = '_placeholder_'");
   } else {
-    syncStateTable = await db.openTable('sync_state');
+    syncStateTable = await safeOpenTable('sync_state');
   }
 
   // Conversation files table
@@ -362,7 +541,7 @@ async function ensureTables(): Promise<void> {
     ]);
     await filesTable.delete("id = '_placeholder_'");
   } else {
-    filesTable = await db.openTable('conversation_files');
+    filesTable = await safeOpenTable('conversation_files');
   }
 
   // Message files table (per-message file associations)
@@ -378,7 +557,7 @@ async function ensureTables(): Promise<void> {
     ]);
     await messageFilesTable.delete("id = '_placeholder_'");
   } else {
-    messageFilesTable = await db.openTable('message_files');
+    messageFilesTable = await safeOpenTable('message_files');
   }
 
   // File edits table (individual line-level edits)
@@ -399,7 +578,7 @@ async function ensureTables(): Promise<void> {
     ]);
     await fileEditsTable.delete("id = '_placeholder_'");
   } else {
-    fileEditsTable = await db.openTable('file_edits');
+    fileEditsTable = await safeOpenTable('file_edits');
   }
 }
 
@@ -539,7 +718,9 @@ export async function compactMessagesTable(): Promise<void> {
  * LanceDB is append-only and keeps historical versions. After many mergeInsert
  * operations (like during embedding), this can cause massive storage bloat.
  *
- * This should be called after embedding completes to remove old versions.
+ * IMPORTANT: We keep versions for 5 minutes to allow in-flight queries to complete.
+ * Deleting versions immediately (cleanupOlderThan: new Date()) causes race conditions
+ * where queries started before cleanup try to read deleted files → "Not found" errors.
  */
 export async function cleanupOldVersions(): Promise<{ bytesRemoved: number; versionsRemoved: number }> {
   if (!db) {
@@ -558,12 +739,16 @@ export async function cleanupOldVersions(): Promise<{ bytesRemoved: number; vers
     fileEditsTable,
   ];
 
+  // Keep versions for 5 minutes to allow in-flight queries to complete
+  // This prevents race conditions where a query references files that get deleted
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
   for (const table of tables) {
     if (table) {
       try {
         const stats = await table.optimize({
-          cleanupOlderThan: new Date(), // Remove all old versions
-          deleteUnverified: true,       // Force cleanup
+          cleanupOlderThan: fiveMinutesAgo, // Keep recent versions for in-flight queries
+          deleteUnverified: false,          // Don't force delete - be conservative
         });
         if (stats.prune) {
           totalBytesRemoved += stats.prune.bytesRemoved;
@@ -629,4 +814,46 @@ export async function recreateMessagesTable(): Promise<void> {
     },
   ]);
   await messagesTable.delete("id = '_placeholder_'");
+}
+
+/**
+ * Recover from database corruption by dropping and recreating corrupted tables.
+ * If tableName is provided, only that table is dropped. Otherwise, all tables are dropped.
+ */
+async function recoverFromCorruption(tableName: string | null): Promise<void> {
+  if (!db) return;
+
+  const allTables = ['conversations', 'messages', 'tool_calls', 'sync_state', 'conversation_files', 'message_files', 'file_edits'];
+  const tablesToDrop = tableName ? [tableName] : allTables;
+
+  const existingTables = await db.tableNames();
+
+  for (const table of tablesToDrop) {
+    if (existingTables.includes(table)) {
+      try {
+        console.error(`[db] Dropping corrupted table "${table}"...`);
+        await db.dropTable(table);
+      } catch (dropError) {
+        // If drop fails, try to force remove the table directory
+        console.error(`[db] Standard drop failed for "${table}", attempting force cleanup...`);
+        const tablePath = join(getLanceDBPath(), `${table}.lance`);
+        try {
+          const { rmSync } = await import('fs');
+          rmSync(tablePath, { recursive: true, force: true });
+          console.error(`[db] Force removed "${table}" directory`);
+        } catch {
+          console.error(`[db] Could not remove "${table}" - manual cleanup may be needed`);
+        }
+      }
+    }
+  }
+
+  // Clear cached table references
+  conversationsTable = null;
+  messagesTable = null;
+  toolCallsTable = null;
+  syncStateTable = null;
+  filesTable = null;
+  messageFilesTable = null;
+  fileEditsTable = null;
 }

@@ -7,7 +7,7 @@ import {
   getFilesTable,
   getMessageFilesTable,
   getFileEditsTable,
-  withRetry,
+  withConnectionRecovery,
   isTransientError,
   isFragmentNotFoundError,
   repairFtsIndex,
@@ -259,7 +259,7 @@ export const conversationRepo = {
   },
 
   async findById(id: string): Promise<Conversation | null> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getConversationsTable();
       const results = await table.query().where(`id = '${id}'`).limit(1).toArray();
 
@@ -299,7 +299,7 @@ export const conversationRepo = {
     fromDate?: string;
     toDate?: string;
   } = {}): Promise<{ conversations: Conversation[]; total: number }> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getConversationsTable();
 
       // Fetch all to sort properly (LanceDB doesn't support ORDER BY)
@@ -382,7 +382,7 @@ export const conversationRepo = {
   },
 
   async count(): Promise<number> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getConversationsTable();
       const results = await table.query().select(['id']).toArray();
       return results.length;
@@ -390,14 +390,14 @@ export const conversationRepo = {
   },
 
   async delete(id: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getConversationsTable();
       await table.delete(`id = '${id}'`);
     });
   },
 
   async deleteBySource(source: string, workspacePath?: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getConversationsTable();
       if (workspacePath) {
         await table.delete(`source = '${source}' AND workspace_path = '${workspacePath}'`);
@@ -525,7 +525,7 @@ export const conversationRepo = {
    * Update the title of a conversation
    */
   async updateTitle(id: string, title: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getConversationsTable();
       await table.update({
         where: `id = '${id}'`,
@@ -603,7 +603,7 @@ export const conversationRepo = {
 
 export const messageRepo = {
   async count(): Promise<number> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getMessagesTable();
       return table.countRows();
     });
@@ -680,7 +680,7 @@ export const messageRepo = {
   },
 
   async findByConversation(conversationId: string): Promise<Message[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getMessagesTable();
       // With snake_case columns, we can use direct filtering
       const results = await table
@@ -709,7 +709,7 @@ export const messageRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getMessagesTable();
       await table.delete(`conversation_id = '${conversationId}'`);
     });
@@ -718,7 +718,7 @@ export const messageRepo = {
   async search(query: string, limit = 50): Promise<{ matches: MessageMatch[]; mode: 'hybrid' | 'fts' | 'basic' }> {
     // Wrap entire search in retry to handle transient errors during embedding
     // Use getFreshMessagesTable to avoid stale table references after cleanup
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getFreshMessagesTable();
 
       // Try hybrid search with RRF (Reciprocal Rank Fusion)
@@ -764,11 +764,13 @@ export const messageRepo = {
         if (isFragmentNotFoundError(err)) {
           console.error('[search] Detected corrupted FTS index, repairing...');
           await repairFtsIndex();
-          throw err; // Rethrow so withRetry will retry with repaired index
+          throw err; // Rethrow so withConnectionRecovery will retry with repaired index
         }
-        // Re-throw other transient errors so withRetry can handle them
+        // Re-throw other transient errors so withConnectionRecovery can handle them
         if (isTransientError(err)) throw err;
-        // Fallback to FTS-only if vector search unavailable
+        // Log why hybrid search failed before falling back
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[search] Hybrid search failed, falling back to FTS: ${errMsg}`);
       }
 
       // Fallback: FTS-only search
@@ -805,9 +807,9 @@ export const messageRepo = {
         if (isFragmentNotFoundError(err)) {
           console.error('[search] Detected corrupted FTS index, repairing...');
           await repairFtsIndex();
-          throw err; // Rethrow so withRetry will retry with repaired index
+          throw err; // Rethrow so withConnectionRecovery will retry with repaired index
         }
-        // Re-throw other transient errors so withRetry can handle them
+        // Re-throw other transient errors so withConnectionRecovery can handle them
         if (isTransientError(err)) throw err;
         // FTS index might be invalid, fall back to substring matching
       }
@@ -873,7 +875,7 @@ export const toolCallRepo = {
   },
 
   async findByFile(filePath: string): Promise<ToolCall[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getToolCallsTable();
       const results = await table
         .query()
@@ -893,7 +895,7 @@ export const toolCallRepo = {
   },
 
   async findByConversation(conversationId: string): Promise<ToolCall[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getToolCallsTable();
       const results = await table
         .query()
@@ -913,7 +915,7 @@ export const toolCallRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getToolCallsTable();
       await table.delete(`conversation_id = '${conversationId}'`);
     });
@@ -945,7 +947,7 @@ export const syncStateRepo = {
 
   async set(state: SyncState): Promise<void> {
     // Use retry logic to handle commit conflicts from concurrent operations
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getSyncStateTable();
 
       // Delete existing if any
@@ -982,7 +984,7 @@ export const filesRepo = {
   },
 
   async findByConversation(conversationId: string): Promise<ConversationFile[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getFilesTable();
       const results = await table
         .query()
@@ -999,7 +1001,7 @@ export const filesRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getFilesTable();
       await table.delete(`conversation_id = '${conversationId}'`);
     });
@@ -1025,7 +1027,7 @@ export const messageFilesRepo = {
   },
 
   async findByMessage(messageId: string): Promise<MessageFile[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getMessageFilesTable();
       const results = await table
         .query()
@@ -1043,7 +1045,7 @@ export const messageFilesRepo = {
   },
 
   async findByConversation(conversationId: string): Promise<MessageFile[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getMessageFilesTable();
       const results = await table
         .query()
@@ -1061,7 +1063,7 @@ export const messageFilesRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getMessageFilesTable();
       await table.delete(`conversation_id = '${conversationId}'`);
     });
@@ -1124,7 +1126,7 @@ export const fileEditsRepo = {
   },
 
   async findByMessage(messageId: string): Promise<FileEdit[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getFileEditsTable();
       const results = await table
         .query()
@@ -1147,7 +1149,7 @@ export const fileEditsRepo = {
   },
 
   async findByConversation(conversationId: string): Promise<FileEdit[]> {
-    return withRetry(async () => {
+    return withConnectionRecovery(async () => {
       const table = await getFileEditsTable();
       const results = await table
         .query()
@@ -1170,7 +1172,7 @@ export const fileEditsRepo = {
   },
 
   async deleteByConversation(conversationId: string): Promise<void> {
-    await withRetry(async () => {
+    await withConnectionRecovery(async () => {
       const table = await getFileEditsTable();
       await table.delete(`conversation_id = '${conversationId}'`);
     });

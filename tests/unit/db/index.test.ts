@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { withRetry, acquireSyncLock, releaseSyncLock, isTransientError } from '../../../src/db/index';
+import { withRetry, withConnectionRecovery, acquireSyncLock, releaseSyncLock, isTransientError, isCorruptedDatabaseError, extractCorruptedTableName } from '../../../src/db/index';
 
 // Mock the config module to use a temp directory
 const originalEnv = process.env.DEX_DATA_DIR;
@@ -202,22 +202,32 @@ describe('isTransientError', () => {
     expect(isTransientError(new Error('concurrent commit error'))).toBe(true);
   });
 
-  it('returns true for Not found errors', () => {
-    expect(isTransientError(new Error('Not found: some/file.lance'))).toBe(true);
-    expect(isTransientError(new Error('External error: Not found'))).toBe(true);
+  it('returns false for Not found .lance errors (handled by isCorruptedDatabaseError)', () => {
+    // These are now handled by withConnectionRecovery, not withRetry
+    expect(isTransientError(new Error('Not found: some/file.lance'))).toBe(false);
+    expect(isTransientError(new Error('External error: Not found'))).toBe(false);
   });
 
-  it('returns true for Failed to get next batch errors', () => {
-    expect(isTransientError(new Error('Failed to get next batch from stream'))).toBe(true);
+  it('returns false for Failed to get next batch errors (handled by isCorruptedDatabaseError)', () => {
+    // These are now handled by withConnectionRecovery, not withRetry
+    expect(isTransientError(new Error('Failed to get next batch from stream'))).toBe(false);
   });
 
-  it('returns true for .lance file errors', () => {
-    expect(isTransientError(new Error('Error reading file.lance'))).toBe(true);
-    expect(isTransientError(new Error('messages.lance not accessible'))).toBe(true);
+  it('returns false for .lance file errors (handled by isCorruptedDatabaseError)', () => {
+    // These are now handled by withConnectionRecovery, not withRetry
+    expect(isTransientError(new Error('Error reading file.lance'))).toBe(false);
+    expect(isTransientError(new Error('messages.lance not accessible'))).toBe(false);
   });
 
-  it('returns true for LanceError', () => {
-    expect(isTransientError(new Error('LanceError: IO error'))).toBe(true);
+  it('returns true for LanceError without file issues', () => {
+    // Generic LanceError without file issues is still transient
+    expect(isTransientError(new Error('LanceError: IO timeout'))).toBe(true);
+  });
+
+  it('returns false for LanceError with Not found or .lance', () => {
+    // LanceError with file issues goes through corruption recovery path
+    expect(isTransientError(new Error('LanceError: Not found'))).toBe(false);
+    expect(isTransientError(new Error('LanceError: file.lance missing'))).toBe(false);
   });
 
   it('returns false for non-transient errors', () => {
@@ -234,47 +244,131 @@ describe('isTransientError', () => {
   });
 });
 
+describe('isCorruptedDatabaseError', () => {
+  it('returns true for Not found .lance errors', () => {
+    expect(isCorruptedDatabaseError(new Error('Not found: ~/.dex/lancedb/conversations.lance/data/abc123.lance'))).toBe(true);
+    expect(isCorruptedDatabaseError(new Error('LanceError(IO): External error: Not found: some/file.lance'))).toBe(true);
+  });
+
+  it('returns true for Failed to get next batch with .lance', () => {
+    expect(isCorruptedDatabaseError(new Error('Failed to get next batch from stream: lance error: LanceError(IO): External error: Not found: file.lance'))).toBe(true);
+  });
+
+  it('returns false for Not found without .lance', () => {
+    expect(isCorruptedDatabaseError(new Error('Not found: some/other/file.txt'))).toBe(false);
+  });
+
+  it('returns false for generic errors', () => {
+    expect(isCorruptedDatabaseError(new Error('Some other error'))).toBe(false);
+    expect(isCorruptedDatabaseError(new Error('LanceError: timeout'))).toBe(false);
+  });
+
+  it('returns false for non-Error objects', () => {
+    expect(isCorruptedDatabaseError('string error')).toBe(false);
+    expect(isCorruptedDatabaseError(null)).toBe(false);
+    expect(isCorruptedDatabaseError(undefined)).toBe(false);
+  });
+});
+
+describe('extractCorruptedTableName', () => {
+  it('extracts table name from error message', () => {
+    expect(extractCorruptedTableName(new Error('Not found: ~/.dex/lancedb/conversations.lance/data/abc123.lance'))).toBe('conversations');
+    expect(extractCorruptedTableName(new Error('Not found: ~/.dex/lancedb/messages.lance/data/xyz.lance'))).toBe('messages');
+  });
+
+  it('returns null for errors without table name', () => {
+    expect(extractCorruptedTableName(new Error('Some other error'))).toBe(null);
+    expect(extractCorruptedTableName(new Error('Not found: file.txt'))).toBe(null);
+  });
+
+  it('returns null for non-Error objects', () => {
+    expect(extractCorruptedTableName('string error')).toBe(null);
+    expect(extractCorruptedTableName(null)).toBe(null);
+  });
+});
+
 describe('withRetry transient errors', () => {
-  it('retries on Not found errors', async () => {
+  it('does not retry Not found .lance errors (now handled by withConnectionRecovery)', async () => {
     let attempts = 0;
-    const result = await withRetry(async () => {
-      attempts++;
-      if (attempts < 2) {
+    await expect(
+      withRetry(async () => {
+        attempts++;
         throw new Error('Not found: some/data.lance');
-      }
-      return 'success';
-    });
-
-    expect(result).toBe('success');
-    expect(attempts).toBe(2);
+      })
+    ).rejects.toThrow('Not found');
+    expect(attempts).toBe(1); // No retry for file errors
   });
 
-  it('retries on Failed to get next batch errors', async () => {
-    let attempts = 0;
-    const result = await withRetry(async () => {
-      attempts++;
-      if (attempts < 2) {
-        throw new Error('Failed to get next batch from stream: lance error');
-      }
-      return 'success';
-    });
-
-    expect(result).toBe('success');
-    expect(attempts).toBe(2);
-  });
-
-  it('retries on LanceError', async () => {
+  it('retries on LanceError without file issues', async () => {
     let attempts = 0;
     const result = await withRetry(async () => {
       attempts++;
       if (attempts < 3) {
-        throw new Error('LanceError(IO): External error');
+        throw new Error('LanceError: IO timeout'); // No "Not found" or ".lance"
       }
       return 'success';
     });
 
     expect(result).toBe('success');
     expect(attempts).toBe(3);
+  });
+});
+
+describe('withConnectionRecovery', () => {
+  it('returns result on success', async () => {
+    const result = await withConnectionRecovery(async () => 'success');
+    expect(result).toBe('success');
+  });
+
+  it('retries on corrupted database errors (Not found .lance)', async () => {
+    let attempts = 0;
+    // Note: In real usage this would reset the connection, but we're testing the retry logic
+    const result = await withConnectionRecovery(async () => {
+      attempts++;
+      if (attempts < 2) {
+        throw new Error('Not found: ~/.dex/lancedb/messages.lance/data/abc.lance');
+      }
+      return 'success after recovery';
+    });
+
+    expect(result).toBe('success after recovery');
+    expect(attempts).toBe(2);
+  });
+
+  it('retries on commit conflict errors', async () => {
+    let attempts = 0;
+    const result = await withConnectionRecovery(async () => {
+      attempts++;
+      if (attempts < 2) {
+        throw new Error('Commit conflict detected');
+      }
+      return 'success';
+    });
+
+    expect(result).toBe('success');
+    expect(attempts).toBe(2);
+  });
+
+  it('throws non-recoverable errors immediately', async () => {
+    let attempts = 0;
+    await expect(
+      withConnectionRecovery(async () => {
+        attempts++;
+        throw new Error('Some other error');
+      })
+    ).rejects.toThrow('Some other error');
+    expect(attempts).toBe(1);
+  });
+
+  it('throws after max retries on persistent corruption', async () => {
+    let attempts = 0;
+    await expect(
+      withConnectionRecovery(async () => {
+        attempts++;
+        throw new Error('Not found: ~/.dex/lancedb/messages.lance/data/abc.lance');
+      }, 2)
+    ).rejects.toThrow('Not found');
+    expect(attempts).toBe(3); // Initial + 2 retries
   });
 });
 

@@ -141,7 +141,7 @@ export function ResultRow({
           <Text color="yellow">{sourceName}</Text>
           {pathStr && <Text color="magenta"> · {pathStr}</Text>}
           {conversation.compactCount && conversation.compactCount > 0 && (
-            <Text color="yellow"> · ⟳{conversation.compactCount}</Text>
+            <Text color="yellow"> · ⟳ {conversation.compactCount}</Text>
           )}
           {tokenStr && <Text color="cyan"> · {tokenStr}</Text>}
           {lineParts && <Text color="gray"> · </Text>}
