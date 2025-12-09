@@ -470,37 +470,67 @@ function loadAllBubbles(db: BetterSqliteDatabase): Map<string, Map<string, Bubbl
   return bubblesByComposer;
 }
 
+// Configure SQLite connection with minimal lock footprint
+function openCursorDb(dbPath: string): BetterSqliteDatabase {
+  const db = new Database(dbPath, { readonly: true });
+  // Reduce lock contention with Cursor's live database
+  db.pragma('query_only = ON');       // Extra safety - no writes possible
+  db.pragma('cache_size = -2000');    // Smaller cache (2MB) = faster lock release
+  db.pragma('mmap_size = 0');         // Disable mmap to avoid holding file handles
+  return db;
+}
+
+// Batch size for connection cycling - balance between lock release frequency and overhead
+const COMPOSER_BATCH_SIZE = 100;
+
 export async function extractConversations(
   dbPath: string,
   onProgress?: (progress: ExtractionProgress) => void
 ): Promise<RawConversation[]> {
-  const db = new Database(dbPath, { readonly: true });
   const conversations: RawConversation[] = [];
 
-  try {
-    // Pre-load all codeBlockDiff entries upfront to avoid N+1 queries
-    // (diffs are small - only ~933 conversations have them)
-    const diffsByComposer = loadAllCodeBlockDiffs(db);
+  // Phase 1: Pre-load supporting data (diffs and bubbles) with short-lived connections
+  // These are smaller datasets that can be loaded quickly
+  let diffsByComposer: Map<string, ParsedDiffRow[]>;
+  let bubblesByComposer: Map<string, Map<string, BubbleData>>;
+  let totalCount: number;
 
-    // Pre-load all bubbles for v9+ format in a single query
-    // This eliminates the per-conversation query bottleneck
-    const bubblesByComposer = loadAllBubbles(db);
+  {
+    const db = openCursorDb(dbPath);
+    try {
+      // Pre-load all codeBlockDiff entries upfront to avoid N+1 queries
+      // (diffs are small - only ~933 conversations have them)
+      diffsByComposer = loadAllCodeBlockDiffs(db);
 
-    // Get total count for progress reporting
-    const totalCount = (db.prepare("SELECT COUNT(*) as count FROM cursorDiskKV WHERE key LIKE 'composerData:%'").get() as { count: number }).count;
+      // Pre-load all bubbles for v9+ format in a single query
+      // This eliminates the per-conversation query bottleneck
+      bubblesByComposer = loadAllBubbles(db);
 
-    // Use iterate() instead of all() to avoid loading all rows into memory at once
-    // This is critical for large databases (some users have 400MB+ of composer data)
-    const composerStmt = db.prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'");
-    let processedCount = 0;
+      // Get total count for progress reporting
+      totalCount = (db.prepare("SELECT COUNT(*) as count FROM cursorDiskKV WHERE key LIKE 'composerData:%'").get() as { count: number }).count;
+    } finally {
+      db.close();
+    }
+  }
 
-    for (const row of composerStmt.iterate() as IterableIterator<{ key: string; value: Buffer | string }>) {
-      // Yield to event loop and report progress every 100 conversations
-      processedCount++;
-      if (processedCount % 100 === 0) {
-        onProgress?.({ current: processedCount, total: totalCount });
-        await yieldToEventLoop();
-      }
+  // Phase 2: Process composer data in batches with connection cycling
+  // This releases SQLite locks between batches, allowing Cursor to checkpoint
+  let processedCount = 0;
+
+  for (let offset = 0; offset < totalCount; offset += COMPOSER_BATCH_SIZE) {
+    // Open a fresh connection for each batch
+    const db = openCursorDb(dbPath);
+    try {
+      const batchStmt = db.prepare(
+        "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%' LIMIT ? OFFSET ?"
+      );
+      const batch = batchStmt.all(COMPOSER_BATCH_SIZE, offset) as Array<{ key: string; value: Buffer | string }>;
+
+      for (const row of batch) {
+        processedCount++;
+        if (processedCount % 100 === 0) {
+          onProgress?.({ current: processedCount, total: totalCount });
+        }
       // Parse the value
       let valueStr: string;
       if (Buffer.isBuffer(row.value)) {
@@ -747,9 +777,13 @@ export async function extractConversations(
         totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
         totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
       });
+      }
+    } finally {
+      db.close();
     }
-  } finally {
-    db.close();
+
+    // Yield to event loop between batches to allow Cursor to checkpoint
+    await yieldToEventLoop();
   }
 
   return conversations;
