@@ -12,13 +12,13 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 /** Current plugin version - update when upgrading */
-const PLUGIN_VERSION = '4.0.2';
+export const PLUGIN_VERSION = '4.0.2';
 
 /**
  * Full OpenCode configuration with the Codex auth plugin
  * Source: https://github.com/numman-ali/opencode-openai-codex-auth/blob/main/config/full-opencode.json
  */
-const OPENCODE_CODEX_CONFIG = {
+export const OPENCODE_CODEX_CONFIG = {
   $schema: 'https://opencode.ai/config.json',
   plugin: [`opencode-openai-codex-auth@${PLUGIN_VERSION}`],
   provider: {

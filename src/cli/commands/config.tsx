@@ -13,16 +13,29 @@ import {
   updateProviderConfig,
   type DexConfig,
 } from '../../config/index.js';
+import { spawn } from 'child_process';
+import { homedir } from 'os';
+import { join } from 'path';
 import {
   getClaudeCodeCredentialStatus,
   getCodexCredentialStatus,
   runCodexAuth,
+  runAnthropicAuth,
   ensureOpenCodeConfig,
   testConnection,
+  importCredentials,
+  getAuthStatus,
+  getThirdPartyProviders,
+  disconnectThirdPartyProvider,
+  getProviderApiKey,
+  setProviderApiKey,
   type CredentialStatus,
   type CodexCredentialStatus,
   type TestResult,
+  type ProviderAuthStatus,
+  type ThirdPartyProvider,
 } from '../../providers/index.js';
+import { getOpencodeBinPath } from '../../utils/paths.js';
 import {
   countUntitledBySource,
   enrichWithProvider,
@@ -68,7 +81,11 @@ type MenuItem = {
   section?: string;
 };
 
-function ConfigApp() {
+interface ConfigAppProps {
+  onLaunchOpencode?: () => void;
+}
+
+function ConfigApp({ onLaunchOpencode }: ConfigAppProps) {
   const { exit } = useApp();
   const { width, height } = useScreenSize();
 
@@ -76,6 +93,8 @@ function ConfigApp() {
   const [config, setConfig] = useState<DexConfig | null>(null);
   const [credentialStatus, setCredentialStatus] = useState<CredentialStatus | null>(null);
   const [codexCredentialStatus, setCodexCredentialStatus] = useState<CodexCredentialStatus | null>(null);
+  const [claudeAuthStatus, setClaudeAuthStatus] = useState<ProviderAuthStatus | null>(null);
+  const [openaiAuthStatus, setOpenaiAuthStatus] = useState<ProviderAuthStatus | null>(null);
   const [claudeUntitledCount, setClaudeUntitledCount] = useState(0);
   const [codexUntitledCount, setCodexUntitledCount] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -87,6 +106,9 @@ function ConfigApp() {
   const [recentlyGeneratedIds, setRecentlyGeneratedIds] = useState<{ provider: ProviderId; ids: string[] } | null>(null);
   const [frame, setFrame] = useState(0);
   const [testingProvider, setTestingProvider] = useState<'anthropic' | 'openai' | null>(null);
+  const [thirdPartyProviders, setThirdPartyProviders] = useState<ThirdPartyProvider[]>([]);
+  const [editingApiKey, setEditingApiKey] = useState<{ providerId: string; displayName: string } | null>(null);
+  const [apiKeyInput, setApiKeyInput] = useState('');
   const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
   // Throttle progress updates to reduce flickering
@@ -100,6 +122,36 @@ function ConfigApp() {
       try {
         await connect();
         const cfg = loadConfig();
+
+        // Check actual auth status from auth.json
+        const authStatuses = getAuthStatus();
+        const claudeAuth = authStatuses.find(s => s.provider === 'anthropic');
+        const openaiAuth = authStatuses.find(s => s.provider === 'openai');
+
+        // Store auth statuses for UI display
+        setClaudeAuthStatus(claudeAuth || null);
+        setOpenaiAuthStatus(openaiAuth || null);
+
+        // Auto-sync config with auth status:
+        // Enable providers that have credentials, disable those that don't
+        // This ensures config reflects actual auth state
+        if (claudeAuth?.isAuthenticated && !cfg.providers.claudeCode.enabled) {
+          cfg.providers.claudeCode.enabled = true;
+          updateProviderConfig('claudeCode', { enabled: true });
+        } else if (!claudeAuth?.isAuthenticated && cfg.providers.claudeCode.enabled) {
+          // Config says enabled but no credentials exist - disable it
+          cfg.providers.claudeCode.enabled = false;
+          updateProviderConfig('claudeCode', { enabled: false });
+        }
+        if (openaiAuth?.isAuthenticated && !cfg.providers.codex.enabled) {
+          cfg.providers.codex.enabled = true;
+          updateProviderConfig('codex', { enabled: true });
+        } else if (!openaiAuth?.isAuthenticated && cfg.providers.codex.enabled) {
+          // Config says enabled but no credentials exist - disable it
+          cfg.providers.codex.enabled = false;
+          updateProviderConfig('codex', { enabled: false });
+        }
+
         setConfig(cfg);
 
         const status = getClaudeCodeCredentialStatus();
@@ -114,6 +166,10 @@ function ConfigApp() {
 
         const codexCount = await countUntitledBySource('codex');
         setCodexUntitledCount(codexCount);
+
+        // Load third-party providers
+        const thirdParty = getThirdPartyProviders();
+        setThirdPartyProviders(thirdParty);
       } catch (err) {
         setToast({
           message: `Failed to load: ${err instanceof Error ? err.message : String(err)}`,
@@ -174,10 +230,20 @@ function ConfigApp() {
         section: 'claude-code',
       });
     }
-  } else if (config && credentialStatus?.isAuthenticated) {
+  } else if (config) {
+    // Always show connect - we have native OAuth now
+    const authStatuses = getAuthStatus();
+    const claudeStatus = authStatuses.find(s => s.provider === 'anthropic');
+    const canImport = claudeStatus?.canImport;
+    const hasCliCreds = credentialStatus?.isAuthenticated;
+
     menuItems.push({
       id: 'claude-connect',
-      label: 'Connect',
+      label: canImport
+        ? `Connect (import from ${claudeStatus?.importSource})`
+        : hasCliCreds
+          ? 'Connect'
+          : 'Connect (opens browser)',
       type: 'button',
       section: 'claude-code',
     });
@@ -227,12 +293,49 @@ function ConfigApp() {
       });
     }
   } else if (config) {
-    // Codex connect - always available (will trigger auth if no creds)
+    // Codex connect - check for importable credentials
+    const authStatuses = getAuthStatus();
+    const openaiStatus = authStatuses.find(s => s.provider === 'openai');
+    const canImportOpenai = openaiStatus?.canImport;
+
     menuItems.push({
       id: 'codex-connect',
-      label: codexCredentialStatus?.isAuthenticated ? 'Connect' : 'Connect (opens browser)',
+      label: canImportOpenai
+        ? `Connect (import from ${openaiStatus?.importSource})`
+        : codexCredentialStatus?.isAuthenticated
+          ? 'Connect'
+          : 'Connect (opens browser)',
       type: 'button',
       section: 'codex',
+    });
+  }
+
+  // More Providers section - always available
+  if (config) {
+    // Add edit/disconnect options for each third-party provider
+    for (const provider of thirdPartyProviders) {
+      // Only show edit for API key providers
+      if (provider.authType === 'api') {
+        menuItems.push({
+          id: `more-edit-${provider.id}`,
+          label: `Edit ${provider.displayName} API Key`,
+          type: 'action',
+          section: 'more',
+        });
+      }
+      menuItems.push({
+        id: `more-disconnect-${provider.id}`,
+        label: `Disconnect ${provider.displayName}`,
+        type: 'button',
+        section: 'more',
+      });
+    }
+
+    menuItems.push({
+      id: 'more-browse',
+      label: thirdPartyProviders.length > 0 ? 'Add another provider...' : 'Add a provider...',
+      type: 'action',
+      section: 'more',
     });
   }
 
@@ -259,9 +362,40 @@ function ConfigApp() {
     try {
       // Claude Code actions
       if (item.id === 'claude-connect') {
-        const newConfig = updateProviderConfig('claudeCode', { enabled: true });
-        setConfig(newConfig);
-        setToast({ message: 'Connected to Claude Code', type: 'success' });
+        // Check if we can import existing credentials first
+        const authStatuses = getAuthStatus();
+        const claudeStatus = authStatuses.find(s => s.provider === 'anthropic');
+
+        if (claudeStatus?.canImport) {
+          // Import from existing source
+          setToast({ message: `Importing from ${claudeStatus.importSource}...`, type: 'info' });
+          await importCredentials('anthropic');
+          const newConfig = updateProviderConfig('claudeCode', { enabled: true });
+          setConfig(newConfig);
+          setCredentialStatus(getClaudeCodeCredentialStatus());
+          setToast({ message: 'Connected to Claude Code', type: 'success' });
+        } else if (credentialStatus?.isAuthenticated) {
+          // Already authenticated via Claude CLI
+          const newConfig = updateProviderConfig('claudeCode', { enabled: true });
+          setConfig(newConfig);
+          setToast({ message: 'Connected to Claude Code', type: 'success' });
+        } else {
+          // Need to run OAuth flow
+          setAuthenticating(true);
+          setToast({ message: 'Opening browser for Claude login...', type: 'info' });
+
+          const success = await runAnthropicAuth();
+          setAuthenticating(false);
+
+          if (success) {
+            const newConfig = updateProviderConfig('claudeCode', { enabled: true });
+            setConfig(newConfig);
+            setCredentialStatus(getClaudeCodeCredentialStatus());
+            setToast({ message: 'Connected to Claude Code', type: 'success' });
+          } else {
+            setToast({ message: 'Authentication cancelled or failed.', type: 'error' });
+          }
+        }
       } else if (item.id === 'claude-disconnect') {
         const newConfig = updateProviderConfig('claudeCode', {
           enabled: false,
@@ -287,37 +421,51 @@ function ConfigApp() {
           setToast({ message: 'Configured OpenCode with Codex plugin...', type: 'info' });
         }
 
-        // Check if we need to authenticate
-        const currentStatus = getCodexCredentialStatus();
-        if (!currentStatus.isAuthenticated) {
-          // Need to run OAuth flow
-          setAuthenticating(true);
-          setToast({ message: 'Opening browser for ChatGPT login...', type: 'info' });
+        // Check if we can import existing credentials first
+        const authStatuses = getAuthStatus();
+        const openaiStatus = authStatuses.find(s => s.provider === 'openai');
 
-          // This spawns an interactive process that opens the browser
-          const success = await runCodexAuth();
-          setAuthenticating(false);
-
-          if (success) {
-            // Re-check credentials
-            const newStatus = getCodexCredentialStatus();
-            setCodexCredentialStatus(newStatus);
-
-            if (newStatus.isAuthenticated) {
-              const newConfig = updateProviderConfig('codex', { enabled: true });
-              setConfig(newConfig);
-              setToast({ message: 'Connected to Codex (ChatGPT)', type: 'success' });
-            } else {
-              setToast({ message: 'Authentication failed. Please try again.', type: 'error' });
-            }
-          } else {
-            setToast({ message: 'Authentication cancelled or failed.', type: 'error' });
-          }
-        } else {
-          // Already have credentials, just enable
+        if (openaiStatus?.canImport) {
+          // Import from existing source
+          setToast({ message: `Importing from ${openaiStatus.importSource}...`, type: 'info' });
+          await importCredentials('openai');
           const newConfig = updateProviderConfig('codex', { enabled: true });
           setConfig(newConfig);
+          setCodexCredentialStatus(getCodexCredentialStatus());
           setToast({ message: 'Connected to Codex (ChatGPT)', type: 'success' });
+        } else {
+          // Check if we need to authenticate
+          const currentStatus = getCodexCredentialStatus();
+          if (!currentStatus.isAuthenticated) {
+            // Need to run OAuth flow
+            setAuthenticating(true);
+            setToast({ message: 'Opening browser for ChatGPT login...', type: 'info' });
+
+            // This spawns an interactive process that opens the browser
+            const success = await runCodexAuth();
+            setAuthenticating(false);
+
+            if (success) {
+              // Re-check credentials
+              const newStatus = getCodexCredentialStatus();
+              setCodexCredentialStatus(newStatus);
+
+              if (newStatus.isAuthenticated) {
+                const newConfig = updateProviderConfig('codex', { enabled: true });
+                setConfig(newConfig);
+                setToast({ message: 'Connected to Codex (ChatGPT)', type: 'success' });
+              } else {
+                setToast({ message: 'Authentication failed. Please try again.', type: 'error' });
+              }
+            } else {
+              setToast({ message: 'Authentication cancelled or failed.', type: 'error' });
+            }
+          } else {
+            // Already have credentials, just enable
+            const newConfig = updateProviderConfig('codex', { enabled: true });
+            setConfig(newConfig);
+            setToast({ message: 'Connected to Codex (ChatGPT)', type: 'success' });
+          }
         }
       } else if (item.id === 'codex-disconnect') {
         const newConfig = updateProviderConfig('codex', {
@@ -441,6 +589,41 @@ function ConfigApp() {
           });
         }
       }
+      // More Providers - launch OpenCode auth via callback
+      else if (item.id === 'more-browse') {
+        if (onLaunchOpencode) {
+          onLaunchOpencode();
+        }
+      }
+      // Disconnect third-party provider
+      else if (item.id.startsWith('more-disconnect-')) {
+        const providerId = item.id.replace('more-disconnect-', '');
+        const provider = thirdPartyProviders.find(p => p.id === providerId);
+        const success = disconnectThirdPartyProvider(providerId);
+        if (success) {
+          // Refresh the list
+          setThirdPartyProviders(getThirdPartyProviders());
+          setToast({
+            message: `Disconnected ${provider?.displayName || providerId}`,
+            type: 'info',
+          });
+        } else {
+          setToast({
+            message: `Failed to disconnect ${provider?.displayName || providerId}`,
+            type: 'error',
+          });
+        }
+      }
+      // Edit API key
+      else if (item.id.startsWith('more-edit-')) {
+        const providerId = item.id.replace('more-edit-', '');
+        const provider = thirdPartyProviders.find(p => p.id === providerId);
+        if (provider) {
+          const currentKey = getProviderApiKey(providerId) || '';
+          setApiKeyInput(currentKey);
+          setEditingApiKey({ providerId, displayName: provider.displayName });
+        }
+      }
     } catch (err) {
       setGenerationProgress(null);
       setAuthenticating(false);
@@ -449,9 +632,42 @@ function ConfigApp() {
         type: 'error',
       });
     }
-  }, [config, selectableItems, selectedIndex, claudeUntitledCount, codexUntitledCount, recentlyGeneratedIds]);
+  }, [config, selectableItems, selectedIndex, claudeUntitledCount, codexUntitledCount, recentlyGeneratedIds, onLaunchOpencode, thirdPartyProviders]);
 
   useInput((input, key) => {
+    // Handle API key editing mode
+    if (editingApiKey) {
+      if (key.escape) {
+        setEditingApiKey(null);
+        setApiKeyInput('');
+        return;
+      }
+      if (key.return) {
+        // Save the API key
+        if (apiKeyInput.trim()) {
+          setProviderApiKey(editingApiKey.providerId, apiKeyInput.trim());
+          setThirdPartyProviders(getThirdPartyProviders());
+          setToast({
+            message: `Updated ${editingApiKey.displayName} API key`,
+            type: 'success',
+          });
+        }
+        setEditingApiKey(null);
+        setApiKeyInput('');
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setApiKeyInput(prev => prev.slice(0, -1));
+        return;
+      }
+      // Add printable characters
+      if (input && !key.ctrl && !key.meta) {
+        setApiKeyInput(prev => prev + input);
+      }
+      return;
+    }
+
+    // Normal mode
     if (input === 'q' || key.escape) {
       exit();
       // Force exit to avoid hang
@@ -538,11 +754,15 @@ function ConfigApp() {
           <Text color="gray">│</Text>
         </Box>
 
-        {/* Credential status message when not connected and no creds */}
-        {!claudeCodeConnected && !credentialStatus?.isAuthenticated && (
+        {/* Credential status message when not connected */}
+        {!claudeCodeConnected && (
           <Box>
             <Text color="gray">│  </Text>
-            <Text dimColor>Log in to Claude Code first to connect</Text>
+            {claudeAuthStatus?.canImport ? (
+              <Text color="blue">✓ Credentials available from {claudeAuthStatus.importSource}</Text>
+            ) : (
+              <Text dimColor>Sign in to use Claude models</Text>
+            )}
           </Box>
         )}
 
@@ -636,6 +856,18 @@ function ConfigApp() {
           <Text color="gray">│</Text>
         </Box>
 
+        {/* Credential status message when not connected */}
+        {!codexConnected && !authenticating && (
+          <Box>
+            <Text color="gray">│  </Text>
+            {openaiAuthStatus?.canImport ? (
+              <Text color="blue">✓ Credentials available from {openaiAuthStatus.importSource}</Text>
+            ) : (
+              <Text dimColor>Sign in to use ChatGPT models</Text>
+            )}
+          </Box>
+        )}
+
         {/* Menu items */}
         {selectableItems.filter(i => i.section === 'codex').map((item) => {
           const actualIdx = selectableItems.indexOf(item);
@@ -700,6 +932,97 @@ function ConfigApp() {
         </Box>
       </Box>
 
+      {/* Other Providers Card (API key based) */}
+      <Box flexDirection="column" paddingX={1} marginBottom={1}>
+        <Box>
+          <Text color="gray">┌─ </Text>
+          <Text bold>Other Providers</Text>
+          <Text color="gray"> {'─'.repeat(Math.max(0, cardWidth - 17))}</Text>
+        </Box>
+
+        {/* Connected third-party providers */}
+        {thirdPartyProviders.length > 0 ? (
+          <>
+            {thirdPartyProviders.map(p => (
+              <Box key={p.id}>
+                <Text color="gray">│  </Text>
+                <Text color="green">● </Text>
+                <Text>{p.displayName}</Text>
+                {p.maskedKey && (
+                  <Text dimColor> ({p.maskedKey})</Text>
+                )}
+                {p.authType === 'oauth' && (
+                  <Text dimColor> (OAuth)</Text>
+                )}
+              </Box>
+            ))}
+            <Box>
+              <Text color="gray">│</Text>
+            </Box>
+          </>
+        ) : (
+          <>
+            <Box>
+              <Text color="gray">│  </Text>
+              <Text dimColor>OpenRouter, Google AI, DeepSeek, etc.</Text>
+            </Box>
+            <Box>
+              <Text color="gray">│  </Text>
+              <Text dimColor italic>Requires your own API key</Text>
+            </Box>
+            <Box>
+              <Text color="gray">│</Text>
+            </Box>
+          </>
+        )}
+
+        {/* Menu items */}
+        {selectableItems.filter(i => i.section === 'more').map((item) => {
+          const actualIdx = selectableItems.indexOf(item);
+          const isSelected = actualIdx === selectedIndex;
+          const isDisconnect = item.id.startsWith('more-disconnect-');
+          const isEdit = item.id.startsWith('more-edit-');
+
+          return (
+            <Box key={item.id}>
+              <Text color="gray">│  </Text>
+              <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▸ ' : '  '}</Text>
+              <Text color={isSelected ? 'cyan' : isDisconnect ? 'red' : isEdit ? 'blue' : 'white'}>
+                {item.label}
+              </Text>
+            </Box>
+          );
+        })}
+
+        {/* Card bottom */}
+        <Box>
+          <Text color="gray">└{'─'.repeat(Math.max(0, cardWidth))}┘</Text>
+        </Box>
+      </Box>
+
+      {/* API Key Edit Modal */}
+      {editingApiKey && (
+        <Box
+          flexDirection="column"
+          paddingX={1}
+          marginBottom={1}
+          borderStyle="round"
+          borderColor="cyan"
+        >
+          <Box marginBottom={1}>
+            <Text bold>Edit {editingApiKey.displayName} API Key</Text>
+          </Box>
+          <Box>
+            <Text>API Key: </Text>
+            <Text color="cyan">{apiKeyInput || '(empty)'}</Text>
+            <Text color="gray">▌</Text>
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>Enter: save · Esc: cancel</Text>
+          </Box>
+        </Box>
+      )}
+
       {/* Spacer */}
       <Box flexGrow={1} />
 
@@ -728,6 +1051,35 @@ function ConfigApp() {
   );
 }
 
+/**
+ * Run OpenCode auth login in a separate process
+ * Returns true if any new credentials were configured
+ */
+async function runOpencodeAuth(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const opencodePath = getOpencodeBinPath();
+    const child = spawn(opencodePath, ['auth', 'login'], {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        XDG_DATA_HOME: join(homedir(), '.dex', 'opencode', 'data'),
+        XDG_CONFIG_HOME: join(homedir(), '.dex', 'opencode', 'config'),
+      },
+    });
+
+    child.on('close', () => {
+      // Check if any new credentials were configured
+      const authStatuses = getAuthStatus();
+      const hasAny = authStatuses.some(s => s.isAuthenticated);
+      resolve(hasAny);
+    });
+
+    child.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
 export async function configCommand(): Promise<void> {
   if (!process.stdin.isTTY) {
     const config = loadConfig();
@@ -736,7 +1088,38 @@ export async function configCommand(): Promise<void> {
     return;
   }
 
-  const app = withFullScreen(<ConfigApp />);
-  await app.start();
-  await app.waitUntilExit();
+  // Track if we need to launch OpenCode auth
+  let launchOpencode = false;
+
+  // Create a wrapper component that can signal OpenCode launch
+  const ConfigAppWithCallback = () => {
+    const { exit } = useApp();
+
+    const handleLaunchOpencode = useCallback(() => {
+      launchOpencode = true;
+      exit();
+    }, [exit]);
+
+    return <ConfigApp onLaunchOpencode={handleLaunchOpencode} />;
+  };
+
+  // Main loop - restart config after OpenCode auth
+  while (true) {
+    launchOpencode = false;
+
+    const app = withFullScreen(<ConfigAppWithCallback />);
+    await app.start();
+    await app.waitUntilExit();
+
+    if (launchOpencode) {
+      // Clear screen and run OpenCode auth
+      console.clear();
+      await runOpencodeAuth();
+      // Loop back to show config again
+      continue;
+    }
+
+    // Normal exit
+    break;
+  }
 }

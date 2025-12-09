@@ -1,8 +1,8 @@
 /**
  * Chat command - launches OpenCode TUI attached to a dex-managed server
  *
- * Copies Claude Code credentials to isolated OpenCode directory,
- * starts a server with those credentials, then attaches the TUI.
+ * Checks for credentials in dex's isolated storage first, then offers
+ * to import from external sources or authenticate fresh.
  * Everything is isolated from global OpenCode state.
  */
 
@@ -14,8 +14,16 @@ import {
   startServer,
   type OpenCodeServerState,
 } from '../../providers/claude-code/client.js';
-import { getClaudeCodeCredentials } from '../../providers/claude-code/credentials.js';
 import { getOpencodeBinPath } from '../../utils/paths.js';
+import {
+  hasDexCredentials,
+  getDefaultProvider,
+  getDexCredentials,
+  hasExternalCredentials,
+  type ProviderId,
+} from '../../providers/auth.js';
+import { runChatSetup, runImportPrompt } from './chat-setup.js';
+import { ensureOpenCodeConfig, PLUGIN_VERSION, OPENCODE_CODEX_CONFIG } from '../../providers/codex/setup.js';
 
 // Isolated OpenCode directories under ~/.dex
 const DEX_OPENCODE_HOME = path.join(homedir(), '.dex', 'opencode');
@@ -116,13 +124,11 @@ Use these tools proactively when:
 - If initial search doesn't find what you need, try synonyms or related terms
 `;
 
-interface ClaudeCodeCreds {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-}
-
-function ensureIsolatedConfig(creds: ClaudeCodeCreds): void {
+/**
+ * Ensure isolated config is set up with ALL available provider credentials
+ * This makes all connected providers available in OpenCode, not just the default
+ */
+function ensureIsolatedConfig(): void {
   // Create all directories
   fs.mkdirSync(OPENCODE_MODE_DIR, { recursive: true });
   fs.mkdirSync(path.dirname(OPENCODE_AUTH_FILE), { recursive: true });
@@ -139,9 +145,14 @@ ${DEX_AGENT_PROMPT}
 `;
   fs.writeFileSync(path.join(OPENCODE_MODE_DIR, 'dex.md'), dexModeMd);
 
-  // Write OpenCode config with dex MCP server
+  // Get all available credentials
+  const anthropicCreds = getDexCredentials('anthropic');
+  const openaiCreds = getDexCredentials('openai');
+
+  // Build OpenCode config
   const configPath = path.join(OPENCODE_CONFIG_DIR, 'opencode.json');
-  const config = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const config: Record<string, any> = {
     $schema: 'https://opencode.ai/config.json',
     mcp: {
       dex: {
@@ -152,32 +163,77 @@ ${DEX_AGENT_PROMPT}
       },
     },
   };
+
+  // Add Codex plugin config if OpenAI credentials exist
+  // This makes GPT models available regardless of default provider
+  if (openaiCreds) {
+    config.plugin = [`opencode-openai-codex-auth@${PLUGIN_VERSION}`];
+    config.provider = OPENCODE_CODEX_CONFIG.provider;
+  }
+
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-  // Write Claude Code credentials to isolated auth.json
-  const authData = {
-    anthropic: {
+  // Build auth data with ALL available credentials
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const authData: Record<string, any> = {};
+
+  if (anthropicCreds) {
+    authData.anthropic = {
       type: 'oauth',
-      access: creds.accessToken,
-      refresh: creds.refreshToken,
-      expires: creds.expiresAt,
-    },
-  };
+      access: anthropicCreds.access,
+      refresh: anthropicCreds.refresh,
+      expires: anthropicCreds.expires,
+    };
+  }
+
+  if (openaiCreds) {
+    authData.openai = {
+      type: 'oauth',
+      access: openaiCreds.access,
+      refresh: openaiCreds.refresh,
+      expires: openaiCreds.expires,
+    };
+  }
+
   fs.writeFileSync(OPENCODE_AUTH_FILE, JSON.stringify(authData, null, 2));
 }
 
 export async function chatCommand(): Promise<void> {
-  // Check for Claude Code credentials
-  const creds = getClaudeCodeCredentials();
-  if (!creds) {
-    console.error('No Claude Code credentials found.');
-    console.error('Please authenticate with Claude Code first:');
-    console.error('  claude login');
+  // Check dex's isolated credentials first (authoritative source)
+  if (!hasDexCredentials()) {
+    // No dex credentials - check if we can import from external sources
+    if (hasExternalCredentials()) {
+      // Show import prompt
+      console.log('Found existing credentials...');
+      const imported = await runImportPrompt();
+      if (!imported) {
+        // User chose to set up fresh or import failed
+        const result = await runChatSetup();
+        if (result.cancelled) {
+          console.log('Setup cancelled. Run `dex chat` again or use `dex config` to set up.');
+          process.exit(0);
+        }
+      }
+    } else {
+      // No credentials anywhere - show full provider selection
+      const result = await runChatSetup();
+      if (result.cancelled) {
+        console.log('Setup cancelled. Run `dex chat` again or use `dex config` to set up.');
+        process.exit(0);
+      }
+    }
+  }
+
+  // Verify we have at least one provider configured
+  const provider = getDefaultProvider();
+  if (!provider) {
+    console.error('No provider configured. Run `dex config` to set up.');
     process.exit(1);
   }
 
-  // Set up isolated config with credentials
-  ensureIsolatedConfig(creds);
+  // Set up isolated config with ALL available credentials
+  // This makes all connected providers available in OpenCode
+  ensureIsolatedConfig();
 
   console.log('Starting dex chat server...');
 
