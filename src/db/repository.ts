@@ -609,13 +609,21 @@ export const messageRepo = {
     });
   },
 
-  async getExistingIds(conversationId: string): Promise<Set<string>> {
+  async getExistingIdsByConversation(conversationId: string): Promise<Set<string>> {
     const table = await getMessagesTable();
     const allResults = await table.query().toArray();
     const ids = allResults
       .filter((row) => (row.conversation_id as string) === conversationId)
       .map((row) => row.id as string);
     return new Set(ids);
+  },
+
+  async getExistingIds(candidateIds: string[]): Promise<Set<string>> {
+    if (candidateIds.length === 0) return new Set();
+    const table = await getMessagesTable();
+    const results = await table.query().select(['id']).toArray();
+    const allIds = new Set(results.map((row) => row.id as string));
+    return new Set(candidateIds.filter((id) => allIds.has(id)));
   },
 
   async bulkInsert(messages: Message[]): Promise<void> {
@@ -712,6 +720,16 @@ export const messageRepo = {
     await withConnectionRecovery(async () => {
       const table = await getMessagesTable();
       await table.delete(`conversation_id = '${conversationId}'`);
+    });
+  },
+
+  async deleteByConversationIds(conversationIds: string[]): Promise<void> {
+    if (conversationIds.length === 0) return;
+    await withConnectionRecovery(async () => {
+      const table = await getMessagesTable();
+      // Use IN clause for bulk delete
+      const idList = conversationIds.map((id) => `'${id}'`).join(', ');
+      await table.delete(`conversation_id IN (${idList})`);
     });
   },
 
@@ -874,6 +892,33 @@ export const toolCallRepo = {
     await table.add(rows);
   },
 
+  async getExistingIds(candidateIds: string[]): Promise<Set<string>> {
+    if (candidateIds.length === 0) return new Set();
+    const table = await getToolCallsTable();
+    const results = await table.query().select(['id']).toArray();
+    const allIds = new Set(results.map((row) => row.id as string));
+    return new Set(candidateIds.filter((id) => allIds.has(id)));
+  },
+
+  async bulkInsertNew(toolCalls: ToolCall[], existingIds: Set<string>): Promise<number> {
+    const newToolCalls = toolCalls.filter((tc) => !existingIds.has(tc.id));
+    if (newToolCalls.length === 0) return 0;
+
+    const table = await getToolCallsTable();
+    const rows = newToolCalls.map((tc) => ({
+      id: tc.id,
+      message_id: tc.messageId,
+      conversation_id: tc.conversationId,
+      type: tc.type,
+      input: tc.input,
+      output: tc.output ?? '',
+      file_path: tc.filePath ?? '',
+    }));
+
+    await table.add(rows);
+    return newToolCalls.length;
+  },
+
   async findByFile(filePath: string): Promise<ToolCall[]> {
     return withConnectionRecovery(async () => {
       const table = await getToolCallsTable();
@@ -918,6 +963,15 @@ export const toolCallRepo = {
     await withConnectionRecovery(async () => {
       const table = await getToolCallsTable();
       await table.delete(`conversation_id = '${conversationId}'`);
+    });
+  },
+
+  async deleteByConversationIds(conversationIds: string[]): Promise<void> {
+    if (conversationIds.length === 0) return;
+    await withConnectionRecovery(async () => {
+      const table = await getToolCallsTable();
+      const idList = conversationIds.map((id) => `'${id}'`).join(', ');
+      await table.delete(`conversation_id IN (${idList})`);
     });
   },
 };
@@ -983,6 +1037,30 @@ export const filesRepo = {
     await table.add(rows);
   },
 
+  async getExistingIds(candidateIds: string[]): Promise<Set<string>> {
+    if (candidateIds.length === 0) return new Set();
+    const table = await getFilesTable();
+    const results = await table.query().select(['id']).toArray();
+    const allIds = new Set(results.map((row) => row.id as string));
+    return new Set(candidateIds.filter((id) => allIds.has(id)));
+  },
+
+  async bulkInsertNew(files: ConversationFile[], existingIds: Set<string>): Promise<number> {
+    const newFiles = files.filter((f) => !existingIds.has(f.id));
+    if (newFiles.length === 0) return 0;
+
+    const table = await getFilesTable();
+    const rows = newFiles.map((f) => ({
+      id: f.id,
+      conversation_id: f.conversationId,
+      file_path: f.filePath,
+      role: f.role,
+    }));
+
+    await table.add(rows);
+    return newFiles.length;
+  },
+
   async findByConversation(conversationId: string): Promise<ConversationFile[]> {
     return withConnectionRecovery(async () => {
       const table = await getFilesTable();
@@ -1006,6 +1084,15 @@ export const filesRepo = {
       await table.delete(`conversation_id = '${conversationId}'`);
     });
   },
+
+  async deleteByConversationIds(conversationIds: string[]): Promise<void> {
+    if (conversationIds.length === 0) return;
+    await withConnectionRecovery(async () => {
+      const table = await getFilesTable();
+      const idList = conversationIds.map((id) => `'${id}'`).join(', ');
+      await table.delete(`conversation_id IN (${idList})`);
+    });
+  },
 };
 
 // ============ Message Files Repository ============
@@ -1024,6 +1111,31 @@ export const messageFilesRepo = {
     }));
 
     await table.add(rows);
+  },
+
+  async getExistingIds(candidateIds: string[]): Promise<Set<string>> {
+    if (candidateIds.length === 0) return new Set();
+    const table = await getMessageFilesTable();
+    const results = await table.query().select(['id']).toArray();
+    const allIds = new Set(results.map((row) => row.id as string));
+    return new Set(candidateIds.filter((id) => allIds.has(id)));
+  },
+
+  async bulkInsertNew(files: MessageFile[], existingIds: Set<string>): Promise<number> {
+    const newFiles = files.filter((f) => !existingIds.has(f.id));
+    if (newFiles.length === 0) return 0;
+
+    const table = await getMessageFilesTable();
+    const rows = newFiles.map((f) => ({
+      id: f.id,
+      message_id: f.messageId,
+      conversation_id: f.conversationId,
+      file_path: f.filePath,
+      role: f.role,
+    }));
+
+    await table.add(rows);
+    return newFiles.length;
   },
 
   async findByMessage(messageId: string): Promise<MessageFile[]> {
@@ -1068,12 +1180,21 @@ export const messageFilesRepo = {
       await table.delete(`conversation_id = '${conversationId}'`);
     });
   },
+
+  async deleteByConversationIds(conversationIds: string[]): Promise<void> {
+    if (conversationIds.length === 0) return;
+    await withConnectionRecovery(async () => {
+      const table = await getMessageFilesTable();
+      const idList = conversationIds.map((id) => `'${id}'`).join(', ');
+      await table.delete(`conversation_id IN (${idList})`);
+    });
+  },
 };
 
 // ============ File Edits Repository ============
 
 export const fileEditsRepo = {
-  async getExistingIds(conversationId: string): Promise<Set<string>> {
+  async getExistingIdsByConversation(conversationId: string): Promise<Set<string>> {
     const table = await getFileEditsTable();
     const results = await table
       .query()
@@ -1081,6 +1202,14 @@ export const fileEditsRepo = {
       .toArray();
     const ids = results.map((row) => row.id as string);
     return new Set(ids);
+  },
+
+  async getExistingIds(candidateIds: string[]): Promise<Set<string>> {
+    if (candidateIds.length === 0) return new Set();
+    const table = await getFileEditsTable();
+    const results = await table.query().select(['id']).toArray();
+    const allIds = new Set(results.map((row) => row.id as string));
+    return new Set(candidateIds.filter((id) => allIds.has(id)));
   },
 
   async bulkInsert(edits: FileEdit[]): Promise<void> {
@@ -1175,6 +1304,15 @@ export const fileEditsRepo = {
     await withConnectionRecovery(async () => {
       const table = await getFileEditsTable();
       await table.delete(`conversation_id = '${conversationId}'`);
+    });
+  },
+
+  async deleteByConversationIds(conversationIds: string[]): Promise<void> {
+    if (conversationIds.length === 0) return;
+    await withConnectionRecovery(async () => {
+      const table = await getFileEditsTable();
+      const idList = conversationIds.map((id) => `'${id}'`).join(', ');
+      await table.delete(`conversation_id IN (${idList})`);
     });
   },
 };

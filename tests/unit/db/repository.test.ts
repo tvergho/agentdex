@@ -384,7 +384,7 @@ describe('messageRepo', () => {
     });
   });
 
-  describe('getExistingIds', () => {
+  describe('getExistingIdsByConversation', () => {
     it('returns set of message ids for conversation', async () => {
       const conv = createConversation();
       const msg1 = createMessage(conv.id);
@@ -392,11 +392,28 @@ describe('messageRepo', () => {
       await db.seed({ conversations: [conv], messages: [msg1, msg2] });
 
       const { messageRepo } = await import('../../../src/db/repository');
-      const ids = await messageRepo.getExistingIds(conv.id);
+      const ids = await messageRepo.getExistingIdsByConversation(conv.id);
 
       expect(ids.size).toBe(2);
       expect(ids.has(msg1.id)).toBe(true);
       expect(ids.has(msg2.id)).toBe(true);
+    });
+  });
+
+  describe('getExistingIds', () => {
+    it('returns set of existing ids from candidates', async () => {
+      const conv = createConversation();
+      const msg1 = createMessage(conv.id);
+      const msg2 = createMessage(conv.id);
+      await db.seed({ conversations: [conv], messages: [msg1, msg2] });
+
+      const { messageRepo } = await import('../../../src/db/repository');
+      const ids = await messageRepo.getExistingIds([msg1.id, msg2.id, 'non-existent']);
+
+      expect(ids.size).toBe(2);
+      expect(ids.has(msg1.id)).toBe(true);
+      expect(ids.has(msg2.id)).toBe(true);
+      expect(ids.has('non-existent')).toBe(false);
     });
   });
 });

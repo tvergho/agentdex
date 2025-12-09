@@ -410,19 +410,18 @@ export async function runSync(
         }
       }
 
-      // Delete related data for all conversations we're about to insert (in parallel batches)
-      const DELETE_BATCH_SIZE = 10;
-      for (let i = 0; i < candidateIds.length; i += DELETE_BATCH_SIZE) {
-        const batchIds = candidateIds.slice(i, i + DELETE_BATCH_SIZE);
-        await Promise.all(
-          batchIds.flatMap((id) => [
-            messageRepo.deleteByConversation(id),
-            toolCallRepo.deleteByConversation(id),
-            filesRepo.deleteByConversation(id),
-            messageFilesRepo.deleteByConversation(id),
-            fileEditsRepo.deleteByConversation(id),
-          ])
-        );
+      // Delete related data for all conversations using bulk delete
+      // Process in batches to avoid SQL IN clause limits (typically ~1000 items)
+      const BULK_DELETE_BATCH_SIZE = 500;
+      for (let i = 0; i < candidateIds.length; i += BULK_DELETE_BATCH_SIZE) {
+        const batchIds = candidateIds.slice(i, i + BULK_DELETE_BATCH_SIZE);
+        await Promise.all([
+          messageRepo.deleteByConversationIds(batchIds),
+          toolCallRepo.deleteByConversationIds(batchIds),
+          filesRepo.deleteByConversationIds(batchIds),
+          messageFilesRepo.deleteByConversationIds(batchIds),
+          fileEditsRepo.deleteByConversationIds(batchIds),
+        ]);
       }
     } else {
       // Incremental mode: only insert NEW conversations (skip existing ones)
@@ -502,32 +501,44 @@ export async function runSync(
     progress.projectsProcessed = projectPaths.size;
     onProgress({ ...progress });
 
+    // Get existing IDs for all tables in parallel (for idempotent inserts)
+    // This prevents duplicates if sync is interrupted and rerun
+    const [existingMsgIds, existingToolCallIds, existingFileIds, existingMsgFileIds, existingEditIds] =
+      await Promise.all([
+        messageRepo.getExistingIds(newMessages.map((m) => m.id)),
+        toolCallRepo.getExistingIds(newToolCalls.map((tc) => tc.id)),
+        filesRepo.getExistingIds(newFiles.map((f) => f.id)),
+        messageFilesRepo.getExistingIds(newMessageFiles.map((f) => f.id)),
+        fileEditsRepo.getExistingIds(newFileEdits.map((e) => e.id)),
+      ]);
+
     // Insert messages, tool calls, files, etc. in parallel (different tables)
-    const parallelInserts: Promise<void>[] = [];
+    // Use bulkInsertNew for idempotent inserts that skip existing records
+    const parallelInserts: Promise<number | void>[] = [];
 
     if (newMessages.length > 0) {
       parallelInserts.push(
-        messageRepo.bulkInsert(newMessages).then(() => {
-          progress.messagesIndexed = newMessages.length;
+        messageRepo.bulkInsertNew(newMessages, existingMsgIds).then((count) => {
+          progress.messagesIndexed = count;
           onProgress({ ...progress });
         })
       );
     }
 
     if (newToolCalls.length > 0) {
-      parallelInserts.push(toolCallRepo.bulkInsert(newToolCalls));
+      parallelInserts.push(toolCallRepo.bulkInsertNew(newToolCalls, existingToolCallIds));
     }
 
     if (newFiles.length > 0) {
-      parallelInserts.push(filesRepo.bulkInsert(newFiles));
+      parallelInserts.push(filesRepo.bulkInsertNew(newFiles, existingFileIds));
     }
 
     if (newMessageFiles.length > 0) {
-      parallelInserts.push(messageFilesRepo.bulkInsert(newMessageFiles));
+      parallelInserts.push(messageFilesRepo.bulkInsertNew(newMessageFiles, existingMsgFileIds));
     }
 
     if (newFileEdits.length > 0) {
-      parallelInserts.push(fileEditsRepo.bulkInsert(newFileEdits));
+      parallelInserts.push(fileEditsRepo.bulkInsertNew(newFileEdits, existingEditIds));
     }
 
     await Promise.all(parallelInserts);

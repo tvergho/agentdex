@@ -160,74 +160,81 @@ export async function createCodexClient(): Promise<CodexClient | null> {
     return null;
   }
 
-  // Create a session via POST /session
-  try {
-    interface SessionCreateResponse {
-      id: string;
-    }
+  // Helper to create a fresh session
+  interface SessionCreateResponse {
+    id: string;
+  }
+  const createSession = async (): Promise<string> => {
     const sessionResponse = await apiRequest<SessionCreateResponse>(
       state.url,
       '/session',
       'POST',
       {}
     );
-    state.sessionId = sessionResponse.id;
-  } catch (error) {
-    state.process.kill();
-    console.error('Failed to create Codex session:', error);
-    return null;
-  }
+    return sessionResponse.id;
+  };
+
+  // Helper to delete a session
+  const deleteSession = async (sessionId: string): Promise<void> => {
+    try {
+      await fetch(`${state.url}/session/${sessionId}`, {
+        method: 'DELETE',
+      });
+    } catch {
+      // Ignore cleanup errors
+    }
+  };
 
   return {
     async prompt(text: string, options?: { system?: string }): Promise<string> {
-      if (!state.sessionId) {
-        throw new Error('No active session');
+      // Create a fresh session for each prompt to avoid context pollution
+      // This ensures each title generation is independent
+      let sessionId: string;
+      try {
+        sessionId = await createSession();
+      } catch (error) {
+        throw new Error(`Failed to create session: ${error}`);
       }
 
-      interface PromptResponse {
-        content?: string;
-        text?: string;
-        message?: { content?: string };
-        parts?: Array<{ type?: string; text?: string; content?: string }>;
-      }
-
-      // POST /session/{id}/message
-      // OpenCode expects: { parts: [{ type: "text", text: "..." }], system?: "..." }
-      const response = await apiRequest<PromptResponse>(
-        state.url,
-        `/session/${state.sessionId}/message`,
-        'POST',
-        {
-          parts: [{ type: 'text', text }],
-          ...(options?.system && { system: options.system }),
+      try {
+        interface PromptResponse {
+          content?: string;
+          text?: string;
+          message?: { content?: string };
+          parts?: Array<{ type?: string; text?: string; content?: string }>;
         }
-      );
 
-      // Extract text from response (structure may vary)
-      if (response.content) return response.content;
-      if (response.text) return response.text;
-      if (response.message?.content) return response.message.content;
-      // Response parts are typically assistant responses
-      if (response.parts) {
-        const textParts = response.parts.filter(p => p.type === 'text' && p.text);
-        if (textParts.length > 0) {
-          return textParts.map(p => p.text).join('\n');
+        // POST /session/{id}/message
+        // OpenCode expects: { parts: [{ type: "text", text: "..." }], system?: "..." }
+        const response = await apiRequest<PromptResponse>(
+          state.url,
+          `/session/${sessionId}/message`,
+          'POST',
+          {
+            parts: [{ type: 'text', text }],
+            ...(options?.system && { system: options.system }),
+          }
+        );
+
+        // Extract text from response (structure may vary)
+        if (response.content) return response.content;
+        if (response.text) return response.text;
+        if (response.message?.content) return response.message.content;
+        // Response parts are typically assistant responses
+        if (response.parts) {
+          const textParts = response.parts.filter(p => p.type === 'text' && p.text);
+          if (textParts.length > 0) {
+            return textParts.map(p => p.text).join('\n');
+          }
         }
+        return '';
+      } finally {
+        // Clean up the session after use
+        await deleteSession(sessionId);
       }
-      return '';
     },
 
     async close(): Promise<void> {
-      if (state.sessionId) {
-        try {
-          // DELETE /session/{id}
-          await fetch(`${state.url}/session/${state.sessionId}`, {
-            method: 'DELETE',
-          });
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
       state.process.kill();
     },
   };
