@@ -38,6 +38,8 @@ import {
   setEmbeddingProgress,
   clearEmbeddingProgress,
   EMBEDDING_DIMENSIONS,
+  needsEmbeddingRecovery,
+  resetEmbeddingError,
 } from '../../embeddings/index';
 import { printRichSummary } from './stats';
 import { loadConfig } from '../../config/index.js';
@@ -262,6 +264,12 @@ export async function runSync(
     conversationsIndexed: 0,
     messagesIndexed: 0,
   };
+
+  // Auto-recover from embedding errors before sync
+  // This ensures embedding can restart after crashes or interruptions
+  if (needsEmbeddingRecovery()) {
+    resetEmbeddingError();
+  }
 
   // Try to acquire sync lock to prevent concurrent operations
   if (!acquireSyncLock()) {

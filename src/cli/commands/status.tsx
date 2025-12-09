@@ -8,7 +8,8 @@
 
 import React from 'react';
 import { render, Box, Text } from 'ink';
-import { getEmbeddingProgress, getModelPath, type EmbeddingProgress } from '../../embeddings/index';
+import { getEmbeddingProgress, getModelPath, needsEmbeddingRecovery, resetEmbeddingError, type EmbeddingProgress } from '../../embeddings/index';
+import { spawnBackgroundCommand } from '../../utils/spawn';
 import { existsSync, statSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getDataDir } from '../../utils/config';
@@ -147,9 +148,29 @@ function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: E
 }
 
 export async function statusCommand(): Promise<void> {
-  const progress = getEmbeddingProgress();
+  // Auto-recover from errors and restart embedding if needed
+  let progress = getEmbeddingProgress();
+  let recovered = false;
+
+  if (needsEmbeddingRecovery()) {
+    resetEmbeddingError();
+    spawnBackgroundCommand('embed');
+    recovered = true;
+    // Re-read progress after recovery
+    progress = getEmbeddingProgress();
+  }
+
   const config = loadEmbedConfig();
-  const { unmount } = render(<StatusUI progress={progress} config={config} />);
+  const { unmount } = render(
+    <Box flexDirection="column">
+      <StatusUI progress={progress} config={config} />
+      {recovered && (
+        <Box marginTop={1} paddingX={1}>
+          <Text color="green">✓ Auto-recovered from error, restarting embedding...</Text>
+        </Box>
+      )}
+    </Box>
+  );
 
   // Exit after rendering
   setTimeout(() => {

@@ -114,6 +114,41 @@ export function setEmbeddingProgress(progress: EmbeddingProgress): void {
   writeFileSync(getProgressPath(), JSON.stringify(progress, null, 2));
 }
 
+/**
+ * Check if embedding needs recovery (error state or stale embedding status).
+ * Returns true if embedding should be restarted.
+ */
+export function needsEmbeddingRecovery(): boolean {
+  const progress = getEmbeddingProgress();
+
+  // If in error state, needs recovery
+  if (progress.status === 'error') {
+    return true;
+  }
+
+  // If status shows embedding but no process is running, it's stale
+  if (progress.status === 'embedding' && !isEmbeddingInProgress()) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Reset embedding state from error to idle so it can be restarted.
+ * Preserves progress (completed count) so embedding continues from where it left off.
+ */
+export function resetEmbeddingError(): void {
+  const progress = getEmbeddingProgress();
+  if (progress.status === 'error' || (progress.status === 'embedding' && !isEmbeddingInProgress())) {
+    setEmbeddingProgress({
+      status: 'idle',
+      total: progress.total,
+      completed: progress.completed,
+    });
+  }
+}
+
 // EmbeddingGemma-300M: 2.5x faster than Qwen3-0.6B, half the model size
 const MODEL_NAME = 'embeddinggemma-300M-Q8_0.gguf';
 const MODEL_URL =

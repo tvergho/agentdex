@@ -19,7 +19,7 @@ import { connect, getMessagesTable } from '../../db/index';
 import { conversationRepo, search, searchByFilePath, getFileMatchesForConversations } from '../../db/repository';
 import { spawnDexCommand, spawnBackgroundCommand } from '../../utils/spawn';
 import { quickNeedsSync } from '../../utils/sync-cache';
-import { getEmbeddingProgress, isEmbeddingInProgress, warmupQueryServer, stopQueryServer } from '../../embeddings/index';
+import { getEmbeddingProgress, isEmbeddingInProgress, warmupQueryServer, stopQueryServer, needsEmbeddingRecovery, resetEmbeddingError } from '../../embeddings/index';
 
 // Get conversation count via child process to avoid blocking UI
 function getCountInBackground(): Promise<number> {
@@ -757,13 +757,19 @@ function UnifiedApp() {
     if (syncStartedRef.current) return;
     syncStartedRef.current = true;
 
+    // Auto-recover from embedding errors or stale status
+    // This ensures embedding resumes after crashes or interruptions
+    if (needsEmbeddingRecovery()) {
+      resetEmbeddingError();
+    }
+
     // Quick check if sync is needed (O(4) stat calls, no LanceDB)
     if (!quickNeedsSync()) {
       setSyncStatus({ phase: 'done' });
 
       // Even if sync is skipped, always spawn embed worker
       // It will check for pending embeddings and exit quickly if none needed
-      // This handles: interrupted embeddings, first-run after model download, etc.
+      // This handles: interrupted embeddings, first-run after model download, error recovery, etc.
       if (!isEmbeddingInProgress()) {
         spawnBackgroundCommand('embed');
       }
