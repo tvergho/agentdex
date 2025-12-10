@@ -5,7 +5,6 @@ import { EMBEDDING_DIMENSIONS } from '../embeddings/index';
 import { Source } from '../schema/index';
 import { existsSync, writeFileSync, unlinkSync, readFileSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { spawn } from 'child_process';
 
 let db: lancedb.Connection | null = null;
 
@@ -231,61 +230,28 @@ let messageFilesTable: Table | null = null;
 let fileEditsTable: Table | null = null;
 
 /**
- * Check if the database can be connected to by spawning a child process.
- * This avoids blocking the main event loop if LanceDB hangs during connect.
+ * Check if the database can be connected to with a timeout.
  * Returns true if connection succeeds, false if it times out or fails.
  */
 async function preflightDatabaseCheck(dbPath: string, timeoutMs = 5000): Promise<{ ok: boolean; error?: string }> {
+  // Simple timeout-based check - try to connect directly with a timeout
+  // This is faster than spawning a subprocess and avoids bun/node compatibility issues
   return new Promise((resolve) => {
-    // Spawn a quick bun/node process to test the connection
-    const runtime = process.execPath; // Use same runtime (bun or node)
-
-    const testScript = `
-      const lancedb = require('@lancedb/lancedb');
-      (async () => {
-        try {
-          const db = await lancedb.connect('${dbPath.replace(/'/g, "\\'")}');
-          const tables = await db.tableNames();
-          console.log('OK:' + tables.length);
-          process.exit(0);
-        } catch (e) {
-          console.error('ERR:' + e.message);
-          process.exit(1);
-        }
-      })();
-    `;
-
-    const child = spawn(runtime, ['-e', testScript], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: timeoutMs,
-      env: { ...process.env },
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout?.on('data', (data) => { stdout += data.toString(); });
-    child.stderr?.on('data', (data) => { stderr += data.toString(); });
-
-    const killTimeout = setTimeout(() => {
-      child.kill('SIGKILL');
+    const timeout = setTimeout(() => {
       resolve({ ok: false, error: 'Connection check timed out - database may be locked or corrupted' });
     }, timeoutMs);
 
-    child.on('close', (code) => {
-      clearTimeout(killTimeout);
-      if (code === 0 && stdout.includes('OK:')) {
+    import('@lancedb/lancedb')
+      .then((lancedb) => lancedb.connect(dbPath))
+      .then(async (testDb) => {
+        await testDb.tableNames();
+        clearTimeout(timeout);
         resolve({ ok: true });
-      } else {
-        const errMsg = stderr.includes('ERR:') ? stderr.split('ERR:')[1]?.trim() : stderr.trim();
-        resolve({ ok: false, error: errMsg || `Connection check failed with code ${code}` });
-      }
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimeout);
-      resolve({ ok: false, error: err.message });
-    });
+      })
+      .catch((err) => {
+        clearTimeout(timeout);
+        resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      });
   });
 }
 

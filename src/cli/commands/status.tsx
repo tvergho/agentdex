@@ -53,10 +53,13 @@ function formatTimeRemaining(seconds: number): string {
   return `~${Math.floor(seconds / 3600)}h ${Math.ceil((seconds % 3600) / 60)}m remaining`;
 }
 
-function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: EmbedConfig | null }) {
+function StatusUI({ progress, config, recovered }: { progress: EmbeddingProgress; config: EmbedConfig | null; recovered?: boolean }) {
   const modelPath = getModelPath();
   const modelExists = existsSync(modelPath);
   const modelSize = modelExists ? statSync(modelPath).size : 0;
+
+  // If we just recovered and spawned embed, show "Starting" instead of "Idle"
+  const effectiveStatus = recovered && progress.status === 'idle' ? 'starting' : progress.status;
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -84,11 +87,12 @@ function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: E
 
       <Box marginTop={1}>
         <Text>Status: </Text>
-        {progress.status === 'idle' && <Text color="gray">Idle</Text>}
-        {progress.status === 'downloading' && <Text color="cyan">Downloading model...</Text>}
-        {progress.status === 'embedding' && <Text color="cyan">Generating embeddings...</Text>}
-        {progress.status === 'done' && <Text color="green">✓ Complete</Text>}
-        {progress.status === 'error' && <Text color="red">✗ Error</Text>}
+        {effectiveStatus === 'idle' && <Text color="gray">Idle</Text>}
+        {effectiveStatus === 'starting' && <Text color="cyan">Starting...</Text>}
+        {effectiveStatus === 'downloading' && <Text color="cyan">Downloading model...</Text>}
+        {effectiveStatus === 'embedding' && <Text color="cyan">Generating embeddings...</Text>}
+        {effectiveStatus === 'done' && <Text color="green">✓ Complete</Text>}
+        {effectiveStatus === 'error' && <Text color="red">✗ Error</Text>}
       </Box>
 
       {progress.status === 'embedding' && (
@@ -134,13 +138,15 @@ function StatusUI({ progress, config }: { progress: EmbeddingProgress; config: E
 
       <Box marginTop={2}>
         <Text dimColor>
-          {progress.status === 'embedding'
+          {effectiveStatus === 'embedding'
             ? 'Embeddings are being generated in the background.'
-            : progress.status === 'idle'
-              ? 'Run "dex sync" to start syncing and embedding.'
-              : progress.status === 'done'
-                ? 'Embeddings are ready. Search will use hybrid FTS + vector.'
-                : ''}
+            : effectiveStatus === 'starting'
+              ? 'Embedding process is starting in the background...'
+              : effectiveStatus === 'idle'
+                ? 'Run "dex sync" to start syncing and embedding.'
+                : effectiveStatus === 'done'
+                  ? 'Embeddings are ready. Search will use hybrid FTS + vector.'
+                  : ''}
         </Text>
       </Box>
     </Box>
@@ -163,7 +169,7 @@ export async function statusCommand(): Promise<void> {
   const config = loadEmbedConfig();
   const { unmount } = render(
     <Box flexDirection="column">
-      <StatusUI progress={progress} config={config} />
+      <StatusUI progress={progress} config={config} recovered={recovered} />
       {recovered && (
         <Box marginTop={1} paddingX={1}>
           <Text color="green">✓ Auto-recovered from error, restarting embedding...</Text>
