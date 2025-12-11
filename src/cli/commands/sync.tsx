@@ -432,11 +432,64 @@ export async function runSync(
         ]);
       }
     } else {
-      // Incremental mode: only insert NEW conversations (skip existing ones)
-      existingIds = await conversationRepo.getExistingIds(candidateIds);
-      conversationsToSync = allConversations.filter(
-        (c) => !existingIds.has(c.normalized.conversation.id)
-      );
+      // Incremental mode: sync NEW conversations + UPDATED conversations (more messages)
+      const existingMetadata = await conversationRepo.getExistingConversationMetadata(candidateIds);
+      existingIds = new Set(existingMetadata.keys());
+
+      // Separate into new vs updated conversations
+      const newConversations: typeof allConversations = [];
+      const updatedConversations: typeof allConversations = [];
+
+      for (const conv of allConversations) {
+        const id = conv.normalized.conversation.id;
+        const existing = existingMetadata.get(id);
+
+        if (!existing) {
+          // Brand new conversation
+          newConversations.push(conv);
+        } else {
+          // Check if conversation has been updated (more messages or newer timestamp)
+          const newMsgCount = conv.normalized.conversation.messageCount || 0;
+          const newUpdatedAt = conv.normalized.conversation.updatedAt;
+          const existingMsgCount = existing.messageCount;
+          const existingUpdatedAt = existing.updatedAt;
+
+          // Consider updated if:
+          // 1. Has more messages, OR
+          // 2. Has a newer updated_at timestamp
+          const hasMoreMessages = newMsgCount > existingMsgCount;
+          const hasNewerTimestamp = newUpdatedAt && existingUpdatedAt && newUpdatedAt > existingUpdatedAt;
+
+          if (hasMoreMessages || hasNewerTimestamp) {
+            updatedConversations.push(conv);
+          }
+        }
+      }
+
+      // For updated conversations, delete old data first
+      if (updatedConversations.length > 0) {
+        // Kill embedding processes since we're modifying the database
+        await killEmbeddingProcesses();
+
+        const updatedIds = updatedConversations.map((c) => c.normalized.conversation.id);
+
+        // Delete old messages, tool calls, files, etc. for updated conversations
+        // Process in batches to avoid SQL IN clause limits
+        const BULK_DELETE_BATCH_SIZE = 500;
+        for (let i = 0; i < updatedIds.length; i += BULK_DELETE_BATCH_SIZE) {
+          const batchIds = updatedIds.slice(i, i + BULK_DELETE_BATCH_SIZE);
+          await Promise.all([
+            messageRepo.deleteByConversationIds(batchIds),
+            toolCallRepo.deleteByConversationIds(batchIds),
+            filesRepo.deleteByConversationIds(batchIds),
+            messageFilesRepo.deleteByConversationIds(batchIds),
+            fileEditsRepo.deleteByConversationIds(batchIds),
+          ]);
+        }
+      }
+
+      // Combine new and updated conversations for syncing
+      conversationsToSync = [...newConversations, ...updatedConversations];
     }
 
     // If nothing new to sync, still check for pending embeddings before exiting

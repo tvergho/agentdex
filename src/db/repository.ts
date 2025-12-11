@@ -209,6 +209,37 @@ export const conversationRepo = {
     return new Set(candidateIds.filter((id) => existingIds.has(id)));
   },
 
+  /**
+   * Get existing conversation metadata for update detection.
+   * Returns a map of conversation ID -> { messageCount, updatedAt }
+   * Used to detect conversations that have been updated with new messages.
+   */
+  async getExistingConversationMetadata(
+    candidateIds: string[]
+  ): Promise<Map<string, { messageCount: number; updatedAt: string | undefined }>> {
+    if (candidateIds.length === 0) return new Map();
+
+    const table = await getConversationsTable();
+    const allExisting = await table
+      .query()
+      .select(['id', 'message_count', 'updated_at'])
+      .toArray();
+
+    const metadata = new Map<string, { messageCount: number; updatedAt: string | undefined }>();
+    for (const row of allExisting) {
+      const id = row.id as string;
+      // Only include IDs that are in the candidate list
+      if (candidateIds.includes(id)) {
+        metadata.set(id, {
+          messageCount: (row.message_count as number) || 0,
+          updatedAt: (row.updated_at as string) || undefined,
+        });
+      }
+    }
+
+    return metadata;
+  },
+
   async bulkUpsert(conversations: Conversation[]): Promise<void> {
     if (conversations.length === 0) return;
 

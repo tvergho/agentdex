@@ -105,14 +105,34 @@ export function detectClaudeCode(): boolean {
 }
 
 /**
- * Get the mtime of the projects directory (quick check for changes).
+ * Get the most recent mtime across all project directories (quick check for changes).
+ * This checks both the root projects dir AND each project subdirectory,
+ * because updating a file inside a subdirectory doesn't change the parent's mtime.
  * Returns null if directory doesn't exist.
  */
 export function getProjectsRootMtime(): number | null {
   const rootPath = getClaudeCodeRootPath();
   const projectsDir = join(rootPath, 'projects');
   try {
-    return statSync(projectsDir).mtimeMs;
+    let maxMtime = statSync(projectsDir).mtimeMs;
+
+    // Also check each project subdirectory's mtime
+    // This catches updates to existing sessions within a project
+    const entries = readdirSync(projectsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        try {
+          const subDirMtime = statSync(join(projectsDir, entry.name)).mtimeMs;
+          if (subDirMtime > maxMtime) {
+            maxMtime = subDirMtime;
+          }
+        } catch {
+          // Ignore inaccessible directories
+        }
+      }
+    }
+
+    return maxMtime;
   } catch {
     return null;
   }

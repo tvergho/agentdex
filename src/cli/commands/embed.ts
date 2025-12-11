@@ -19,6 +19,8 @@ import {
   clearEmbeddingProgress,
   acquireEmbedLock,
   releaseEmbedLock,
+  isReadRequestPending,
+  yieldToReaders,
   EMBEDDING_DIMENSIONS,
 } from '../../embeddings/index';
 import {
@@ -284,6 +286,13 @@ async function runWithServer(
       // Optional pause between batches (default 0 for max throughput)
       if (BATCH_DELAY_MS > 0 && i + SERVER_BATCH_SIZE < messages.length) {
         await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      }
+
+      // Check if a reader is waiting and yield to them
+      // This prevents crashes from concurrent read+write operations in LanceDB
+      if (isReadRequestPending()) {
+        process.stdout.write(' (yielding to reader...)');
+        await yieldToReaders(3000); // Yield for 3 seconds to let reader complete
       }
     }
 

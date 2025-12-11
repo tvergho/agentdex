@@ -8,6 +8,105 @@ import { join } from 'path';
 
 let db: lancedb.Connection | null = null;
 
+// ============ Embed Lock Check for Safe Concurrent Access ============
+// LanceDB crashes when multiple processes access the database concurrently
+// (one writing embeddings, another reading for search). We use file-based
+// locking to coordinate access between processes.
+
+const EMBED_LOCK_FILE = 'embed.lock';
+
+interface EmbedLockInfo {
+  pid: number;
+  startedAt: number;
+}
+
+/**
+ * Check if embedding is currently in progress by checking the embed lock file.
+ * This is a lightweight check that doesn't require importing the full embeddings module.
+ */
+export function isEmbedLockHeld(): boolean {
+  const lockPath = join(getDataDir(), EMBED_LOCK_FILE);
+  if (!existsSync(lockPath)) {
+    return false;
+  }
+
+  try {
+    const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as EmbedLockInfo;
+    // Check if the process is still running
+    try {
+      process.kill(lockData.pid, 0); // Signal 0 = check if process exists
+      return true; // Process is running, lock is valid
+    } catch {
+      // Process is dead, lock is stale
+      return false;
+    }
+  } catch {
+    return false; // Corrupted lock file
+  }
+}
+
+/**
+ * Wait for embedding to finish with a timeout.
+ * Returns true if embedding finished (or wasn't running), false if timed out.
+ */
+export async function waitForEmbeddingToFinish(timeoutMs = 5000, checkIntervalMs = 200): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (isEmbedLockHeld()) {
+    if (Date.now() - startTime > timeoutMs) {
+      return false; // Timed out
+    }
+    await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
+  }
+
+  return true;
+}
+
+// ============ Read Lock for Safe Concurrent Access ============
+// When a reader wants to access the database while embedding is running,
+// it sets a read lock. The embed process checks for this and yields.
+
+const READ_LOCK_FILE = 'read.lock';
+
+interface ReadLockInfo {
+  pid: number;
+  requestedAt: number;
+}
+
+/**
+ * Request read access to the database.
+ * This signals to the embed process that a reader is waiting.
+ */
+export function requestReadAccess(): void {
+  const lockPath = join(getDataDir(), READ_LOCK_FILE);
+  const lockInfo: ReadLockInfo = {
+    pid: process.pid,
+    requestedAt: Date.now(),
+  };
+  try {
+    writeFileSync(lockPath, JSON.stringify(lockInfo));
+  } catch {
+    // Ignore errors - this is a best-effort signal
+  }
+}
+
+/**
+ * Release read access request.
+ */
+export function releaseReadAccess(): void {
+  const lockPath = join(getDataDir(), READ_LOCK_FILE);
+  try {
+    if (existsSync(lockPath)) {
+      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as ReadLockInfo;
+      if (lockData.pid === process.pid) {
+        unlinkSync(lockPath);
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+}
+
 // ============ Retry Logic for LanceDB Commit Conflicts ============
 
 /**
@@ -232,25 +331,42 @@ let fileEditsTable: Table | null = null;
 /**
  * Check if the database can be connected to with a timeout.
  * Returns true if connection succeeds, false if it times out or fails.
+ *
+ * IMPORTANT: This function stores the test connection in the module-level `db` variable
+ * so it can be reused by the main connect() function. This avoids the issue of having
+ * two connections to the same embedded database, which can cause lock contention.
  */
-async function preflightDatabaseCheck(dbPath: string, timeoutMs = 5000): Promise<{ ok: boolean; error?: string }> {
+async function preflightDatabaseCheck(dbPath: string, timeoutMs = 5000): Promise<{ ok: boolean; error?: string; connection?: lancedb.Connection }> {
   // Simple timeout-based check - try to connect directly with a timeout
-  // This is faster than spawning a subprocess and avoids bun/node compatibility issues
+  // We return the connection so it can be reused, avoiding double-connection issues
   return new Promise((resolve) => {
+    let resolved = false;
+    let testConnection: lancedb.Connection | null = null;
+
     const timeout = setTimeout(() => {
-      resolve({ ok: false, error: 'Connection check timed out - database may be locked or corrupted' });
+      if (!resolved) {
+        resolved = true;
+        resolve({ ok: false, error: 'Connection check timed out - database may be locked or corrupted' });
+      }
     }, timeoutMs);
 
-    import('@lancedb/lancedb')
-      .then((lancedb) => lancedb.connect(dbPath))
-      .then(async (testDb) => {
-        await testDb.tableNames();
+    lancedb.connect(dbPath)
+      .then(async (conn) => {
+        testConnection = conn;
+        await conn.tableNames();
         clearTimeout(timeout);
-        resolve({ ok: true });
+        if (!resolved) {
+          resolved = true;
+          // Return the connection so it can be reused
+          resolve({ ok: true, connection: testConnection });
+        }
       })
       .catch((err) => {
         clearTimeout(timeout);
-        resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
+        if (!resolved) {
+          resolved = true;
+          resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
       });
   });
 }
@@ -351,89 +467,114 @@ export async function connect(): Promise<lancedb.Connection> {
   const dbPath = getLanceDBPath();
   console.error('[db] Connecting to LanceDB at', dbPath);
 
-  // Step 0: Clean up any stale application locks from crashed processes
-  cleanupStaleAppLocks();
+  // Set up a watchdog timer that will force-exit if connection takes too long
+  // This catches cases where LanceDB hangs in native code (no JS error possible)
+  const WATCHDOG_TIMEOUT_MS = 30000; // 30 seconds max for entire connection process
+  const watchdog = setTimeout(() => {
+    console.error('[db] FATAL: Connection watchdog timeout exceeded. LanceDB may be locked or corrupted.');
+    console.error('[db] Try running: rm -rf ~/.dex/lancedb && dex sync --force');
+    process.exit(1);
+  }, WATCHDOG_TIMEOUT_MS);
 
-  // Step 1: Preflight check using child process to avoid blocking main thread
-  // This catches cases where LanceDB hangs due to locks or corruption
-  const preflight = await preflightDatabaseCheck(dbPath);
-  if (!preflight.ok) {
-    // Only log on failure - successful preflight is silent
-    console.error(`[db] Preflight check failed: ${preflight.error}`);
-    console.error('[db] Attempting recovery...');
+  try {
+    // Step 0: Clean up any stale application locks from crashed processes
+    cleanupStaleAppLocks();
 
-    // Clean up stale state first
-    cleanupStaleLanceDBState(dbPath);
+    // Step 1: Preflight check - this also creates the connection we'll reuse
+    // This catches cases where LanceDB hangs due to locks or corruption
+    const preflight = await preflightDatabaseCheck(dbPath);
+    if (!preflight.ok) {
+      // Only log on failure - successful preflight is silent
+      console.error(`[db] Preflight check failed: ${preflight.error}`);
+      console.error('[db] Attempting recovery...');
 
-    // Try dropping all tables
-    if (existsSync(dbPath)) {
-      const entries = readdirSync(dbPath);
-      for (const entry of entries) {
-        if (entry.endsWith('.lance')) {
-          const tablePath = join(dbPath, entry);
-          console.error(`[db] Removing potentially corrupted table: ${entry}`);
-          try {
-            rmSync(tablePath, { recursive: true, force: true });
-          } catch {
-            // Ignore
+      // Clean up stale state first
+      cleanupStaleLanceDBState(dbPath);
+
+      // Try dropping all tables
+      if (existsSync(dbPath)) {
+        const entries = readdirSync(dbPath);
+        for (const entry of entries) {
+          if (entry.endsWith('.lance')) {
+            const tablePath = join(dbPath, entry);
+            console.error(`[db] Removing potentially corrupted table: ${entry}`);
+            try {
+              rmSync(tablePath, { recursive: true, force: true });
+            } catch {
+              // Ignore
+            }
           }
         }
       }
+
+      // Try preflight again after cleanup - this will create a fresh connection
+      const retryPreflight = await preflightDatabaseCheck(dbPath);
+      if (!retryPreflight.ok) {
+        console.error('[db] Recovery failed. Full database reset required...');
+        try {
+          rmSync(dbPath, { recursive: true, force: true });
+        } catch {
+          // Ignore
+        }
+        // After full reset, create a fresh connection
+        db = await safeConnect(dbPath);
+        console.error('[db] Database reset complete. Run "dex sync --force" to rebuild data.');
+      } else {
+        // Reuse the connection from successful retry preflight
+        db = retryPreflight.connection!;
+      }
+    } else {
+      // Reuse the connection from successful preflight (avoid double connection)
+      db = preflight.connection!;
     }
 
-    // Try preflight again after cleanup
-    const retryPreflight = await preflightDatabaseCheck(dbPath);
-    if (!retryPreflight.ok) {
-      console.error('[db] Recovery failed. Full database reset required...');
+    // If we still don't have a connection, try one more time
+    if (!db) {
       try {
-        rmSync(dbPath, { recursive: true, force: true });
-      } catch {
-        // Ignore
+        db = await safeConnect(dbPath);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[db] Connection issue: ${errorMsg}`);
+
+        // Last resort: Full reset
+        console.error('[db] Connection failed after preflight. Resetting database...');
+        try {
+          rmSync(dbPath, { recursive: true, force: true });
+        } catch {
+          // Ignore
+        }
+        db = await lancedb.connect(dbPath);
+        console.error('[db] Database reset complete. Run "dex sync --force" to rebuild data.');
       }
     }
-  }
 
-  // Step 2: Now connect in main process (should be safe after preflight)
-  try {
-    db = await safeConnect(dbPath);
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[db] Connection issue: ${errorMsg}`);
+    console.error('[db] LanceDB connected, ensuring tables...');
 
-    // Last resort: Full reset
-    console.error('[db] Connection failed after preflight. Resetting database...');
     try {
-      rmSync(dbPath, { recursive: true, force: true });
-    } catch {
-      // Ignore
-    }
-    db = await lancedb.connect(dbPath);
-    console.error('[db] Database reset complete. Run "dex sync --force" to rebuild data.');
-  }
-
-  console.error('[db] LanceDB connected, ensuring tables...');
-
-  try {
-    await ensureTables();
-  } catch (error) {
-    // If table initialization fails due to corruption, try to recover
-    if (isCorruptedDatabaseError(error)) {
-      const tableName = extractCorruptedTableName(error);
-      console.error(`[db] Detected corrupted table${tableName ? ` "${tableName}"` : ''}, attempting recovery...`);
-
-      // Drop corrupted tables and recreate
-      await recoverFromCorruption(tableName);
-
-      // Retry table initialization
       await ensureTables();
-      console.error('[db] Recovery successful. Run "dex sync --force" to rebuild data.');
-    } else {
-      throw error;
-    }
-  }
-  console.error('[db] Tables ready');
+    } catch (error) {
+      // If table initialization fails due to corruption, try to recover
+      if (isCorruptedDatabaseError(error)) {
+        const tableName = extractCorruptedTableName(error);
+        console.error(`[db] Detected corrupted table${tableName ? ` "${tableName}"` : ''}, attempting recovery...`);
 
-  return db;
+        // Drop corrupted tables and recreate
+        await recoverFromCorruption(tableName);
+
+        // Retry table initialization
+        await ensureTables();
+        console.error('[db] Recovery successful. Run "dex sync --force" to rebuild data.');
+      } else {
+        throw error;
+      }
+    }
+    console.error('[db] Tables ready');
+
+    return db;
+  } finally {
+    // Always clear the watchdog timer
+    clearTimeout(watchdog);
+  }
 }
 
 /**
@@ -466,15 +607,36 @@ export async function getMessagesTable(): Promise<Table> {
 }
 
 /**
- * Get a fresh messages table reference, bypassing the cache.
- * Use this when you need to ensure you have the latest table version,
- * such as during searches while embedding is running.
+ * Get a fresh messages table reference for read operations.
+ * This coordinates with the embed process to ensure safe access.
+ *
+ * IMPORTANT: LanceDB native bindings crash when multiple processes access the
+ * database concurrently (one writing, another reading). This function signals
+ * to the embed process that a read is needed, waits for it to yield, then proceeds.
  */
 export async function getFreshMessagesTable(): Promise<Table> {
-  // Create a completely fresh connection to get the latest table state
-  const dbPath = getLanceDBPath();
-  const freshDb = await lancedb.connect(dbPath);
-  return await freshDb.openTable('messages');
+  // If embedding is running, request read access and wait for embed to yield
+  if (isEmbedLockHeld()) {
+    requestReadAccess();
+    try {
+      // Wait for embedding to finish (it should yield within a few seconds)
+      const finished = await waitForEmbeddingToFinish(15000); // Wait up to 15s
+      if (!finished) {
+        // Embedding is still running - this is risky but we'll try anyway
+        // The withConnectionRecovery wrapper will handle any errors
+        console.error('[db] Warning: Embedding still in progress after 15s');
+      }
+    } finally {
+      releaseReadAccess();
+    }
+  }
+
+  // Ensure we have a connection
+  if (!db) {
+    await connect();
+  }
+  // Re-open the table from the SAME connection to refresh any cached state
+  return await db!.openTable('messages');
 }
 
 export async function getToolCallsTable(): Promise<Table> {

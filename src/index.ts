@@ -1,4 +1,31 @@
 #!/usr/bin/env node
+
+// Global error handlers - must be set up FIRST to catch native crashes
+// LanceDB uses native bindings that can crash without proper JS errors
+process.on('uncaughtException', (error) => {
+  console.error('[dex] Fatal error:', error.message || error);
+  if (error.stack) {
+    console.error(error.stack);
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, _promise) => {
+  console.error('[dex] Unhandled promise rejection:', reason);
+  process.exit(1);
+});
+
+// Handle SIGTERM/SIGINT gracefully
+let isShuttingDown = false;
+const gracefulShutdown = (signal: string) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.error(`\n[dex] Received ${signal}, shutting down...`);
+  process.exit(0);
+};
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 import { Command } from 'commander';
 import { createRequire } from 'module';
 import { syncCommand } from './cli/commands/sync';
