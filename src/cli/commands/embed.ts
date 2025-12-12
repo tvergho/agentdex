@@ -9,7 +9,7 @@
  * Uses llama-server for fast GPU-accelerated batch embedding
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery, yieldConnectionToReaders } from '../../db/index';
 import {
   downloadModel,
   getModelPath,
@@ -20,7 +20,6 @@ import {
   acquireEmbedLock,
   releaseEmbedLock,
   isReadRequestPending,
-  yieldToReaders,
   EMBEDDING_DIMENSIONS,
 } from '../../embeddings/index';
 import {
@@ -170,9 +169,11 @@ function prepareTexts(texts: string[]): string[] {
 
 async function runWithServer(
   messages: MessageRow[],
-  table: Awaited<ReturnType<typeof getMessagesTable>>
+  initialTable: Awaited<ReturnType<typeof getMessagesTable>>
 ): Promise<{ success: boolean; error?: string }> {
   const modelPath = getModelPath();
+  // Use let so we can get a fresh table reference after yielding to readers
+  let table = initialTable;
 
   // Helper to write a batch to DB with retries
   async function writeBatchToDb(rows: NonNullable<ReturnType<typeof buildRow>>[]) {
@@ -292,7 +293,11 @@ async function runWithServer(
       // This prevents crashes from concurrent read+write operations in LanceDB
       if (isReadRequestPending()) {
         process.stdout.write(' (yielding to reader...)');
-        await yieldToReaders(3000); // Yield for 3 seconds to let reader complete
+        // Use the connection-closing yield to fully release LanceDB access
+        // This is critical - just releasing the lock doesn't prevent the crash
+        // because the connection is still open
+        table = await yieldConnectionToReaders(releaseEmbedLock, acquireEmbedLock, 5000);
+        process.stdout.write(' (resumed)');
       }
     }
 

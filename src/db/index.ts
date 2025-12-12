@@ -107,6 +107,55 @@ export function releaseReadAccess(): void {
   }
 }
 
+/**
+ * Yield to pending readers by closing the LanceDB connection.
+ * This is called by the embed process to allow readers (TUI) to access the database.
+ *
+ * CRITICAL: LanceDB crashes if multiple processes have connections simultaneously.
+ * This function fully closes the connection so readers can safely connect.
+ *
+ * @param releaseEmbedLockFn - Function to release the embed lock (from embeddings module)
+ * @param acquireEmbedLockFn - Function to reacquire the embed lock
+ * @param yieldDurationMs - How long to wait for reader to finish
+ * @returns Fresh messages table reference after reconnecting
+ */
+export async function yieldConnectionToReaders(
+  releaseEmbedLockFn: () => void,
+  acquireEmbedLockFn: () => boolean,
+  yieldDurationMs = 5000
+): Promise<Table> {
+  // Step 1: Close our connection so reader can safely connect
+  console.error('[db] Yielding connection to reader...');
+  await closeConnection();
+
+  // Step 2: Release the embed lock
+  releaseEmbedLockFn();
+
+  // Step 3: Wait for reader to finish
+  // Check periodically if read lock is gone (reader finished)
+  const startTime = Date.now();
+  const checkInterval = 500;
+  while (Date.now() - startTime < yieldDurationMs) {
+    const readLockPath = join(getDataDir(), READ_LOCK_FILE);
+    if (!existsSync(readLockPath)) {
+      // Reader finished, we can proceed
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, checkInterval));
+  }
+
+  // Step 4: Reacquire embed lock
+  const reacquired = acquireEmbedLockFn();
+  if (!reacquired) {
+    throw new Error('Failed to reacquire embed lock after yielding to reader');
+  }
+
+  // Step 5: Reconnect and return fresh table reference
+  console.error('[db] Reconnecting after yield...');
+  await connect();
+  return await getMessagesTable();
+}
+
 // ============ Retry Logic for LanceDB Commit Conflicts ============
 
 /**
@@ -466,6 +515,24 @@ export async function connect(): Promise<lancedb.Connection> {
 
   const dbPath = getLanceDBPath();
   console.error('[db] Connecting to LanceDB at', dbPath);
+
+  // If embedding is running, signal read request and wait for it to yield
+  // This prevents the native binding crash from concurrent read+write access
+  if (isEmbedLockHeld()) {
+    console.error('[db] Embedding in progress, requesting read access...');
+    requestReadAccess();
+    try {
+      // Wait up to 30 seconds for embed to yield (it checks every batch)
+      const finished = await waitForEmbeddingToFinish(30000);
+      if (!finished) {
+        console.error('[db] Warning: Embedding still running after 30s, proceeding anyway');
+      } else {
+        console.error('[db] Embedding yielded, proceeding with connection');
+      }
+    } finally {
+      releaseReadAccess();
+    }
+  }
 
   // Set up a watchdog timer that will force-exit if connection takes too long
   // This catches cases where LanceDB hangs in native code (no JS error possible)
