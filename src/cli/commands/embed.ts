@@ -9,7 +9,7 @@
  * Uses llama-server for fast GPU-accelerated batch embedding
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery, yieldConnectionToReaders } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery, yieldConnectionToReaders, closeConnection } from '../../db/index';
 import {
   downloadModel,
   getModelPath,
@@ -408,22 +408,63 @@ async function runBackgroundEmbedding(): Promise<void> {
       startedAt: new Date().toISOString(),
     });
 
+    // Helper to yield to readers during startup (before embedding loop starts)
+    // This is critical because model download and benchmark can take a long time
+    const yieldToReadersIfNeeded = async () => {
+      if (isReadRequestPending()) {
+        console.log('\n[embed] Reader waiting, yielding connection...');
+        await closeConnection();
+        releaseEmbedLock();
+        // Wait for reader to finish (check every 500ms for up to 10s)
+        const startTime = Date.now();
+        while (Date.now() - startTime < 10000) {
+          if (!isReadRequestPending()) break;
+          await new Promise(r => setTimeout(r, 500));
+        }
+        // Reacquire lock and reconnect
+        if (!acquireEmbedLock()) {
+          throw new Error('Failed to reacquire embed lock after yielding');
+        }
+        await connect();
+        console.log('[embed] Resumed after yielding to reader');
+      }
+    };
+
+    // Check for readers before slow operations
+    await yieldToReadersIfNeeded();
+
     // Download model if needed
     const modelPath = getModelPath();
     if (!existsSync(modelPath)) {
+      // Close connection during download - it can take a while
+      await closeConnection();
+      releaseEmbedLock();
+
       console.log('Downloading embedding model...');
       await downloadModel((downloaded, total) => {
         const pct = Math.round((downloaded / total) * 100);
         process.stdout.write(`\rDownloading model: ${pct}%`);
       });
       console.log('\nModel downloaded.');
+
+      // Reacquire lock and reconnect
+      if (!acquireEmbedLock()) {
+        throw new Error('Failed to reacquire embed lock after model download');
+      }
+      await connect();
     }
+
+    // Check for readers before benchmark
+    await yieldToReadersIfNeeded();
 
     // Auto-benchmark if no config exists (first run calibration)
     if (!hasConfig()) {
       console.log('\n🔬 First run - calibrating optimal batch size for your system...');
       await runAutoBenchmark();
     }
+
+    // Check for readers before starting main embedding
+    await yieldToReadersIfNeeded();
 
     // Load and apply config
     const cfg = loadConfig();

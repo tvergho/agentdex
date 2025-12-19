@@ -23,8 +23,9 @@ interface EmbedLockInfo {
 /**
  * Check if embedding is currently in progress by checking the embed lock file.
  * This is a lightweight check that doesn't require importing the full embeddings module.
+ * @param excludeSelf If true, returns false if the current process holds the lock
  */
-export function isEmbedLockHeld(): boolean {
+export function isEmbedLockHeld(excludeSelf = false): boolean {
   const lockPath = join(getDataDir(), EMBED_LOCK_FILE);
   if (!existsSync(lockPath)) {
     return false;
@@ -32,6 +33,12 @@ export function isEmbedLockHeld(): boolean {
 
   try {
     const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as EmbedLockInfo;
+
+    // If excludeSelf is true and we own the lock, return false
+    if (excludeSelf && lockData.pid === process.pid) {
+      return false;
+    }
+
     // Check if the process is still running
     try {
       process.kill(lockData.pid, 0); // Signal 0 = check if process exists
@@ -516,21 +523,31 @@ export async function connect(): Promise<lancedb.Connection> {
   const dbPath = getLanceDBPath();
   console.error('[db] Connecting to LanceDB at', dbPath);
 
-  // If embedding is running, signal read request and wait for it to yield
+  // If embedding is running (by ANOTHER process), signal read request and wait for it to yield
   // This prevents the native binding crash from concurrent read+write access
-  if (isEmbedLockHeld()) {
+  // Use excludeSelf=true so the embed process doesn't wait for its own lock
+  if (isEmbedLockHeld(true)) {
     console.error('[db] Embedding in progress, requesting read access...');
     requestReadAccess();
     try {
-      // Wait up to 30 seconds for embed to yield (it checks every batch)
-      const finished = await waitForEmbeddingToFinish(30000);
+      // Wait up to 60 seconds for embed to yield (it checks every batch)
+      // Embed process may be starting up (downloading model, starting llama-server)
+      const finished = await waitForEmbeddingToFinish(60000);
       if (!finished) {
-        console.error('[db] Warning: Embedding still running after 30s, proceeding anyway');
+        // CRITICAL: Do NOT proceed if embedding is still running!
+        // LanceDB crashes if two processes have connections simultaneously.
+        // Instead, throw an error so the user knows to wait.
+        releaseReadAccess();
+        throw new Error(
+          'Embedding is in progress and did not yield within 60 seconds. ' +
+          'Please wait for embedding to complete or kill the embed process: pkill -f "dex embed"'
+        );
       } else {
         console.error('[db] Embedding yielded, proceeding with connection');
       }
-    } finally {
+    } catch (e) {
       releaseReadAccess();
+      throw e;
     }
   }
 
@@ -682,8 +699,8 @@ export async function getMessagesTable(): Promise<Table> {
  * to the embed process that a read is needed, waits for it to yield, then proceeds.
  */
 export async function getFreshMessagesTable(): Promise<Table> {
-  // If embedding is running, request read access and wait for embed to yield
-  if (isEmbedLockHeld()) {
+  // If embedding is running (by another process), request read access and wait for embed to yield
+  if (isEmbedLockHeld(true)) {
     requestReadAccess();
     try {
       // Wait for embedding to finish (it should yield within a few seconds)
