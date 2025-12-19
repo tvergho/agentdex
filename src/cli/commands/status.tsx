@@ -8,8 +8,8 @@
 
 import React from 'react';
 import { render, Box, Text } from 'ink';
-import { getEmbeddingProgress, getModelPath, needsEmbeddingRecovery, resetEmbeddingError, type EmbeddingProgress } from '../../embeddings/index';
-import { spawnBackgroundCommand } from '../../utils/spawn';
+import { getEmbeddingProgress, getModelPath, needsEmbeddingRecovery, resetEmbeddingError, isEmbeddingInProgress, type EmbeddingProgress } from '../../embeddings/index';
+import { spawnBackgroundCommandWithRetry } from '../../utils/spawn';
 import { existsSync, statSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getDataDir } from '../../utils/config';
@@ -157,12 +157,25 @@ export async function statusCommand(): Promise<void> {
   // Auto-recover from errors and restart embedding if needed
   let progress = getEmbeddingProgress();
   let recovered = false;
+  let spawnFailed = false;
 
   if (needsEmbeddingRecovery()) {
     resetEmbeddingError();
-    spawnBackgroundCommand('embed');
-    recovered = true;
-    // Re-read progress after recovery
+    
+    // Use retry mechanism to ensure embed process starts
+    // Pattern matches any of: "dex embed", "embed.ts", or llama-server (started by embed)
+    const success = await spawnBackgroundCommandWithRetry('embed', 'embed', {
+      maxRetries: 3,
+      verifyDelayMs: 1500, // Give enough time for process to start
+    });
+    
+    if (success) {
+      recovered = true;
+    } else {
+      spawnFailed = true;
+    }
+    
+    // Re-read progress after recovery attempt
     progress = getEmbeddingProgress();
   }
 
@@ -175,11 +188,16 @@ export async function statusCommand(): Promise<void> {
           <Text color="green">✓ Auto-recovered from error, restarting embedding...</Text>
         </Box>
       )}
+      {spawnFailed && (
+        <Box marginTop={1} paddingX={1}>
+          <Text color="red">✗ Failed to start embedding process. Try running: dex sync --force</Text>
+        </Box>
+      )}
     </Box>
   );
 
-  // Exit after rendering
+  // Wait a bit longer to show the message
   setTimeout(() => {
     unmount();
-  }, 100);
+  }, 200);
 }

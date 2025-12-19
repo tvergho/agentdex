@@ -11,7 +11,7 @@ import React, { useState, useEffect } from 'react';
 import { render, Box, Text } from 'ink';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { spawnBackgroundCommand } from '../../utils/spawn';
+import { spawnBackgroundCommand, spawnBackgroundCommandWithRetry } from '../../utils/spawn';
 import { isEmbeddingInProgress } from '../../embeddings/index';
 
 const execAsync = promisify(exec);
@@ -245,14 +245,18 @@ function SyncUI({ progress }: { progress: SyncProgress }) {
   );
 }
 
-function spawnBackgroundEmbedding(): void {
+async function spawnBackgroundEmbedding(): Promise<boolean> {
   // Check if embedding is already running to prevent duplicate processes
   if (isEmbeddingInProgress()) {
-    return;
+    return true;
   }
   // Spawn background embedding process with low priority (nice 19 = lowest priority)
   // This minimizes impact on user's foreground work
-  spawnBackgroundCommand('embed');
+  // Use retry mechanism to ensure the process actually starts
+  return spawnBackgroundCommandWithRetry('embed', 'embed', {
+    maxRetries: 3,
+    verifyDelayMs: 1500,
+  });
 }
 
 export async function runSync(
@@ -299,10 +303,18 @@ export async function runSync(
     onProgress({ ...progress });
 
     const adapterAvailability = await Promise.all(
-      adapters.map(async (adapter) => ({
-        adapter,
-        available: await adapter.detect(),
-      }))
+      adapters.map(async (adapter) => {
+        try {
+          return {
+            adapter,
+            available: await adapter.detect(),
+          };
+        } catch (error) {
+          // Log but don't fail - skip adapters that error during detection
+          console.error(`[sync] Error detecting ${adapter.name}:`, error);
+          return { adapter, available: false };
+        }
+      })
     );
     const availableAdapters = adapterAvailability
       .filter(({ available }) => available)
@@ -313,10 +325,18 @@ export async function runSync(
     onProgress({ ...progress });
 
     const adapterLocations = await Promise.all(
-      availableAdapters.map(async (adapter) => ({
-        adapter,
-        locations: await adapter.discover(),
-      }))
+      availableAdapters.map(async (adapter) => {
+        try {
+          return {
+            adapter,
+            locations: await adapter.discover(),
+          };
+        } catch (error) {
+          // Log but don't fail - skip adapters that error during discovery
+          console.error(`[sync] Error discovering ${adapter.name}:`, error);
+          return { adapter, locations: [] };
+        }
+      })
     );
 
     // Phase 1c: Filter locations that need syncing and extract in parallel
@@ -353,13 +373,19 @@ export async function runSync(
           progress.currentSource = adapterName;
           progress.extractionProgress = undefined; // Reset for new extraction
           onProgress({ ...progress });
-          const rawConversations = await adapter.extract(location, (extractionProg) => {
-            // Use captured adapterName, not progress.currentSource (which may have changed)
-            progress.currentSource = adapterName;
-            progress.extractionProgress = extractionProg;
-            onProgress({ ...progress });
-          });
-          return { adapter, location, rawConversations };
+          try {
+            const rawConversations = await adapter.extract(location, (extractionProg) => {
+              // Use captured adapterName, not progress.currentSource (which may have changed)
+              progress.currentSource = adapterName;
+              progress.extractionProgress = extractionProg;
+              onProgress({ ...progress });
+            });
+            return { adapter, location, rawConversations };
+          } catch (error) {
+            // Log but don't fail - skip locations that error during extraction
+            console.error(`[sync] Error extracting from ${adapterName} at ${location.dbPath}:`, error);
+            return { adapter, location, rawConversations: [] };
+          }
         })
       );
       extractionResults.push(...batchResults);
@@ -506,8 +532,8 @@ export async function runSync(
           total: pendingEmbeddings,
           completed: 0,
         });
-        spawnBackgroundEmbedding();
-        progress.embeddingStarted = true;
+        const started = await spawnBackgroundEmbedding();
+        progress.embeddingStarted = started;
       }
 
       // Update sync cache for fast subsequent checks
@@ -644,8 +670,8 @@ export async function runSync(
         completed: 0,
       });
 
-      spawnBackgroundEmbedding();
-      progress.embeddingStarted = true;
+      const started = await spawnBackgroundEmbedding();
+      progress.embeddingStarted = started;
     }
 
     // ========== PHASE 7: Enrich untitled conversations (if enabled) ==========

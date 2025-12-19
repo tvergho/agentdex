@@ -477,6 +477,8 @@ function openCursorDb(dbPath: string): BetterSqliteDatabase {
   db.pragma('query_only = ON');       // Extra safety - no writes possible
   db.pragma('cache_size = -2000');    // Smaller cache (2MB) = faster lock release
   db.pragma('mmap_size = 0');         // Disable mmap to avoid holding file handles
+  db.pragma('journal_mode = WAL');    // Ensure WAL mode for concurrent reads
+  db.pragma('wal_autocheckpoint = 0'); // Don't interfere with Cursor's checkpointing
   return db;
 }
 

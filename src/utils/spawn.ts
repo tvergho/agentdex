@@ -3,7 +3,7 @@
  * Handles both dev mode (TypeScript via bun/tsx) and production (compiled JS)
  */
 
-import { spawn, type SpawnOptions, type ChildProcess } from 'child_process';
+import { spawn, execSync as execSyncFn, type SpawnOptions, type ChildProcess } from 'child_process';
 
 const isBun = process.versions.bun !== undefined;
 
@@ -80,6 +80,62 @@ export function spawnBackgroundCommand(command: string): void {
   });
 
   child.unref();
+}
+
+/**
+ * Check if a process matching the given pattern is running
+ * Uses pgrep on Unix, tasklist on Windows
+ */
+export function isProcessRunning(pattern: string): boolean {
+  try {
+    if (process.platform === 'win32') {
+      execSyncFn(`tasklist /FI "IMAGENAME eq node.exe" 2>nul | findstr /I "${pattern}"`, { stdio: 'pipe' });
+    } else {
+      execSyncFn(`pgrep -f "${pattern}" 2>/dev/null`, { stdio: 'pipe' });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Spawn a background command with verification and retry.
+ * Waits briefly to verify the process started, retries up to maxRetries times.
+ * Returns true if spawn succeeded, false otherwise.
+ */
+export async function spawnBackgroundCommandWithRetry(
+  command: string,
+  processPattern: string,
+  options: { maxRetries?: number; verifyDelayMs?: number } = {}
+): Promise<boolean> {
+  const { maxRetries = 3, verifyDelayMs = 1000 } = options;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Check if already running
+    if (isProcessRunning(processPattern)) {
+      return true;
+    }
+    
+    // Spawn the command
+    spawnBackgroundCommand(command);
+    
+    // Wait for it to start
+    await new Promise(resolve => setTimeout(resolve, verifyDelayMs));
+    
+    // Verify it's running
+    if (isProcessRunning(processPattern)) {
+      return true;
+    }
+    
+    // If not running and we have retries left, try again
+    if (attempt < maxRetries) {
+      // Wait a bit longer before retry
+      await new Promise(resolve => setTimeout(resolve, verifyDelayMs));
+    }
+  }
+  
+  return false;
 }
 
 /**

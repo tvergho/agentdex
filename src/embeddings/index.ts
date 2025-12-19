@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, createWriteStream, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { execSync as execSyncFn } from 'child_process';
 import { getDataDir } from '../utils/config';
 import {
   startLlamaServer,
@@ -315,16 +316,15 @@ export function isEmbeddingInProgress(): boolean {
   try {
     // Use pgrep to check for running dex embed or llama-server processes
     // This is a lightweight check that doesn't require spawning a shell
-    const { execSync } = require('child_process');
     if (process.platform !== 'win32') {
       try {
         // Check for any embed process (dex embed, embed.ts, or node/bun running embed)
-        execSync('pgrep -f "dex embed" 2>/dev/null || pgrep -f "embed\\.ts" 2>/dev/null || pgrep -f "node.*embed" 2>/dev/null || pgrep -f "bun.*embed" 2>/dev/null', { stdio: 'pipe', shell: true });
+        execSyncFn('pgrep -f "dex embed" 2>/dev/null || pgrep -f "embed\\.ts" 2>/dev/null || pgrep -f "node.*embed" 2>/dev/null || pgrep -f "bun.*embed" 2>/dev/null', { stdio: 'pipe', shell: '/bin/sh' });
         return true; // Process found
       } catch {
         // No embed process found, check llama-server
         try {
-          execSync('pgrep -f "llama-server" 2>/dev/null', { stdio: 'pipe' });
+          execSyncFn('pgrep -f "llama-server" 2>/dev/null', { stdio: 'pipe' });
           return true; // Process found
         } catch {
           // No embedding processes found - status is stale
@@ -334,11 +334,11 @@ export function isEmbeddingInProgress(): boolean {
     } else {
       // On Windows, use tasklist to check for processes
       try {
-        execSync('tasklist /FI "IMAGENAME eq node.exe" 2>nul | findstr /I "embed"', { stdio: 'pipe' });
+        execSyncFn('tasklist /FI "IMAGENAME eq node.exe" 2>nul | findstr /I "embed"', { stdio: 'pipe' });
         return true; // Process found
       } catch {
         try {
-          execSync('tasklist /FI "IMAGENAME eq llama-server.exe" 2>nul', { stdio: 'pipe' });
+          execSyncFn('tasklist /FI "IMAGENAME eq llama-server.exe" 2>nul', { stdio: 'pipe' });
           return true; // Process found
         } catch {
           // No embedding processes found - status is stale

@@ -170,7 +170,8 @@ describe('sync command', () => {
   });
 
   describe('error handling', () => {
-    it('reports error on detect failure', async () => {
+    it('continues sync when detect fails for one adapter', async () => {
+      // Error in detection now logs and skips the adapter rather than failing
       const progressUpdates: SyncProgress[] = [];
 
       setupSyncMocks([{
@@ -179,19 +180,16 @@ describe('sync command', () => {
       }]);
 
       const { runSync } = await import('../../../src/cli/commands/sync');
-      
-      try {
-        await runSync({}, (p) => progressUpdates.push({ ...p }));
-      } catch {
-        // Expected
-      }
+      await runSync({}, (p) => progressUpdates.push({ ...p }));
 
+      // Should complete with 0 conversations (the erroring adapter was skipped)
       const last = progressUpdates[progressUpdates.length - 1];
-      expect(last?.phase).toBe('error');
-      expect(last?.error).toContain('Detection failed');
+      expect(last?.phase).toBe('done');
+      expect(last?.conversationsIndexed).toBe(0);
     });
 
-    it('reports error on extract failure', async () => {
+    it('continues sync when extract fails for one location', async () => {
+      // Error in extraction now logs and skips the location rather than failing
       const progressUpdates: SyncProgress[] = [];
 
       setupSyncMocks([{
@@ -201,16 +199,12 @@ describe('sync command', () => {
       }]);
 
       const { runSync } = await import('../../../src/cli/commands/sync');
-      
-      try {
-        await runSync({}, (p) => progressUpdates.push({ ...p }));
-      } catch {
-        // Expected
-      }
+      await runSync({}, (p) => progressUpdates.push({ ...p }));
 
+      // Should complete with 0 conversations (the erroring location was skipped)
       const last = progressUpdates[progressUpdates.length - 1];
-      expect(last?.phase).toBe('error');
-      expect(last?.error).toContain('Extract failed');
+      expect(last?.phase).toBe('done');
+      expect(last?.conversationsIndexed).toBe(0);
     });
   });
 

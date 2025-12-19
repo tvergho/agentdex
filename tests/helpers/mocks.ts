@@ -143,6 +143,25 @@ export function mockEmbeddings() {
   mock.module('../../../src/embeddings/index', () => mockModule);
 }
 
+// ============ Spawn Mocking ============
+
+/**
+ * Mock spawn module to prevent background processes and avoid delays
+ */
+export function mockSpawn() {
+  const mockModule = {
+    spawnBackgroundCommand: () => {},
+    spawnBackgroundCommandWithRetry: async () => true,
+    spawnDexCommand: () => ({ unref: () => {}, on: () => {} }),
+    buildDexCommandForShell: () => ({ cmd: 'sh', shellCommand: 'true' }),
+    isProcessRunning: () => false,
+    runtimeCmd: 'node',
+  };
+  
+  mock.module('../../src/utils/spawn', () => mockModule);
+  mock.module('../../../src/utils/spawn', () => mockModule);
+}
+
 // ============ Combined Setup ============
 
 /**
@@ -150,6 +169,7 @@ export function mockEmbeddings() {
  */
 export function setupSyncMocks(adapterConfigs: MockAdapterConfig[]) {
   mockEmbeddings();
+  mockSpawn();
   mockAdapters(adapterConfigs);
 }
 
