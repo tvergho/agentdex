@@ -9,17 +9,15 @@
  * Uses llama-server for fast GPU-accelerated batch embedding
  */
 
-import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery, yieldConnectionToReaders, closeConnection } from '../../db/index';
+import { connect, rebuildVectorIndex, rebuildFtsIndex, getMessagesTable, compactMessagesTable, cleanupOldVersions, withConnectionRecovery } from '../../db/index';
 import {
   downloadModel,
   getModelPath,
   setEmbeddingProgress,
   getEmbeddingProgress,
   isEmbeddingInProgress,
-  clearEmbeddingProgress,
   acquireEmbedLock,
   releaseEmbedLock,
-  isReadRequestPending,
   EMBEDDING_DIMENSIONS,
 } from '../../embeddings/index';
 import {
@@ -288,17 +286,6 @@ async function runWithServer(
       if (BATCH_DELAY_MS > 0 && i + SERVER_BATCH_SIZE < messages.length) {
         await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
       }
-
-      // Check if a reader is waiting and yield to them
-      // This prevents crashes from concurrent read+write operations in LanceDB
-      if (isReadRequestPending()) {
-        process.stdout.write(' (yielding to reader...)');
-        // Use the connection-closing yield to fully release LanceDB access
-        // This is critical - just releasing the lock doesn't prevent the crash
-        // because the connection is still open
-        table = await yieldConnectionToReaders(releaseEmbedLock, acquireEmbedLock, 5000);
-        process.stdout.write(' (resumed)');
-      }
     }
 
     // Write any remaining pending rows
@@ -322,7 +309,32 @@ async function runWithServer(
 
 
 async function runBackgroundEmbedding(): Promise<void> {
-  // Try to acquire the embed lock - this is atomic and prevents race conditions
+  // ============ Phase 1: Download dependencies BEFORE acquiring lock ============
+  // This allows readers to access the database while we download large files.
+  // Model download and llama-server download can take minutes on slow connections.
+
+  const modelPath = getModelPath();
+  if (!existsSync(modelPath)) {
+    console.log('Downloading embedding model...');
+    await downloadModel((downloaded, total) => {
+      const pct = Math.round((downloaded / total) * 100);
+      process.stdout.write(`\rDownloading model: ${pct}%`);
+    });
+    console.log('\nModel downloaded.');
+  }
+
+  if (!isLlamaServerInstalled()) {
+    console.log('Downloading llama-server...');
+    await downloadLlamaServer((downloaded, total) => {
+      const pct = Math.round((downloaded / total) * 100);
+      process.stdout.write(`\rDownloading llama-server: ${pct}%`);
+    });
+    console.log('\nllama-server downloaded.');
+  }
+
+  // ============ Phase 2: Acquire lock and connect to database ============
+  // Now that slow downloads are done, we can safely hold the lock.
+
   if (!acquireEmbedLock()) {
     console.log('Another embedding process is running, exiting');
     return;
@@ -368,8 +380,7 @@ async function runBackgroundEmbedding(): Promise<void> {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-  // Immediately mark as in-progress to prevent race conditions with other dex instances
-  // This must happen BEFORE any async work to ensure other processes see it
+  // Mark as in-progress
   setEmbeddingProgress({
     status: 'downloading',
     total: 0,
@@ -395,12 +406,13 @@ async function runBackgroundEmbedding(): Promise<void> {
         completed: 0,
         completedAt: new Date().toISOString(),
       });
+      releaseEmbedLock();
       return;
     }
 
     console.log(`Found ${messages.length} messages to embed`);
 
-    // Update progress: starting
+    // Update progress
     setEmbeddingProgress({
       status: 'downloading',
       total: messages.length,
@@ -408,63 +420,12 @@ async function runBackgroundEmbedding(): Promise<void> {
       startedAt: new Date().toISOString(),
     });
 
-    // Helper to yield to readers during startup (before embedding loop starts)
-    // This is critical because model download and benchmark can take a long time
-    const yieldToReadersIfNeeded = async () => {
-      if (isReadRequestPending()) {
-        console.log('\n[embed] Reader waiting, yielding connection...');
-        await closeConnection();
-        releaseEmbedLock();
-        // Wait for reader to finish (check every 500ms for up to 10s)
-        const startTime = Date.now();
-        while (Date.now() - startTime < 10000) {
-          if (!isReadRequestPending()) break;
-          await new Promise(r => setTimeout(r, 500));
-        }
-        // Reacquire lock and reconnect
-        if (!acquireEmbedLock()) {
-          throw new Error('Failed to reacquire embed lock after yielding');
-        }
-        await connect();
-        console.log('[embed] Resumed after yielding to reader');
-      }
-    };
-
-    // Check for readers before slow operations
-    await yieldToReadersIfNeeded();
-
-    // Download model if needed
-    const modelPath = getModelPath();
-    if (!existsSync(modelPath)) {
-      // Close connection during download - it can take a while
-      await closeConnection();
-      releaseEmbedLock();
-
-      console.log('Downloading embedding model...');
-      await downloadModel((downloaded, total) => {
-        const pct = Math.round((downloaded / total) * 100);
-        process.stdout.write(`\rDownloading model: ${pct}%`);
-      });
-      console.log('\nModel downloaded.');
-
-      // Reacquire lock and reconnect
-      if (!acquireEmbedLock()) {
-        throw new Error('Failed to reacquire embed lock after model download');
-      }
-      await connect();
-    }
-
-    // Check for readers before benchmark
-    await yieldToReadersIfNeeded();
-
     // Auto-benchmark if no config exists (first run calibration)
+    // This is relatively fast (~30s) so we do it while holding the lock
     if (!hasConfig()) {
       console.log('\n🔬 First run - calibrating optimal batch size for your system...');
       await runAutoBenchmark();
     }
-
-    // Check for readers before starting main embedding
-    await yieldToReadersIfNeeded();
 
     // Load and apply config
     const cfg = loadConfig();

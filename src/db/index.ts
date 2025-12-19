@@ -69,100 +69,6 @@ export async function waitForEmbeddingToFinish(timeoutMs = 5000, checkIntervalMs
   return true;
 }
 
-// ============ Read Lock for Safe Concurrent Access ============
-// When a reader wants to access the database while embedding is running,
-// it sets a read lock. The embed process checks for this and yields.
-
-const READ_LOCK_FILE = 'read.lock';
-
-interface ReadLockInfo {
-  pid: number;
-  requestedAt: number;
-}
-
-/**
- * Request read access to the database.
- * This signals to the embed process that a reader is waiting.
- */
-export function requestReadAccess(): void {
-  const lockPath = join(getDataDir(), READ_LOCK_FILE);
-  const lockInfo: ReadLockInfo = {
-    pid: process.pid,
-    requestedAt: Date.now(),
-  };
-  try {
-    writeFileSync(lockPath, JSON.stringify(lockInfo));
-  } catch {
-    // Ignore errors - this is a best-effort signal
-  }
-}
-
-/**
- * Release read access request.
- */
-export function releaseReadAccess(): void {
-  const lockPath = join(getDataDir(), READ_LOCK_FILE);
-  try {
-    if (existsSync(lockPath)) {
-      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as ReadLockInfo;
-      if (lockData.pid === process.pid) {
-        unlinkSync(lockPath);
-      }
-    }
-  } catch {
-    // Ignore errors
-  }
-}
-
-/**
- * Yield to pending readers by closing the LanceDB connection.
- * This is called by the embed process to allow readers (TUI) to access the database.
- *
- * CRITICAL: LanceDB crashes if multiple processes have connections simultaneously.
- * This function fully closes the connection so readers can safely connect.
- *
- * @param releaseEmbedLockFn - Function to release the embed lock (from embeddings module)
- * @param acquireEmbedLockFn - Function to reacquire the embed lock
- * @param yieldDurationMs - How long to wait for reader to finish
- * @returns Fresh messages table reference after reconnecting
- */
-export async function yieldConnectionToReaders(
-  releaseEmbedLockFn: () => void,
-  acquireEmbedLockFn: () => boolean,
-  yieldDurationMs = 5000
-): Promise<Table> {
-  // Step 1: Close our connection so reader can safely connect
-  console.error('[db] Yielding connection to reader...');
-  await closeConnection();
-
-  // Step 2: Release the embed lock
-  releaseEmbedLockFn();
-
-  // Step 3: Wait for reader to finish
-  // Check periodically if read lock is gone (reader finished)
-  const startTime = Date.now();
-  const checkInterval = 500;
-  while (Date.now() - startTime < yieldDurationMs) {
-    const readLockPath = join(getDataDir(), READ_LOCK_FILE);
-    if (!existsSync(readLockPath)) {
-      // Reader finished, we can proceed
-      break;
-    }
-    await new Promise(resolve => setTimeout(resolve, checkInterval));
-  }
-
-  // Step 4: Reacquire embed lock
-  const reacquired = acquireEmbedLockFn();
-  if (!reacquired) {
-    throw new Error('Failed to reacquire embed lock after yielding to reader');
-  }
-
-  // Step 5: Reconnect and return fresh table reference
-  console.error('[db] Reconnecting after yield...');
-  await connect();
-  return await getMessagesTable();
-}
-
 // ============ Retry Logic for LanceDB Commit Conflicts ============
 
 /**
@@ -523,33 +429,9 @@ export async function connect(): Promise<lancedb.Connection> {
   const dbPath = getLanceDBPath();
   console.error('[db] Connecting to LanceDB at', dbPath);
 
-  // If embedding is running (by ANOTHER process), signal read request and wait for it to yield
-  // This prevents the native binding crash from concurrent read+write access
-  // Use excludeSelf=true so the embed process doesn't wait for its own lock
-  if (isEmbedLockHeld(true)) {
-    console.error('[db] Embedding in progress, requesting read access...');
-    requestReadAccess();
-    try {
-      // Wait up to 60 seconds for embed to yield (it checks every batch)
-      // Embed process may be starting up (downloading model, starting llama-server)
-      const finished = await waitForEmbeddingToFinish(60000);
-      if (!finished) {
-        // CRITICAL: Do NOT proceed if embedding is still running!
-        // LanceDB crashes if two processes have connections simultaneously.
-        // Instead, throw an error so the user knows to wait.
-        releaseReadAccess();
-        throw new Error(
-          'Embedding is in progress and did not yield within 60 seconds. ' +
-          'Please wait for embedding to complete or kill the embed process: pkill -f "dex embed"'
-        );
-      } else {
-        console.error('[db] Embedding yielded, proceeding with connection');
-      }
-    } catch (e) {
-      releaseReadAccess();
-      throw e;
-    }
-  }
+  // Note: We don't block on embedding anymore. The embed process closes its
+  // connection between batches, allowing readers to connect. If there's a
+  // collision, LanceDB may error but we handle that with retry logic.
 
   // Set up a watchdog timer that will force-exit if connection takes too long
   // This catches cases where LanceDB hangs in native code (no JS error possible)
@@ -692,29 +574,9 @@ export async function getMessagesTable(): Promise<Table> {
 
 /**
  * Get a fresh messages table reference for read operations.
- * This coordinates with the embed process to ensure safe access.
- *
- * IMPORTANT: LanceDB native bindings crash when multiple processes access the
- * database concurrently (one writing, another reading). This function signals
- * to the embed process that a read is needed, waits for it to yield, then proceeds.
+ * Re-opens the table to get the latest data (including recent embeddings).
  */
 export async function getFreshMessagesTable(): Promise<Table> {
-  // If embedding is running (by another process), request read access and wait for embed to yield
-  if (isEmbedLockHeld(true)) {
-    requestReadAccess();
-    try {
-      // Wait for embedding to finish (it should yield within a few seconds)
-      const finished = await waitForEmbeddingToFinish(15000); // Wait up to 15s
-      if (!finished) {
-        // Embedding is still running - this is risky but we'll try anyway
-        // The withConnectionRecovery wrapper will handle any errors
-        console.error('[db] Warning: Embedding still in progress after 15s');
-      }
-    } finally {
-      releaseReadAccess();
-    }
-  }
-
   // Ensure we have a connection
   if (!db) {
     await connect();
