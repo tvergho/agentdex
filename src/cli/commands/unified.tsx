@@ -153,6 +153,7 @@ interface FirstLoadSyncProgress {
   projectsProcessed: number;
   conversationsFound: number;
   conversationsIndexed: number;
+  conversationsSkipped: number;
   messagesIndexed: number;
   embeddingStarted?: boolean;
   extractionProgress?: { current: number; total: number };
@@ -170,6 +171,7 @@ function runSyncBlocking(
       projectsProcessed: 0,
       conversationsFound: 0,
       conversationsIndexed: 0,
+      conversationsSkipped: 0,
       messagesIndexed: 0,
     };
     onProgress(progress);
@@ -225,13 +227,14 @@ function runSyncBlocking(
         progress.currentSource = undefined;
       }
 
-      // Parse counts from progress line: "Projects: X/Y | Conversations: A/B | Messages: M"
-      const countsMatch = text.match(/Projects:\s*(\d+)\/(\d+)\s*\|\s*Conversations:\s*(\d+)\/(\d+)\s*\|\s*Messages:\s*(\d+)/);
+      // Parse counts from progress line: "Projects: X/Y | Conversations: A (B empty skipped) | Messages: M"
+      // Also handles old format without skipped count for compatibility
+      const countsMatch = text.match(/Projects:\s*(\d+)\/(\d+)\s*\|\s*Conversations:\s*(\d+)(?:\s*\((\d+)\s*empty skipped\))?\s*\|\s*Messages:\s*(\d+)/);
       if (countsMatch) {
         progress.projectsProcessed = parseInt(countsMatch[1]!, 10);
         progress.projectsFound = parseInt(countsMatch[2]!, 10);
         progress.conversationsIndexed = parseInt(countsMatch[3]!, 10);
-        progress.conversationsFound = parseInt(countsMatch[4]!, 10);
+        progress.conversationsSkipped = countsMatch[4] ? parseInt(countsMatch[4], 10) : 0;
         progress.messagesIndexed = parseInt(countsMatch[5]!, 10);
       }
 
@@ -415,7 +418,7 @@ function FirstLoadScreen({
     }
   };
 
-  const showCounts = progress.conversationsFound > 0 || progress.messagesIndexed > 0;
+  const showCounts = progress.conversationsIndexed > 0 || progress.conversationsSkipped > 0 || progress.messagesIndexed > 0;
 
   return (
     <Box
@@ -446,7 +449,8 @@ function FirstLoadScreen({
         <Box marginBottom={1}>
           <Text color="gray">
             Projects: {progress.projectsProcessed}/{progress.projectsFound} |
-            Conversations: {progress.conversationsIndexed}/{progress.conversationsFound} |
+            Conversations: {progress.conversationsIndexed}
+            {progress.conversationsSkipped > 0 && ` (${progress.conversationsSkipped} empty skipped)`} |
             Messages: {progress.messagesIndexed}
           </Text>
         </Box>
@@ -633,6 +637,7 @@ function UnifiedApp() {
     projectsProcessed: 0,
     conversationsFound: 0,
     conversationsIndexed: 0,
+    conversationsSkipped: 0,
     messagesIndexed: 0,
   });
   const [spinnerFrame, setSpinnerFrame] = useState(0);

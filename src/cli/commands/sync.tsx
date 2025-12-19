@@ -109,6 +109,7 @@ export interface SyncProgress {
   projectsProcessed: number;
   conversationsFound: number;
   conversationsIndexed: number;
+  conversationsSkipped: number;
   messagesIndexed: number;
   error?: string;
   embeddingStarted?: boolean;
@@ -235,7 +236,9 @@ function SyncUI({ progress }: { progress: SyncProgress }) {
       <Box marginLeft={2} marginTop={1}>
         <Text dimColor>
           Projects: {progress.projectsProcessed}/{progress.projectsFound} | Conversations:{' '}
-          {progress.conversationsIndexed}/{progress.conversationsFound} | Messages: {progress.messagesIndexed}
+          {progress.conversationsIndexed}
+          {progress.conversationsSkipped > 0 && ` (${progress.conversationsSkipped} empty skipped)`}
+          {' '}| Messages: {progress.messagesIndexed}
         </Text>
       </Box>
     </Box>
@@ -262,6 +265,7 @@ export async function runSync(
     projectsProcessed: 0,
     conversationsFound: 0,
     conversationsIndexed: 0,
+    conversationsSkipped: 0,
     messagesIndexed: 0,
   };
 
@@ -531,9 +535,11 @@ export async function runSync(
     const newMessageFiles: Parameters<typeof messageFilesRepo.bulkInsert>[0] = [];
     const newFileEdits: Parameters<typeof fileEditsRepo.bulkInsert>[0] = [];
 
+    let emptyConversationsSkipped = 0;
     for (const { normalized } of conversationsToSync) {
       // Skip conversations with no messages (empty/abandoned)
       if (normalized.messages.length === 0) {
+        emptyConversationsSkipped++;
         continue;
       }
 
@@ -559,6 +565,7 @@ export async function runSync(
     // Conversations must be inserted first (foreign key dependency), then others in parallel
     await conversationRepo.bulkUpsert(newConvRows);
     progress.conversationsIndexed = newConvRows.length;
+    progress.conversationsSkipped = emptyConversationsSkipped;
     progress.projectsProcessed = projectPaths.size;
     onProgress({ ...progress });
 
@@ -692,6 +699,7 @@ function SyncApp({ options }: { options: SyncOptions }) {
     projectsProcessed: 0,
     conversationsFound: 0,
     conversationsIndexed: 0,
+    conversationsSkipped: 0,
     messagesIndexed: 0,
   });
 

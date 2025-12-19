@@ -84,10 +84,15 @@ describe('sync command', () => {
 
   describe('incremental sync', () => {
     it('skips existing conversations', async () => {
-      // Pre-seed a conversation
+      // Pre-seed a conversation with:
+      // - messageCount: 2 to match what the mock returns
+      // - updatedAt in the future so the mock's timestamp isn't "newer"
+      const futureDate = new Date(Date.now() + 86400000).toISOString(); // +1 day
       const existing = createConversation({
         id: 'existing-conv',
         source: Source.Cursor,
+        messageCount: 2,
+        updatedAt: futureDate,
       });
       await db.seed({ conversations: [existing] });
 
@@ -107,9 +112,15 @@ describe('sync command', () => {
     });
 
     it('syncs only new conversations when some exist', async () => {
+      // Pre-seed with:
+      // - messageCount: 2 to match what the mock returns
+      // - updatedAt in the future so the mock's timestamp isn't "newer"
+      const futureDate = new Date(Date.now() + 86400000).toISOString(); // +1 day
       const existing = createConversation({
         id: 'existing-conv',
         source: Source.Cursor,
+        messageCount: 2,
+        updatedAt: futureDate,
       });
       await db.seed({ conversations: [existing] });
 
