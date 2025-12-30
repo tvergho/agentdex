@@ -1,4 +1,7 @@
 import Database, { type Database as BetterSqliteDatabase } from 'better-sqlite3';
+import { mkdtempSync, cpSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, basename } from 'node:path';
 
 export interface RawBubble {
   bubbleId: string;
@@ -470,13 +473,31 @@ function loadAllBubbles(db: BetterSqliteDatabase): Map<string, Map<string, Bubbl
   return bubblesByComposer;
 }
 
-// Configure SQLite connection with minimal lock footprint
+function copyDbToTemp(dbPath: string): { tempDir: string; tempDbPath: string } {
+  const tempDir = mkdtempSync(join(tmpdir(), 'dex-cursor-'));
+  const dbName = basename(dbPath);
+  const tempDbPath = join(tempDir, dbName);
+  
+  cpSync(dbPath, tempDbPath);
+  
+  const walPath = `${dbPath}-wal`;
+  const shmPath = `${dbPath}-shm`;
+  if (existsSync(walPath)) cpSync(walPath, `${tempDbPath}-wal`);
+  if (existsSync(shmPath)) cpSync(shmPath, `${tempDbPath}-shm`);
+  
+  return { tempDir, tempDbPath };
+}
+
+function cleanupTempDb(tempDir: string): void {
+  try {
+    rmSync(tempDir, { recursive: true, force: true });
+  } catch {}
+}
+
 function openCursorDb(dbPath: string): BetterSqliteDatabase {
   const db = new Database(dbPath, { readonly: true });
-  // Only set read-safe pragmas - avoid any that require write access
-  // (journal_mode, wal_autocheckpoint require write access even to query)
-  db.pragma('cache_size = -2000');    // Smaller cache (2MB) = faster lock release
-  db.pragma('mmap_size = 0');         // Disable mmap to avoid holding file handles
+  db.pragma('cache_size = -2000');
+  db.pragma('mmap_size = 0');
   return db;
 }
 
@@ -497,31 +518,32 @@ export interface ConversationTimestamp {
  * Used for incremental sync to check which conversations have changed.
  */
 export function getConversationTimestamps(dbPath: string): ConversationTimestamp[] {
+  const { tempDir, tempDbPath } = copyDbToTemp(dbPath);
   const timestamps: ConversationTimestamp[] = [];
-  const db = openCursorDb(dbPath);
   
   try {
-    const stmt = db.prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'");
-    for (const row of stmt.iterate() as IterableIterator<{ key: string; value: Buffer | string }>) {
-      const composerId = row.key.replace('composerData:', '');
-      
-      // Parse just enough to get the timestamp - much faster than full JSON parse
-      let lastUpdatedAt: number | undefined;
-      try {
-        const valueStr = Buffer.isBuffer(row.value) ? row.value.toString('utf-8') : row.value;
-        // Quick regex extraction is faster than full JSON.parse for large objects
-        const match = valueStr.match(/"lastUpdatedAt"\s*:\s*(\d+)/);
-        if (match) {
-          lastUpdatedAt = parseInt(match[1]!, 10);
-        }
-      } catch {
-        // Skip malformed entries
+    const db = openCursorDb(tempDbPath);
+    try {
+      const stmt = db.prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'");
+      for (const row of stmt.iterate() as IterableIterator<{ key: string; value: Buffer | string }>) {
+        const composerId = row.key.replace('composerData:', '');
+        
+        let lastUpdatedAt: number | undefined;
+        try {
+          const valueStr = Buffer.isBuffer(row.value) ? row.value.toString('utf-8') : row.value;
+          const match = valueStr.match(/"lastUpdatedAt"\s*:\s*(\d+)/);
+          if (match) {
+            lastUpdatedAt = parseInt(match[1]!, 10);
+          }
+        } catch {}
+        
+        timestamps.push({ composerId, lastUpdatedAt });
       }
-      
-      timestamps.push({ composerId, lastUpdatedAt });
+    } finally {
+      db.close();
     }
   } finally {
-    db.close();
+    cleanupTempDb(tempDir);
   }
   
   return timestamps;
@@ -531,10 +553,21 @@ export async function extractConversations(
   dbPath: string,
   onProgress?: (progress: ExtractionProgress) => void
 ): Promise<RawConversation[]> {
+  const { tempDir, tempDbPath } = copyDbToTemp(dbPath);
+  
+  try {
+    return await extractFromDb(tempDbPath, onProgress);
+  } finally {
+    cleanupTempDb(tempDir);
+  }
+}
+
+async function extractFromDb(
+  dbPath: string,
+  onProgress?: (progress: ExtractionProgress) => void
+): Promise<RawConversation[]> {
   const conversations: RawConversation[] = [];
 
-  // Phase 1: Pre-load supporting data (diffs and bubbles) with short-lived connections
-  // These are smaller datasets that can be loaded quickly
   let diffsByComposer: Map<string, ParsedDiffRow[]>;
   let bubblesByComposer: Map<string, Map<string, BubbleData>>;
   let totalCount: number;
