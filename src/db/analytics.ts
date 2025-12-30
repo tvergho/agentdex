@@ -1416,35 +1416,26 @@ export async function getUnifiedModelStats(period: PeriodFilter): Promise<Unifie
     }));
   }
 
-  const billingByModel = new Map(billingStats.map(b => [b.model, b]));
   const result: UnifiedModelStats[] = [];
-  const usedCursorModels = new Set<string>();
+
+  const cursorConvCount = conversationStats
+    .filter(s => s.source === 'cursor')
+    .reduce((sum, s) => sum + s.conversations, 0);
+
+  for (const billing of billingStats) {
+    result.push({
+      model: billing.model,
+      source: 'cursor',
+      conversations: cursorConvCount,
+      inputTokens: billing.inputTokens,
+      outputTokens: billing.outputTokens,
+      cost: billing.cost,
+      hasBillingData: true,
+    });
+  }
 
   for (const convStat of conversationStats) {
-    if (convStat.source === 'cursor') {
-      const billing = billingByModel.get(convStat.model);
-      if (billing) {
-        result.push({
-          model: convStat.model,
-          source: 'cursor',
-          conversations: convStat.conversations,
-          inputTokens: billing.inputTokens,
-          outputTokens: billing.outputTokens,
-          cost: billing.cost,
-          hasBillingData: true,
-        });
-        usedCursorModels.add(convStat.model);
-      } else {
-        result.push({
-          model: convStat.model,
-          source: convStat.source,
-          conversations: convStat.conversations,
-          inputTokens: convStat.inputTokens,
-          outputTokens: convStat.outputTokens,
-          hasBillingData: false,
-        });
-      }
-    } else {
+    if (convStat.source !== 'cursor') {
       result.push({
         model: convStat.model,
         source: convStat.source,
@@ -1452,20 +1443,6 @@ export async function getUnifiedModelStats(period: PeriodFilter): Promise<Unifie
         inputTokens: convStat.inputTokens,
         outputTokens: convStat.outputTokens,
         hasBillingData: false,
-      });
-    }
-  }
-
-  for (const billing of billingStats) {
-    if (!usedCursorModels.has(billing.model)) {
-      result.push({
-        model: billing.model,
-        source: 'cursor',
-        conversations: 0,
-        inputTokens: billing.inputTokens,
-        outputTokens: billing.outputTokens,
-        cost: billing.cost,
-        hasBillingData: true,
       });
     }
   }
