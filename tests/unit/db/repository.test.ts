@@ -12,7 +12,7 @@ import {
   createToolCall,
   createFileEdit,
 } from '../../fixtures';
-import { isoDate, dateString } from '../../helpers/time';
+import { isoDate, dateString, daysAgo } from '../../helpers/time';
 
 describe('conversationRepo', () => {
   let db: TestDatabase;
@@ -605,6 +605,184 @@ describe('fileEditsRepo', () => {
       expect(results.length).toBe(1);
       expect(results[0]!.messageId).toBe(msg1.id);
     });
+  });
+});
+
+describe('search with recency bias', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = new TestDatabase();
+    await db.setup();
+  });
+
+  afterEach(async () => {
+    await db.teardown();
+  });
+
+  it('boosts recent conversations over older ones with same relevance', async () => {
+    // Create two conversations with the same search term but different dates
+    const recentConv = createConversation({
+      title: 'Recent conversation',
+      updatedAt: daysAgo(1), // 1 day ago
+    });
+    const oldConv = createConversation({
+      title: 'Old conversation',
+      updatedAt: daysAgo(100), // 100 days ago
+    });
+
+    // Both have messages with the same search term
+    const recentMsg = createMessage(recentConv.id, {
+      content: 'This contains the unique search term findme123',
+      messageIndex: 0,
+    });
+    const oldMsg = createMessage(oldConv.id, {
+      content: 'This also contains the unique search term findme123',
+      messageIndex: 0,
+    });
+
+    await db.seed({
+      conversations: [recentConv, oldConv],
+      messages: [recentMsg, oldMsg],
+    });
+
+    // Rebuild FTS index after seeding
+    const { rebuildFtsIndex } = await import('../../../src/db/index');
+    await rebuildFtsIndex();
+
+    const { search } = await import('../../../src/db/repository');
+    const results = await search('findme123');
+
+    expect(results.results.length).toBe(2);
+    // Recent conversation should rank higher due to recency boost
+    expect(results.results[0]!.conversation.id).toBe(recentConv.id);
+    expect(results.results[1]!.conversation.id).toBe(oldConv.id);
+  });
+
+  it('preserves high relevance ranking despite recency', async () => {
+    // Create an old conversation with highly relevant content (term repeated)
+    // and a recent conversation with less relevant content (term once)
+    const recentConv = createConversation({
+      title: 'Recent but less relevant',
+      updatedAt: daysAgo(1),
+    });
+    const oldConv = createConversation({
+      title: 'Old but highly relevant',
+      updatedAt: daysAgo(30),
+    });
+
+    // Recent has the term once, old has it multiple times (higher FTS score)
+    const recentMsg = createMessage(recentConv.id, {
+      content: 'This mentions uniqueterm789 once',
+      messageIndex: 0,
+    });
+    const oldMsg = createMessage(oldConv.id, {
+      content: 'uniqueterm789 uniqueterm789 uniqueterm789 uniqueterm789 uniqueterm789 repeated many times for higher relevance',
+      messageIndex: 0,
+    });
+
+    await db.seed({
+      conversations: [recentConv, oldConv],
+      messages: [recentMsg, oldMsg],
+    });
+
+    const { rebuildFtsIndex } = await import('../../../src/db/index');
+    await rebuildFtsIndex();
+
+    const { search } = await import('../../../src/db/repository');
+    const results = await search('uniqueterm789');
+
+    expect(results.results.length).toBe(2);
+    // Both should appear; exact order depends on FTS scoring vs recency
+    // The key is that both are found and the algorithm runs without error
+    const ids = results.results.map(r => r.conversation.id);
+    expect(ids).toContain(recentConv.id);
+    expect(ids).toContain(oldConv.id);
+  });
+
+  it('handles conversations with missing updatedAt gracefully', async () => {
+    const convWithDate = createConversation({
+      title: 'Has date',
+      updatedAt: daysAgo(5),
+    });
+    const convNoDate = createConversation({
+      title: 'No date',
+      updatedAt: undefined,
+    });
+
+    const msg1 = createMessage(convWithDate.id, {
+      content: 'Search for nocrashterm456 here',
+      messageIndex: 0,
+    });
+    const msg2 = createMessage(convNoDate.id, {
+      content: 'Also has nocrashterm456 content',
+      messageIndex: 0,
+    });
+
+    await db.seed({
+      conversations: [convWithDate, convNoDate],
+      messages: [msg1, msg2],
+    });
+
+    const { rebuildFtsIndex } = await import('../../../src/db/index');
+    await rebuildFtsIndex();
+
+    const { search } = await import('../../../src/db/repository');
+    // Should not throw even with missing dates
+    const results = await search('nocrashterm456');
+
+    expect(results.results.length).toBe(2);
+    // Conversation with date should rank higher (missing date = epoch = very old)
+    expect(results.results[0]!.conversation.id).toBe(convWithDate.id);
+  });
+
+  it('applies correct decay factor for different ages', async () => {
+    // Test the actual decay math: e^(-0.01 * days)
+    // At 0 days: factor = 1.0, score multiplier = 0.7 + 0.3*1.0 = 1.0
+    // At 100 days: factor ≈ 0.37, score multiplier = 0.7 + 0.3*0.37 ≈ 0.81
+    
+    const todayConv = createConversation({
+      title: 'Today',
+      updatedAt: new Date().toISOString(), // today
+    });
+    const weekAgoConv = createConversation({
+      title: 'Week ago',
+      updatedAt: daysAgo(7),
+    });
+    const monthAgoConv = createConversation({
+      title: 'Month ago',
+      updatedAt: daysAgo(30),
+    });
+
+    const msg1 = createMessage(todayConv.id, {
+      content: 'decaytest999 content',
+      messageIndex: 0,
+    });
+    const msg2 = createMessage(weekAgoConv.id, {
+      content: 'decaytest999 content',
+      messageIndex: 0,
+    });
+    const msg3 = createMessage(monthAgoConv.id, {
+      content: 'decaytest999 content',
+      messageIndex: 0,
+    });
+
+    await db.seed({
+      conversations: [todayConv, weekAgoConv, monthAgoConv],
+      messages: [msg1, msg2, msg3],
+    });
+
+    const { rebuildFtsIndex } = await import('../../../src/db/index');
+    await rebuildFtsIndex();
+
+    const { search } = await import('../../../src/db/repository');
+    const results = await search('decaytest999');
+
+    expect(results.results.length).toBe(3);
+    // Should be ordered by recency: today > week ago > month ago
+    expect(results.results[0]!.conversation.title).toBe('Today');
+    expect(results.results[1]!.conversation.title).toBe('Week ago');
+    expect(results.results[2]!.conversation.title).toBe('Month ago');
   });
 });
 

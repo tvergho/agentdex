@@ -473,17 +473,59 @@ function loadAllBubbles(db: BetterSqliteDatabase): Map<string, Map<string, Bubbl
 // Configure SQLite connection with minimal lock footprint
 function openCursorDb(dbPath: string): BetterSqliteDatabase {
   const db = new Database(dbPath, { readonly: true });
-  // Reduce lock contention with Cursor's live database
-  db.pragma('query_only = ON');       // Extra safety - no writes possible
+  // Only set read-safe pragmas - avoid any that require write access
+  // (journal_mode, wal_autocheckpoint require write access even to query)
   db.pragma('cache_size = -2000');    // Smaller cache (2MB) = faster lock release
   db.pragma('mmap_size = 0');         // Disable mmap to avoid holding file handles
-  db.pragma('journal_mode = WAL');    // Ensure WAL mode for concurrent reads
-  db.pragma('wal_autocheckpoint = 0'); // Don't interfere with Cursor's checkpointing
   return db;
 }
 
 // Batch size for connection cycling - balance between lock release frequency and overhead
 const COMPOSER_BATCH_SIZE = 100;
+
+/**
+ * Metadata for a conversation - used for quick timestamp checks without full extraction
+ */
+export interface ConversationTimestamp {
+  composerId: string;
+  lastUpdatedAt: number | undefined;
+}
+
+/**
+ * Get just the timestamps for all conversations.
+ * This is MUCH faster than full extraction since we only parse the timestamp field.
+ * Used for incremental sync to check which conversations have changed.
+ */
+export function getConversationTimestamps(dbPath: string): ConversationTimestamp[] {
+  const timestamps: ConversationTimestamp[] = [];
+  const db = openCursorDb(dbPath);
+  
+  try {
+    const stmt = db.prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'");
+    for (const row of stmt.iterate() as IterableIterator<{ key: string; value: Buffer | string }>) {
+      const composerId = row.key.replace('composerData:', '');
+      
+      // Parse just enough to get the timestamp - much faster than full JSON parse
+      let lastUpdatedAt: number | undefined;
+      try {
+        const valueStr = Buffer.isBuffer(row.value) ? row.value.toString('utf-8') : row.value;
+        // Quick regex extraction is faster than full JSON.parse for large objects
+        const match = valueStr.match(/"lastUpdatedAt"\s*:\s*(\d+)/);
+        if (match) {
+          lastUpdatedAt = parseInt(match[1]!, 10);
+        }
+      } catch {
+        // Skip malformed entries
+      }
+      
+      timestamps.push({ composerId, lastUpdatedAt });
+    }
+  } finally {
+    db.close();
+  }
+  
+  return timestamps;
+}
 
 export async function extractConversations(
   dbPath: string,

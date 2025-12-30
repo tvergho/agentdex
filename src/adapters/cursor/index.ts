@@ -1,8 +1,8 @@
 import { createHash } from 'crypto';
 import { getGlobalDatabase, getGlobalDbMtime } from './paths';
-import { extractConversations, type RawConversation, type ExtractionProgress } from './parser';
+import { extractConversations, getConversationTimestamps, type RawConversation, type ExtractionProgress } from './parser';
 import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index';
-import type { SourceAdapter, SourceLocation, NormalizedConversation } from '../types';
+import type { SourceAdapter, SourceLocation, NormalizedConversation, ConversationTimestampInfo } from '../types';
 import { countCombinedMessages } from '../types';
 
 export type { ExtractionProgress } from './parser';
@@ -30,6 +30,19 @@ export class CursorAdapter implements SourceAdapter {
       dbPath: globalDb.dbPath,
       mtime: globalDb.mtime,
     }];
+  }
+
+  getConversationTimestamps(location: SourceLocation): ConversationTimestampInfo[] | undefined {
+    try {
+      const timestamps = getConversationTimestamps(location.dbPath);
+      return timestamps.map(t => ({
+        originalId: t.composerId,
+        lastUpdatedAt: t.lastUpdatedAt,
+      }));
+    } catch {
+      // If timestamp extraction fails, fall back to full extraction
+      return undefined;
+    }
   }
 
   async extract(

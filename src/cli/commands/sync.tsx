@@ -344,7 +344,7 @@ export async function runSync(
     progress.currentSource = 'all sources';
     onProgress({ ...progress });
 
-    // Gather all locations that need syncing
+    // Gather all locations that need syncing, using fast timestamp check when available
     const locationsNeedingSync: { adapter: typeof adapters[0]; location: SourceLocation }[] = [];
 
     for (const { adapter, locations } of adapterLocations) {
@@ -353,6 +353,62 @@ export async function runSync(
           const syncState = await syncStateRepo.get(adapter.name, location.dbPath);
           if (syncState && syncState.lastMtime >= location.mtime) {
             continue; // Skip - no changes since last sync
+          }
+
+          // File mtime changed, but check if any conversations actually changed
+          // This is faster than full extraction for large sources
+          if (adapter.getConversationTimestamps) {
+            try {
+              const sourceTimestamps = adapter.getConversationTimestamps(location);
+              if (sourceTimestamps) {
+                const storedTimestamps = await conversationRepo.getTimestampsBySource(adapter.name);
+                
+                // Check if any timestamps differ or if there are new conversations
+                let hasChanges = false;
+                for (const { originalId, lastUpdatedAt } of sourceTimestamps) {
+                  const storedTs = storedTimestamps.get(originalId);
+                  if (storedTs === undefined) {
+                    // New conversation
+                    hasChanges = true;
+                    break;
+                  }
+                  if (lastUpdatedAt !== undefined && storedTs !== lastUpdatedAt) {
+                    // Updated conversation
+                    hasChanges = true;
+                    break;
+                  }
+                }
+                
+                // Also check for deleted conversations (in stored but not in source)
+                if (!hasChanges) {
+                  const sourceIds = new Set(sourceTimestamps.map(t => t.originalId));
+                  for (const storedId of storedTimestamps.keys()) {
+                    if (!sourceIds.has(storedId)) {
+                      // Conversation was deleted in source
+                      hasChanges = true;
+                      break;
+                    }
+                  }
+                }
+                
+                if (!hasChanges) {
+                  // No changes detected via timestamp check, skip extraction
+                  // But still update sync state mtime so we don't recheck next time
+                  await syncStateRepo.set({
+                    source: adapter.name,
+                    workspacePath: location.workspacePath,
+                    dbPath: location.dbPath,
+                    lastSyncedAt: new Date().toISOString(),
+                    lastMtime: location.mtime,
+                  });
+                  console.error(`[sync] ${adapter.name}: No conversation changes detected (fast check)`);
+                  continue;
+                }
+              }
+            } catch (error) {
+              // Fast check failed, fall back to full extraction
+              console.error(`[sync] ${adapter.name}: Fast timestamp check failed, using full extraction:`, error);
+            }
           }
         }
         locationsNeedingSync.push({ adapter, location });

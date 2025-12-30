@@ -22,6 +22,16 @@ export interface ExtractionProgress {
 }
 
 /**
+ * Lightweight timestamp info for incremental sync
+ */
+export interface ConversationTimestampInfo {
+  /** Original ID in the source system */
+  originalId: string;
+  /** Last updated timestamp (epoch ms or undefined if not available) */
+  lastUpdatedAt: number | undefined;
+}
+
+/**
  * Count combined messages where consecutive same-role messages count as 1.
  * This gives a more intuitive "turns" count rather than raw message count.
  *
@@ -55,6 +65,16 @@ export interface SourceAdapter {
 
   /** Find all instances/workspaces of this source */
   discover(): Promise<SourceLocation[]>;
+
+  /**
+   * Get lightweight timestamp info for all conversations at a location.
+   * This is much faster than full extraction and is used for incremental sync
+   * to determine which conversations have changed.
+   * 
+   * Returns undefined if the adapter doesn't support fast timestamp queries
+   * (in which case full extraction will be used).
+   */
+  getConversationTimestamps?(location: SourceLocation): ConversationTimestampInfo[] | undefined;
 
   /** Extract raw conversations from a source location */
   extract(

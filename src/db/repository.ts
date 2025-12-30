@@ -240,6 +240,35 @@ export const conversationRepo = {
     return metadata;
   },
 
+  /**
+   * Get a map of originalId -> updatedAt for all conversations from a specific source.
+   * Used for fast incremental sync - we can compare source timestamps against stored ones
+   * without doing full extraction.
+   */
+  async getTimestampsBySource(
+    source: string
+  ): Promise<Map<string, number | undefined>> {
+    const table = await getConversationsTable();
+    const results = await table
+      .query()
+      .where(`source = '${source}'`)
+      .select(['source_ref', 'updated_at'])
+      .toArray();
+
+    const timestamps = new Map<string, number | undefined>();
+    for (const row of results) {
+      const sourceRef = safeJsonParse<SourceRef>(row.source_ref, defaultSourceRef);
+      if (sourceRef.originalId) {
+        const updatedAt = row.updated_at as string | undefined;
+        // Convert ISO string to epoch ms for comparison with source timestamps
+        const epochMs = updatedAt ? new Date(updatedAt).getTime() : undefined;
+        timestamps.set(sourceRef.originalId, epochMs);
+      }
+    }
+
+    return timestamps;
+  },
+
   async bulkUpsert(conversations: Conversation[]): Promise<void> {
     if (conversations.length === 0) return;
 
@@ -1621,8 +1650,34 @@ export async function search(query: string, limit = 50): Promise<SearchResponse>
     });
   }
 
-  // 5. Sort by best match score
-  results.sort((a, b) => b.bestMatch.score - a.bestMatch.score);
+  // 5. Apply recency bias to ranking
+  // Time-decay: recent conversations get a boost, older ones decay toward baseline
+  // Formula: combinedScore = relevanceScore * (BASE_WEIGHT + RECENCY_WEIGHT * e^(-λ * days))
+  // With λ=0.01: ~97% at 3 days, ~90% at 10 days, ~37% at 100 days
+  const DECAY_LAMBDA = 0.01;
+  const BASE_WEIGHT = 0.7; // Minimum weight from relevance alone
+  const RECENCY_WEIGHT = 0.3; // Maximum boost from recency
+  const now = Date.now();
+
+  for (const result of results) {
+    const updatedAt = result.conversation.updatedAt
+      ? new Date(result.conversation.updatedAt).getTime()
+      : 0;
+    const daysOld = Math.max(0, (now - updatedAt) / (1000 * 60 * 60 * 24));
+    const recencyFactor = Math.exp(-DECAY_LAMBDA * daysOld);
+
+    // Apply recency boost to the result's effective score for ranking
+    // Store original score for display, use boosted score for sorting
+    (result as ConversationResult & { _rankScore: number })._rankScore =
+      result.bestMatch.score * (BASE_WEIGHT + RECENCY_WEIGHT * recencyFactor);
+  }
+
+  // 6. Sort by recency-adjusted score
+  results.sort((a, b) => {
+    const aScore = (a as ConversationResult & { _rankScore?: number })._rankScore ?? a.bestMatch.score;
+    const bScore = (b as ConversationResult & { _rankScore?: number })._rankScore ?? b.bestMatch.score;
+    return bScore - aScore;
+  });
 
   return {
     query,
