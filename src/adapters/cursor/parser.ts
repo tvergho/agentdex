@@ -763,8 +763,6 @@ export async function extractConversations(
             if (edit.newContent) {
               const fileName = edit.filePath.split('/').pop() || edit.filePath;
               editParts.push(`\n\n---\n**Edit** \`${fileName}\` (+${edit.linesAdded}/-${edit.linesRemoved})\n\`\`\`\n${edit.newContent}\n\`\`\`\n---`);
-              // Clear newContent after appending to avoid duplicate display
-              edit.newContent = undefined;
             }
           }
           if (editParts.length > 1) {
