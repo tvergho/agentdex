@@ -7,6 +7,7 @@ import {
   getFilesTable,
   getMessageFilesTable,
   getFileEditsTable,
+  getBillingEventsTable,
   withConnectionRecovery,
   isTransientError,
   isFragmentNotFoundError,
@@ -26,6 +27,7 @@ import {
   type ConversationFile,
   type MessageFile,
   type AdjacentContext,
+  type BillingEvent,
   FileEdit,
 } from '../schema/index';
 import { EMBEDDING_DIMENSIONS, embedQuery } from '../embeddings/index';
@@ -1688,3 +1690,152 @@ export async function search(query: string, limit = 50): Promise<SearchResponse>
     searchMode,
   };
 }
+
+// ============ Billing Events Repository ============
+
+export const billingEventsRepo = {
+  async bulkInsert(events: BillingEvent[]): Promise<void> {
+    if (events.length === 0) return;
+
+    const table = await getBillingEventsTable();
+    const rows = events.map((e) => ({
+      id: e.id,
+      conversation_id: e.conversationId ?? '',
+      timestamp: e.timestamp,
+      model: e.model,
+      kind: e.kind,
+      input_tokens: e.inputTokens ?? 0,
+      output_tokens: e.outputTokens ?? 0,
+      cache_read_tokens: e.cacheReadTokens ?? 0,
+      total_tokens: e.totalTokens ?? 0,
+      cost: e.cost ?? 0,
+      csv_source: e.csvSource,
+    }));
+
+    await table.add(rows);
+  },
+
+  async deleteBySource(csvSource: string): Promise<void> {
+    await withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      await table.delete(`csv_source = '${csvSource}'`);
+    });
+  },
+
+  async count(): Promise<number> {
+    return withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      return table.countRows();
+    });
+  },
+
+  async countBySource(csvSource: string): Promise<number> {
+    return withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      const results = await table
+        .query()
+        .where(`csv_source = '${csvSource}'`)
+        .select(['id'])
+        .toArray();
+      return results.length;
+    });
+  },
+
+  async getTotals(): Promise<{
+    totalEvents: number;
+    totalTokens: number;
+    eventsWithTokens: number;
+    eventsWithoutTokens: number;
+    attributedEvents: number;
+    unattributedEvents: number;
+  }> {
+    return withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      const results = await table.query().toArray();
+
+      let totalTokens = 0;
+      let eventsWithTokens = 0;
+      let eventsWithoutTokens = 0;
+      let attributedEvents = 0;
+      let unattributedEvents = 0;
+
+      for (const row of results) {
+        const tokens = row.total_tokens as number;
+        if (tokens > 0) {
+          totalTokens += tokens;
+          eventsWithTokens++;
+        } else {
+          eventsWithoutTokens++;
+        }
+
+        const convId = row.conversation_id as string;
+        if (convId && convId.length > 0) {
+          attributedEvents++;
+        } else {
+          unattributedEvents++;
+        }
+      }
+
+      return {
+        totalEvents: results.length,
+        totalTokens,
+        eventsWithTokens,
+        eventsWithoutTokens,
+        attributedEvents,
+        unattributedEvents,
+      };
+    });
+  },
+
+  async getByConversation(conversationId: string): Promise<BillingEvent[]> {
+    return withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      const results = await table
+        .query()
+        .where(`conversation_id = '${conversationId}'`)
+        .toArray();
+
+      return results.map((row) => ({
+        id: row.id as string,
+        conversationId: (row.conversation_id as string) || undefined,
+        timestamp: row.timestamp as string,
+        model: row.model as string,
+        kind: row.kind as string,
+        inputTokens: (row.input_tokens as number) || undefined,
+        outputTokens: (row.output_tokens as number) || undefined,
+        cacheReadTokens: (row.cache_read_tokens as number) || undefined,
+        totalTokens: (row.total_tokens as number) || undefined,
+        cost: (row.cost as number) || undefined,
+        csvSource: row.csv_source as string,
+      }));
+    });
+  },
+
+  async getTokensByConversation(conversationId: string): Promise<number> {
+    return withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      const results = await table
+        .query()
+        .where(`conversation_id = '${conversationId}'`)
+        .select(['total_tokens'])
+        .toArray();
+
+      return results.reduce((sum, row) => sum + ((row.total_tokens as number) || 0), 0);
+    });
+  },
+
+  async getDistinctConversationIds(): Promise<Set<string>> {
+    return withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      const results = await table.query().select(['conversation_id']).toArray();
+      const ids = new Set<string>();
+      for (const row of results) {
+        const id = row.conversation_id as string;
+        if (id && id.length > 0) {
+          ids.add(id);
+        }
+      }
+      return ids;
+    });
+  },
+};

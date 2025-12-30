@@ -492,7 +492,7 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
       peakMessage = m;
     }
   }
-  const totalInputTokens = peakMessage?.inputTokens || 0;
+  const totalInputTokens = peakContext || 0;
   const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
   const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
   const totalOutputTokens = rawMessages.reduce((sum, m) => sum + (m.outputTokens || 0), 0);

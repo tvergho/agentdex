@@ -521,7 +521,7 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
         peakMessage = m;
       }
     }
-    const totalInputTokens = peakMessage?.inputTokens || 0;
+    const totalInputTokens = peakContext || 0;
     const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
     const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
     const totalOutputTokens = messages.reduce((sum, m) => sum + (m.outputTokens || 0), 0);

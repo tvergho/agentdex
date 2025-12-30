@@ -9,6 +9,7 @@ import {
   type ConversationFile,
   type ToolCall,
   type FileEdit,
+  type BillingEvent,
   type SourceRef,
 } from '../../src/schema/index';
 
@@ -161,6 +162,28 @@ export function createConversationWithMessages(
 }
 
 /**
+ * Create a test billing event with sensible defaults
+ */
+export function createBillingEvent(
+  overrides?: Partial<BillingEvent>
+): BillingEvent {
+  return {
+    id: `billing-${randomId()}`,
+    conversationId: undefined,
+    timestamp: new Date().toISOString(),
+    model: 'claude-3-5-sonnet',
+    kind: 'chat',
+    inputTokens: 1000,
+    outputTokens: 500,
+    cacheReadTokens: undefined,
+    totalTokens: 1500,
+    cost: 0.015,
+    csvSource: 'test-billing.csv',
+    ...overrides,
+  };
+}
+
+/**
  * Fixtures namespace for convenient access
  */
 export const fixtures = {
@@ -169,6 +192,7 @@ export const fixtures = {
   file: createConversationFile,
   toolCall: createToolCall,
   fileEdit: createFileEdit,
+  billingEvent: createBillingEvent,
   conversationWithMessages: createConversationWithMessages,
 };
 

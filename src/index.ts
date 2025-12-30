@@ -41,6 +41,7 @@ import { unifiedCommand } from './cli/commands/unified';
 import { configCommand } from './cli/commands/config';
 import { embedCommand } from './cli/commands/embed';
 import { chatCommand } from './cli/commands/chat';
+import { billingImportCommand, billingStatsCommand, billingSyncCommand } from './cli/commands/billing';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version: string };
@@ -143,6 +144,28 @@ program
   .command('chat')
   .description('Start an AI chat session with dex tools (requires OpenCode)')
   .action(chatCommand);
+
+const billing = program
+  .command('billing')
+  .description('Manage Cursor billing data');
+
+billing
+  .command('import <file>')
+  .description('Import billing events from a Cursor CSV export')
+  .option('--dry-run', 'Preview what would be imported without writing')
+  .action(billingImportCommand);
+
+billing
+  .command('stats')
+  .description('Show billing data statistics')
+  .action(billingStatsCommand);
+
+billing
+  .command('sync')
+  .description('Fetch and sync billing data directly from Cursor API')
+  .option('--dry-run', 'Preview what would be synced without writing')
+  .option('--days <number>', 'Number of days of history to fetch', '365')
+  .action(billingSyncCommand);
 
 // MCP server command
 program

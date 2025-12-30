@@ -289,6 +289,7 @@ let syncStateTable: Table | null = null;
 let filesTable: Table | null = null;
 let messageFilesTable: Table | null = null;
 let fileEditsTable: Table | null = null;
+let billingEventsTable: Table | null = null;
 
 /**
  * Check if the database can be connected to with a timeout.
@@ -556,6 +557,7 @@ export function resetConnection(): void {
   filesTable = null;
   messageFilesTable = null;
   fileEditsTable = null;
+  billingEventsTable = null;
 }
 
 export async function getConversationsTable(): Promise<Table> {
@@ -618,6 +620,13 @@ export async function getFileEditsTable(): Promise<Table> {
     await connect();
   }
   return fileEditsTable!;
+}
+
+export async function getBillingEventsTable(): Promise<Table> {
+  if (!billingEventsTable) {
+    await connect();
+  }
+  return billingEventsTable!;
 }
 
 /**
@@ -793,6 +802,28 @@ async function ensureTables(): Promise<void> {
   } else {
     fileEditsTable = await safeOpenTable('file_edits');
   }
+
+  // Billing events table (Cursor CSV billing data)
+  if (!existingTables.includes('billing_events')) {
+    billingEventsTable = await db.createTable('billing_events', [
+      {
+        id: '_placeholder_',
+        conversation_id: '',
+        timestamp: '',
+        model: '',
+        kind: '',
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        total_tokens: 0,
+        cost: 0,
+        csv_source: '',
+      },
+    ]);
+    await billingEventsTable.delete("id = '_placeholder_'");
+  } else {
+    billingEventsTable = await safeOpenTable('billing_events');
+  }
 }
 
 export async function closeConnection(): Promise<void> {
@@ -804,6 +835,7 @@ export async function closeConnection(): Promise<void> {
   filesTable = null;
   messageFilesTable = null;
   fileEditsTable = null;
+  billingEventsTable = null;
 }
 
 export async function rebuildFtsIndex(): Promise<void> {
@@ -1036,7 +1068,7 @@ export async function recreateMessagesTable(): Promise<void> {
 async function recoverFromCorruption(tableName: string | null): Promise<void> {
   if (!db) return;
 
-  const allTables = ['conversations', 'messages', 'tool_calls', 'sync_state', 'conversation_files', 'message_files', 'file_edits'];
+  const allTables = ['conversations', 'messages', 'tool_calls', 'sync_state', 'conversation_files', 'message_files', 'file_edits', 'billing_events'];
   const tablesToDrop = tableName ? [tableName] : allTables;
 
   const existingTables = await db.tableNames();
@@ -1069,4 +1101,5 @@ async function recoverFromCorruption(tableName: string | null): Promise<void> {
   filesTable = null;
   messageFilesTable = null;
   fileEditsTable = null;
+  billingEventsTable = null;
 }

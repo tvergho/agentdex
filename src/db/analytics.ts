@@ -2,7 +2,7 @@
  * Analytics query functions for the stats dashboard
  */
 
-import { connect, getConversationsTable, getFilesTable, getFileEditsTable, withConnectionRecovery, isTransientError } from './index';
+import { connect, getConversationsTable, getFilesTable, getFileEditsTable, getBillingEventsTable, withConnectionRecovery, isTransientError } from './index';
 import type { Table } from '@lancedb/lancedb';
 import { Source, type Conversation } from '../schema/index';
 
@@ -1073,6 +1073,255 @@ export async function getFileTypeStats(
   return Array.from(byExtension.values())
     .sort((a, b) => b.editCount - a.editCount)
     .slice(0, limit);
+}
+
+// --- Billing Analytics (Cursor) ---
+
+export interface BillingOverview {
+  totalEvents: number;
+  totalTokens: number;
+  eventsWithTokens: number;
+  eventsWithoutTokens: number;
+  attributedEvents: number;
+  unattributedEvents: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalCost: number;
+}
+
+export interface BillingModelStats {
+  model: string;
+  events: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cost: number;
+}
+
+export interface DailyBillingTokens {
+  date: string;
+  tokens: number;
+  events: number;
+  cost: number;
+}
+
+export interface BillingConversation {
+  conversationId: string;
+  title: string;
+  tokens: number;
+  events: number;
+  cost: number;
+}
+
+/**
+ * Check if billing data exists in the database.
+ */
+export async function hasBillingData(): Promise<boolean> {
+  await connect();
+  try {
+    const table = await getBillingEventsTable();
+    const count = await table.countRows();
+    return count > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get billing overview stats for a period (based on event timestamps).
+ */
+export async function getBillingOverview(period: PeriodFilter): Promise<BillingOverview> {
+  await connect();
+  const table = await getBillingEventsTable();
+  const rows = await table.query().toArray();
+
+  let totalTokens = 0;
+  let eventsWithTokens = 0;
+  let eventsWithoutTokens = 0;
+  let attributedEvents = 0;
+  let unattributedEvents = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let totalCost = 0;
+  let totalEvents = 0;
+
+  for (const row of rows) {
+    const timestamp = row.timestamp as string;
+    if (!isInPeriod(timestamp, period)) continue;
+
+    totalEvents++;
+    const tokens = (row.total_tokens as number) || 0;
+    if (tokens > 0) {
+      totalTokens += tokens;
+      eventsWithTokens++;
+    } else {
+      eventsWithoutTokens++;
+    }
+
+    const convId = row.conversation_id as string;
+    if (convId && convId.length > 0) {
+      attributedEvents++;
+    } else {
+      unattributedEvents++;
+    }
+
+    inputTokens += (row.input_tokens as number) || 0;
+    outputTokens += (row.output_tokens as number) || 0;
+    cacheReadTokens += (row.cache_read_tokens as number) || 0;
+    totalCost += (row.cost as number) || 0;
+  }
+
+  return {
+    totalEvents,
+    totalTokens,
+    eventsWithTokens,
+    eventsWithoutTokens,
+    attributedEvents,
+    unattributedEvents,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    totalCost,
+  };
+}
+
+/**
+ * Get billing stats by model for a period.
+ */
+export async function getBillingByModel(period: PeriodFilter): Promise<BillingModelStats[]> {
+  await connect();
+  const table = await getBillingEventsTable();
+  const rows = await table.query().toArray();
+
+  const byModel = new Map<string, BillingModelStats>();
+
+  for (const row of rows) {
+    const timestamp = row.timestamp as string;
+    if (!isInPeriod(timestamp, period)) continue;
+
+    const model = (row.model as string) || '(unknown)';
+    const existing = byModel.get(model) || {
+      model,
+      events: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cost: 0,
+    };
+
+    existing.events++;
+    existing.inputTokens += (row.input_tokens as number) || 0;
+    existing.outputTokens += (row.output_tokens as number) || 0;
+    existing.totalTokens += (row.total_tokens as number) || 0;
+    existing.cost += (row.cost as number) || 0;
+
+    byModel.set(model, existing);
+  }
+
+  // Sort by total tokens descending
+  return Array.from(byModel.values()).sort((a, b) => b.totalTokens - a.totalTokens);
+}
+
+/**
+ * Get daily billing token trend for a period.
+ */
+export async function getDailyBillingTokens(period: PeriodFilter): Promise<DailyBillingTokens[]> {
+  await connect();
+  const table = await getBillingEventsTable();
+  const rows = await table.query().toArray();
+
+  const byDate = new Map<string, DailyBillingTokens>();
+
+  for (const row of rows) {
+    const timestamp = row.timestamp as string;
+    if (!isInPeriod(timestamp, period)) continue;
+
+    const date = timestamp.split('T')[0];
+    if (!date) continue;
+
+    const existing = byDate.get(date) || {
+      date,
+      tokens: 0,
+      events: 0,
+      cost: 0,
+    };
+
+    existing.tokens += (row.total_tokens as number) || 0;
+    existing.events++;
+    existing.cost += (row.cost as number) || 0;
+
+    byDate.set(date, existing);
+  }
+
+  // Fill in missing dates and sort
+  const result: DailyBillingTokens[] = [];
+  const current = new Date(period.startDate);
+  const end = new Date(period.endDate);
+
+  while (current <= end) {
+    const dateStr = formatDate(current);
+    const existing = byDate.get(dateStr);
+    if (existing) {
+      result.push(existing);
+    } else {
+      result.push({ date: dateStr, tokens: 0, events: 0, cost: 0 });
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return result;
+}
+
+/**
+ * Get top conversations by billed tokens.
+ */
+export async function getBillingTopConversations(
+  period: PeriodFilter,
+  limit: number = 5
+): Promise<BillingConversation[]> {
+  await connect();
+  const billingTable = await getBillingEventsTable();
+  const billingRows = await billingTable.query().toArray();
+
+  // Aggregate by conversation
+  const byConv = new Map<string, { tokens: number; events: number; cost: number }>();
+
+  for (const row of billingRows) {
+    const timestamp = row.timestamp as string;
+    if (!isInPeriod(timestamp, period)) continue;
+
+    const convId = row.conversation_id as string;
+    if (!convId || convId.length === 0) continue;
+
+    const existing = byConv.get(convId) || { tokens: 0, events: 0, cost: 0 };
+    existing.tokens += (row.total_tokens as number) || 0;
+    existing.events++;
+    existing.cost += (row.cost as number) || 0;
+    byConv.set(convId, existing);
+  }
+
+  // Sort by tokens and take top N
+  const sorted = Array.from(byConv.entries())
+    .sort((a, b) => b[1].tokens - a[1].tokens)
+    .slice(0, limit);
+
+  // Get conversation titles
+  const convTable = await getConversationsTable();
+  const convRows = await convTable.query().toArray();
+  const titleMap = new Map<string, string>();
+  for (const row of convRows) {
+    titleMap.set(row.id as string, (row.title as string) || '(untitled)');
+  }
+
+  return sorted.map(([convId, data]) => ({
+    conversationId: convId,
+    title: titleMap.get(convId) || '(unknown)',
+    tokens: data.tokens,
+    events: data.events,
+    cost: data.cost,
+  }));
 }
 
 // --- Summary Functions ---

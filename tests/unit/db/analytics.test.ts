@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { TestDatabase } from '../../helpers/db';
-import { createConversation, createFileEdit } from '../../fixtures';
+import { createConversation, createFileEdit, createBillingEvent } from '../../fixtures';
 import { isoDate } from '../../helpers/time';
 
 describe('analytics', () => {
@@ -612,6 +612,200 @@ describe('analytics', () => {
       expect(stats[0]!.extension).toBe('.ts/.tsx');
       expect(stats[0]!.editCount).toBe(2);
       expect(stats[0]!.linesAdded).toBe(30);
+    });
+  });
+
+  describe('hasBillingData', () => {
+    it('returns false for empty database', async () => {
+      const { hasBillingData } = await import('../../../src/db/analytics');
+      const result = await hasBillingData();
+      expect(result).toBe(false);
+    });
+
+    it('returns true when billing events exist', async () => {
+      await db.seed({ billingEvents: [createBillingEvent()] });
+
+      const { hasBillingData } = await import('../../../src/db/analytics');
+      const result = await hasBillingData();
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('getBillingOverview', () => {
+    it('returns zeros for empty database', async () => {
+      const { getBillingOverview, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+
+      const stats = await getBillingOverview(period);
+
+      expect(stats.totalEvents).toBe(0);
+      expect(stats.totalTokens).toBe(0);
+      expect(stats.totalCost).toBe(0);
+    });
+
+    it('aggregates billing stats within period', async () => {
+      const conv = createConversation({ createdAt: new Date().toISOString() });
+      const events = [
+        createBillingEvent({
+          conversationId: conv.id,
+          timestamp: new Date().toISOString(),
+          inputTokens: 1000,
+          outputTokens: 500,
+          totalTokens: 1500,
+          cost: 0.05,
+        }),
+        createBillingEvent({
+          conversationId: conv.id,
+          timestamp: new Date().toISOString(),
+          inputTokens: 2000,
+          outputTokens: 1000,
+          totalTokens: 3000,
+          cost: 0.10,
+        }),
+      ];
+      await db.seed({ conversations: [conv], billingEvents: events });
+
+      const { getBillingOverview, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+      const stats = await getBillingOverview(period);
+
+      expect(stats.totalEvents).toBe(2);
+      expect(stats.totalTokens).toBe(4500);
+      expect(stats.inputTokens).toBe(3000);
+      expect(stats.outputTokens).toBe(1500);
+      expect(stats.totalCost).toBeCloseTo(0.15, 2);
+      expect(stats.attributedEvents).toBe(2);
+      expect(stats.unattributedEvents).toBe(0);
+    });
+
+    it('tracks attributed vs unattributed events', async () => {
+      const conv = createConversation({ createdAt: new Date().toISOString() });
+      const events = [
+        createBillingEvent({ conversationId: conv.id, timestamp: new Date().toISOString(), totalTokens: 1000 }),
+        createBillingEvent({ conversationId: undefined, timestamp: new Date().toISOString(), totalTokens: 500 }),
+      ];
+      await db.seed({ conversations: [conv], billingEvents: events });
+
+      const { getBillingOverview, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+      const stats = await getBillingOverview(period);
+
+      expect(stats.attributedEvents).toBe(1);
+      expect(stats.unattributedEvents).toBe(1);
+    });
+
+    it('excludes events outside period', async () => {
+      const events = [
+        createBillingEvent({ timestamp: new Date().toISOString(), totalTokens: 1000 }),
+        createBillingEvent({ timestamp: isoDate(2020, 1, 1), totalTokens: 5000 }),
+      ];
+      await db.seed({ billingEvents: events });
+
+      const { getBillingOverview, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+      const stats = await getBillingOverview(period);
+
+      expect(stats.totalEvents).toBe(1);
+      expect(stats.totalTokens).toBe(1000);
+    });
+  });
+
+  describe('getBillingByModel', () => {
+    it('groups billing by model', async () => {
+      const events = [
+        createBillingEvent({ model: 'gpt-4', timestamp: new Date().toISOString(), totalTokens: 1000, cost: 0.05 }),
+        createBillingEvent({ model: 'gpt-4', timestamp: new Date().toISOString(), totalTokens: 2000, cost: 0.10 }),
+        createBillingEvent({ model: 'claude-3', timestamp: new Date().toISOString(), totalTokens: 5000, cost: 0.20 }),
+      ];
+      await db.seed({ billingEvents: events });
+
+      const { getBillingByModel, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+      const stats = await getBillingByModel(period);
+
+      expect(stats.length).toBe(2);
+      expect(stats[0]!.model).toBe('claude-3');
+      expect(stats[0]!.totalTokens).toBe(5000);
+      expect(stats[0]!.events).toBe(1);
+      expect(stats[1]!.model).toBe('gpt-4');
+      expect(stats[1]!.totalTokens).toBe(3000);
+      expect(stats[1]!.events).toBe(2);
+    });
+  });
+
+  describe('getDailyBillingTokens', () => {
+    it('groups billing tokens by date', async () => {
+      const today = new Date().toISOString().split('T')[0]!;
+      const events = [
+        createBillingEvent({ timestamp: `${today}T10:00:00.000Z`, totalTokens: 1000, cost: 0.05 }),
+        createBillingEvent({ timestamp: `${today}T14:00:00.000Z`, totalTokens: 2000, cost: 0.10 }),
+      ];
+      await db.seed({ billingEvents: events });
+
+      const { getDailyBillingTokens, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(7);
+      const daily = await getDailyBillingTokens(period);
+
+      const todayEntry = daily.find(d => d.date === today);
+      expect(todayEntry).toBeDefined();
+      expect(todayEntry!.tokens).toBe(3000);
+      expect(todayEntry!.events).toBe(2);
+      expect(todayEntry!.cost).toBeCloseTo(0.15, 2);
+    });
+
+    it('fills in missing dates with zeros', async () => {
+      const { getDailyBillingTokens, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(7);
+      const daily = await getDailyBillingTokens(period);
+
+      expect(daily.length).toBeGreaterThanOrEqual(7);
+      for (const d of daily) {
+        expect(d.tokens).toBeDefined();
+        expect(d.events).toBeDefined();
+      }
+    });
+  });
+
+  describe('getBillingTopConversations', () => {
+    it('returns top conversations by billed tokens', async () => {
+      const conv1 = createConversation({ title: 'Low', createdAt: new Date().toISOString() });
+      const conv2 = createConversation({ title: 'High', createdAt: new Date().toISOString() });
+      const conv3 = createConversation({ title: 'Medium', createdAt: new Date().toISOString() });
+
+      const events = [
+        createBillingEvent({ conversationId: conv1.id, timestamp: new Date().toISOString(), totalTokens: 100 }),
+        createBillingEvent({ conversationId: conv2.id, timestamp: new Date().toISOString(), totalTokens: 5000 }),
+        createBillingEvent({ conversationId: conv2.id, timestamp: new Date().toISOString(), totalTokens: 3000 }),
+        createBillingEvent({ conversationId: conv3.id, timestamp: new Date().toISOString(), totalTokens: 1000 }),
+      ];
+      await db.seed({ conversations: [conv1, conv2, conv3], billingEvents: events });
+
+      const { getBillingTopConversations, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+      const top = await getBillingTopConversations(period, 2);
+
+      expect(top.length).toBe(2);
+      expect(top[0]!.title).toBe('High');
+      expect(top[0]!.tokens).toBe(8000);
+      expect(top[0]!.events).toBe(2);
+      expect(top[1]!.title).toBe('Medium');
+      expect(top[1]!.tokens).toBe(1000);
+    });
+
+    it('excludes unattributed events', async () => {
+      const conv = createConversation({ title: 'Test', createdAt: new Date().toISOString() });
+      const events = [
+        createBillingEvent({ conversationId: conv.id, timestamp: new Date().toISOString(), totalTokens: 1000 }),
+        createBillingEvent({ conversationId: undefined, timestamp: new Date().toISOString(), totalTokens: 5000 }),
+      ];
+      await db.seed({ conversations: [conv], billingEvents: events });
+
+      const { getBillingTopConversations, createPeriodFilter } = await import('../../../src/db/analytics');
+      const period = createPeriodFilter(30);
+      const top = await getBillingTopConversations(period, 5);
+
+      expect(top.length).toBe(1);
+      expect(top[0]!.tokens).toBe(1000);
     });
   });
 });

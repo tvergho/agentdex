@@ -225,3 +225,20 @@ export const ExportArchive = z.object({
   conversations: z.array(ExportedConversation),
 });
 export type ExportArchive = z.infer<typeof ExportArchive>;
+
+// Billing event from CSV import (Cursor billing data)
+// Stores individual API call events attributed to conversations
+export const BillingEvent = z.object({
+  id: z.string(), // SHA256 hash of row data for deduplication
+  conversationId: z.string().optional(), // FK to conversation (null if unattributed)
+  timestamp: z.string().datetime(),
+  model: z.string(),
+  kind: z.string(), // e.g., "chat", "completion"
+  inputTokens: z.number().optional(), // null if CSV data missing
+  outputTokens: z.number().optional(), // null if CSV data missing
+  cacheReadTokens: z.number().optional(),
+  totalTokens: z.number().optional(), // null if CSV data missing (NOT imputed)
+  cost: z.number().optional(),
+  csvSource: z.string(), // filename for idempotent re-import
+});
+export type BillingEvent = z.infer<typeof BillingEvent>;

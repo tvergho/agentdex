@@ -11,6 +11,7 @@ import {
   createConversationFile,
   createToolCall,
   createFileEdit,
+  createBillingEvent,
 } from '../../fixtures';
 import { isoDate, dateString, daysAgo } from '../../helpers/time';
 
@@ -786,7 +787,166 @@ describe('search with recency bias', () => {
   });
 });
 
+describe('billingEventsRepo', () => {
+  let db: TestDatabase;
 
+  beforeEach(async () => {
+    db = new TestDatabase();
+    await db.setup();
+  });
 
+  afterEach(async () => {
+    await db.teardown();
+  });
 
+  describe('bulkInsert', () => {
+    it('inserts billing events', async () => {
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const { createBillingEvent } = await import('../../fixtures');
+
+      const event1 = createBillingEvent({ model: 'gpt-4', totalTokens: 1000 });
+      const event2 = createBillingEvent({ model: 'claude-3', totalTokens: 2000 });
+
+      await billingEventsRepo.bulkInsert([event1, event2]);
+
+      const count = await billingEventsRepo.count();
+      expect(count).toBe(2);
+    });
+
+    it('handles empty array', async () => {
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      await billingEventsRepo.bulkInsert([]);
+      const count = await billingEventsRepo.count();
+      expect(count).toBe(0);
+    });
+  });
+
+  describe('deleteBySource', () => {
+    it('removes events from specific CSV source', async () => {
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const { createBillingEvent } = await import('../../fixtures');
+
+      const event1 = createBillingEvent({ csvSource: 'file1.csv' });
+      const event2 = createBillingEvent({ csvSource: 'file1.csv' });
+      const event3 = createBillingEvent({ csvSource: 'file2.csv' });
+
+      await billingEventsRepo.bulkInsert([event1, event2, event3]);
+      expect(await billingEventsRepo.count()).toBe(3);
+
+      await billingEventsRepo.deleteBySource('file1.csv');
+
+      expect(await billingEventsRepo.count()).toBe(1);
+      expect(await billingEventsRepo.countBySource('file1.csv')).toBe(0);
+      expect(await billingEventsRepo.countBySource('file2.csv')).toBe(1);
+    });
+  });
+
+  describe('getTotals', () => {
+    it('calculates aggregate statistics', async () => {
+      const conv = createConversation();
+      await db.seed({ conversations: [conv] });
+
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const { createBillingEvent } = await import('../../fixtures');
+
+      const event1 = createBillingEvent({
+        conversationId: conv.id,
+        totalTokens: 1000,
+      });
+      const event2 = createBillingEvent({
+        conversationId: conv.id,
+        totalTokens: 2000,
+      });
+      const event3 = createBillingEvent({
+        conversationId: undefined,
+        totalTokens: 500,
+      });
+      const event4 = createBillingEvent({
+        conversationId: undefined,
+        totalTokens: 0,
+      });
+
+      await billingEventsRepo.bulkInsert([event1, event2, event3, event4]);
+
+      const totals = await billingEventsRepo.getTotals();
+
+      expect(totals.totalEvents).toBe(4);
+      expect(totals.totalTokens).toBe(3500);
+      expect(totals.eventsWithTokens).toBe(3);
+      expect(totals.eventsWithoutTokens).toBe(1);
+      expect(totals.attributedEvents).toBe(2);
+      expect(totals.unattributedEvents).toBe(2);
+    });
+
+    it('returns zeros for empty table', async () => {
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const totals = await billingEventsRepo.getTotals();
+
+      expect(totals.totalEvents).toBe(0);
+      expect(totals.totalTokens).toBe(0);
+    });
+  });
+
+  describe('getByConversation', () => {
+    it('returns events for specific conversation', async () => {
+      const conv1 = createConversation();
+      const conv2 = createConversation();
+      await db.seed({ conversations: [conv1, conv2] });
+
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const { createBillingEvent } = await import('../../fixtures');
+
+      const event1 = createBillingEvent({ conversationId: conv1.id, model: 'gpt-4' });
+      const event2 = createBillingEvent({ conversationId: conv1.id, model: 'claude-3' });
+      const event3 = createBillingEvent({ conversationId: conv2.id, model: 'gpt-4' });
+
+      await billingEventsRepo.bulkInsert([event1, event2, event3]);
+
+      const results = await billingEventsRepo.getByConversation(conv1.id);
+      expect(results.length).toBe(2);
+      expect(results.every(e => e.conversationId === conv1.id)).toBe(true);
+    });
+  });
+
+  describe('getTokensByConversation', () => {
+    it('sums tokens for conversation', async () => {
+      const conv = createConversation();
+      await db.seed({ conversations: [conv] });
+
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const { createBillingEvent } = await import('../../fixtures');
+
+      const event1 = createBillingEvent({ conversationId: conv.id, totalTokens: 1000 });
+      const event2 = createBillingEvent({ conversationId: conv.id, totalTokens: 2500 });
+
+      await billingEventsRepo.bulkInsert([event1, event2]);
+
+      const total = await billingEventsRepo.getTokensByConversation(conv.id);
+      expect(total).toBe(3500);
+    });
+  });
+
+  describe('getDistinctConversationIds', () => {
+    it('returns unique conversation IDs', async () => {
+      const conv1 = createConversation();
+      const conv2 = createConversation();
+      await db.seed({ conversations: [conv1, conv2] });
+
+      const { billingEventsRepo } = await import('../../../src/db/repository');
+      const { createBillingEvent } = await import('../../fixtures');
+
+      await billingEventsRepo.bulkInsert([
+        createBillingEvent({ conversationId: conv1.id }),
+        createBillingEvent({ conversationId: conv1.id }),
+        createBillingEvent({ conversationId: conv2.id }),
+        createBillingEvent({ conversationId: undefined }),
+      ]);
+
+      const ids = await billingEventsRepo.getDistinctConversationIds();
+      expect(ids.size).toBe(2);
+      expect(ids.has(conv1.id)).toBe(true);
+      expect(ids.has(conv2.id)).toBe(true);
+    });
+  });
+});
 

@@ -552,7 +552,7 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
   // Extract token usage from token_count events
   // For input: use PEAK of last_token_usage (each API call's context, find max)
   // For output: use cumulative total_token_usage (each output is new content)
-  let peakInputTokens = 0;
+  let peakTotalContext = 0;
   let peakCacheReadTokens = 0;
   let totalOutputTokens: number | undefined;
 
@@ -570,8 +570,8 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
       const cacheTokens = lastUsage.cached_input_tokens ?? 0;
       const totalContext = inputTokens + cacheTokens;
 
-      if (totalContext > peakInputTokens + peakCacheReadTokens) {
-        peakInputTokens = inputTokens;
+      if (totalContext > peakTotalContext) {
+        peakTotalContext = totalContext;
         peakCacheReadTokens = cacheTokens;
       }
     }
@@ -588,7 +588,7 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
     }
   }
 
-  const totalInputTokens = peakInputTokens > 0 ? peakInputTokens : undefined;
+  const totalInputTokens = peakTotalContext > 0 ? peakTotalContext : undefined;
   const totalCacheReadTokens = peakCacheReadTokens > 0 ? peakCacheReadTokens : undefined;
 
   if (messages.length === 0) {

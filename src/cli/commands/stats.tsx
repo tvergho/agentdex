@@ -37,7 +37,16 @@ import {
   getCombinedFileStats,
   getEditTypeBreakdown,
   getFileTypeStats,
+  hasBillingData,
+  getBillingOverview,
+  getBillingByModel,
+  getDailyBillingTokens,
+  getBillingTopConversations,
   type OverviewStats,
+  type BillingOverview,
+  type BillingModelStats,
+  type DailyBillingTokens,
+  type BillingConversation,
   type DayActivity,
   type DailyTokensBySource,
   type SourceStats,
@@ -97,6 +106,12 @@ interface AllData {
   fileStats: FileStats[];
   editTypeBreakdown: EditTypeBreakdown;
   fileTypeStats: FileTypeStats[];
+  // Billing data (Cursor)
+  hasBilling: boolean;
+  billingOverview: BillingOverview | null;
+  billingByModel: BillingModelStats[];
+  dailyBillingTokens: DailyBillingTokens[];
+  billingTopConversations: BillingConversation[];
 }
 
 // --- Tab Components ---
@@ -321,7 +336,7 @@ function TokensTab({
   focusSection: FocusSection;
   selectedIndex: number;
 }) {
-  const { overview, daily, dailyTokensBySource, models, topConversations, lines, cache, sources } = data;
+  const { overview, daily, dailyTokensBySource, models, topConversations, lines, cache, sources, hasBilling, billingOverview, billingByModel, billingTopConversations } = data;
 
   // Calculate totals (overview.totalInputTokens now includes cache tokens)
   const totalTokens = overview.totalInputTokens + overview.totalOutputTokens;
@@ -446,6 +461,46 @@ function TokensTab({
           </Box>
         )}
       </Box>
+
+      {/* Billed Tokens (Cursor) - only shown if billing data exists */}
+      {hasBilling && billingOverview && billingOverview.totalEvents > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text bold color="white">Billed Tokens <Text color="gray">(Cursor API)</Text></Text>
+          <Box paddingX={0}>
+            <Text color="gray">{'─'.repeat(Math.max(0, width - 2))}</Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color="yellow" bold>{formatLargeNumber(billingOverview.totalTokens)}</Text>
+            <Text color="gray"> total tokens · </Text>
+            <Text color="green">${billingOverview.totalCost.toFixed(2)}</Text>
+            <Text color="gray"> cost · </Text>
+            <Text color="cyan">{formatLargeNumber(billingOverview.totalEvents)}</Text>
+            <Text color="gray"> events</Text>
+          </Box>
+          {billingByModel.length > 0 && (
+            <Box flexDirection="column">
+              {billingByModel.slice(0, 3).map((m, idx) => {
+                const maxModelTokens = billingByModel[0]!.totalTokens || 1;
+                const proportion = m.totalTokens / maxModelTokens;
+                const labelWidth = 30;
+                const barWidth = Math.max(15, width - labelWidth - 18);
+                const filledWidth = Math.max(1, Math.round(proportion * barWidth));
+                const emptyWidth = barWidth - filledWidth;
+                const displayLabel = m.model.length > labelWidth ? m.model.slice(0, labelWidth - 1) + '…' : m.model.padEnd(labelWidth);
+
+                return (
+                  <Box key={idx}>
+                    <Text>{displayLabel} </Text>
+                    <Text color="yellow">{'█'.repeat(filledWidth)}</Text>
+                    <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                    <Text color="gray"> {formatLargeNumber(m.totalTokens).padStart(6)}</Text>
+                  </Box>
+                );
+              })}
+            </Box>
+          )}
+        </Box>
+      )}
 
       {/* Top conversations with visual bars */}
       <Box flexDirection="column" marginBottom={1}>
@@ -980,7 +1035,6 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
         await connect();
         const periodFilter = createPeriodFilter(period);
 
-        // Load all data in parallel
         const [overview, daily, dailyTokensBySource, sources, models, topConversations, lines, cache, hourly, weekly, streak, recentConversations, projectStats, fileStats, editTypeBreakdown, fileTypeStats] = await Promise.all([
           getOverviewStats(periodFilter),
           getDailyActivity(periodFilter),
@@ -1000,6 +1054,21 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
           getFileTypeStats(periodFilter, 5),
         ]);
 
+        const hasBilling = await hasBillingData();
+        let billingOverview: BillingOverview | null = null;
+        let billingByModel: BillingModelStats[] = [];
+        let dailyBillingTokens: DailyBillingTokens[] = [];
+        let billingTopConversations: BillingConversation[] = [];
+
+        if (hasBilling) {
+          [billingOverview, billingByModel, dailyBillingTokens, billingTopConversations] = await Promise.all([
+            getBillingOverview(periodFilter),
+            getBillingByModel(periodFilter),
+            getDailyBillingTokens(periodFilter),
+            getBillingTopConversations(periodFilter, 5),
+          ]);
+        }
+
         setData({
           overview,
           daily,
@@ -1017,6 +1086,11 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
           fileStats,
           editTypeBreakdown,
           fileTypeStats,
+          hasBilling,
+          billingOverview,
+          billingByModel,
+          dailyBillingTokens,
+          billingTopConversations,
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));

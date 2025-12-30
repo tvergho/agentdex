@@ -11,6 +11,7 @@ import type {
   ConversationFile,
   ToolCall,
   FileEdit,
+  BillingEvent,
 } from '../../src/schema/index';
 import { resetConnection } from '../../src/db/index';
 
@@ -59,8 +60,8 @@ export class TestDatabase {
     files?: ConversationFile[];
     toolCalls?: ToolCall[];
     fileEdits?: FileEdit[];
+    billingEvents?: BillingEvent[];
   }): Promise<void> {
-    // Dynamically import to pick up the new DEX_DATA_DIR
     const { connect } = await import('../../src/db/index');
     const {
       conversationRepo,
@@ -68,35 +69,35 @@ export class TestDatabase {
       filesRepo,
       toolCallRepo,
       fileEditsRepo,
+      billingEventsRepo,
     } = await import('../../src/db/repository');
 
     await connect();
 
-    // Insert conversations
     if (data.conversations) {
       for (const conv of data.conversations) {
         await conversationRepo.upsert(conv);
       }
     }
 
-    // Insert messages
     if (data.messages) {
       await messageRepo.bulkInsert(data.messages);
     }
 
-    // Insert files
     if (data.files) {
       await filesRepo.bulkInsert(data.files);
     }
 
-    // Insert tool calls
     if (data.toolCalls) {
       await toolCallRepo.bulkInsert(data.toolCalls);
     }
 
-    // Insert file edits
     if (data.fileEdits) {
       await fileEditsRepo.bulkInsert(data.fileEdits);
+    }
+
+    if (data.billingEvents) {
+      await billingEventsRepo.bulkInsert(data.billingEvents);
     }
   }
 
