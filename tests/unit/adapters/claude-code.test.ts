@@ -136,7 +136,7 @@ describe('Claude Code parser', () => {
       });
 
       const conv = conversations[0]!;
-      expect(conv.totalInputTokens).toBe(150);
+      expect(conv.totalInputTokens).toBe(225);
       expect(conv.totalOutputTokens).toBe(200);
       expect(conv.totalCacheCreationTokens).toBe(50);
       expect(conv.totalCacheReadTokens).toBe(25);
