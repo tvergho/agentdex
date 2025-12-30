@@ -24,6 +24,7 @@ import {
   getDailyTokensBySource,
   getStatsBySource,
   getStatsByModel,
+  getUnifiedModelStats,
   getTopConversationsByTokens,
   getLinesGeneratedStats,
   getCacheStats,
@@ -51,6 +52,7 @@ import {
   type DailyTokensBySource,
   type SourceStats,
   type ModelStats,
+  type UnifiedModelStats,
   type LinesGeneratedStats,
   type CacheStats,
   type StreakInfo,
@@ -93,6 +95,7 @@ interface AllData {
   dailyTokensBySource: DailyTokensBySource[];
   sources: SourceStats[];
   models: ModelStats[];
+  unifiedModels: UnifiedModelStats[];
   topConversations: Conversation[];
   lines: LinesGeneratedStats;
   cache: CacheStats;
@@ -336,7 +339,7 @@ function TokensTab({
   focusSection: FocusSection;
   selectedIndex: number;
 }) {
-  const { overview, daily, dailyTokensBySource, models, topConversations, lines, cache, sources, hasBilling, billingOverview, billingByModel, billingTopConversations } = data;
+  const { overview, daily, dailyTokensBySource, unifiedModels, topConversations, lines, cache, sources, hasBilling, billingOverview, billingByModel, billingTopConversations } = data;
 
   // Calculate totals (overview.totalInputTokens now includes cache tokens)
   const totalTokens = overview.totalInputTokens + overview.totalOutputTokens;
@@ -384,14 +387,15 @@ function TokensTab({
         <Box paddingX={0}>
           <Text color="gray">{'─'.repeat(Math.max(0, width - 2))}</Text>
         </Box>
-        {models.length > 0 ? (
+        {unifiedModels.length > 0 ? (
           <Box flexDirection="column">
-            {models.slice(0, 5).map((m, idx) => {
+            {unifiedModels.slice(0, 5).map((m, idx) => {
               const total = m.inputTokens + m.outputTokens;
-              const maxModelTokens = (models[0]!.inputTokens || 0) + (models[0]!.outputTokens || 0);
+              const maxModelTokens = (unifiedModels[0]!.inputTokens || 0) + (unifiedModels[0]!.outputTokens || 0);
               const proportion = maxModelTokens > 0 ? total / maxModelTokens : 0;
               const labelWidth = 38;
-              const barWidth = Math.max(20, width - labelWidth - 10);
+              const costStr = m.cost !== undefined ? ` $${m.cost.toFixed(2)}` : '';
+              const barWidth = Math.max(20, width - labelWidth - 10 - costStr.length);
               const filledWidth = Math.max(1, Math.round(proportion * barWidth));
               const emptyWidth = barWidth - filledWidth;
               const sourceLabel = formatSourceLabel(m.source);
@@ -404,6 +408,7 @@ function TokensTab({
                   <Text color="cyan">{'█'.repeat(filledWidth)}</Text>
                   <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
                   <Text color="gray"> {formatLargeNumber(total).padStart(6)}</Text>
+                  {m.cost !== undefined && <Text color="green">{costStr}</Text>}
                 </Box>
               );
             })}
@@ -1035,12 +1040,13 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
         await connect();
         const periodFilter = createPeriodFilter(period);
 
-        const [overview, daily, dailyTokensBySource, sources, models, topConversations, lines, cache, hourly, weekly, streak, recentConversations, projectStats, fileStats, editTypeBreakdown, fileTypeStats] = await Promise.all([
+        const [overview, daily, dailyTokensBySource, sources, models, unifiedModels, topConversations, lines, cache, hourly, weekly, streak, recentConversations, projectStats, fileStats, editTypeBreakdown, fileTypeStats] = await Promise.all([
           getOverviewStats(periodFilter),
           getDailyActivity(periodFilter),
           getDailyTokensBySource(periodFilter),
           getStatsBySource(periodFilter),
           getStatsByModel(periodFilter),
+          getUnifiedModelStats(periodFilter),
           getTopConversationsByTokens(periodFilter, 5),
           getLinesGeneratedStats(periodFilter, 5),
           getCacheStats(periodFilter),
@@ -1075,6 +1081,7 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
           dailyTokensBySource,
           sources,
           models,
+          unifiedModels,
           topConversations,
           lines,
           cache,

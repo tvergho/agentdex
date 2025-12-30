@@ -328,6 +328,74 @@ function billingRowToCsvRow(row: BillingRow): CsvRow {
   };
 }
 
+export async function syncCursorBillingSilent(): Promise<{ success: boolean; eventsCount?: number; error?: string }> {
+  const credStatus = getCursorCredentialStatus();
+  if (!credStatus.isAuthenticated) {
+    return { success: false, error: credStatus.error };
+  }
+
+  try {
+    const days = 365;
+    const endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+
+    const result = await fetchBillingData(startDate, endDate);
+    if (!result.success || !result.rows) {
+      return { success: false, error: result.error };
+    }
+
+    const rows = result.rows.map(billingRowToCsvRow);
+    if (rows.length === 0) {
+      return { success: true, eventsCount: 0 };
+    }
+
+    await connect();
+
+    const { conversations } = await conversationRepo.list({ source: 'cursor', limit: 100000 });
+    const windows = buildConversationWindows(conversations);
+
+    const csvSource = `cursor-api-sync-${new Date().toISOString().split('T')[0]}`;
+    const events: BillingEvent[] = [];
+
+    for (const row of rows) {
+      const window = findConversationForTimestamp(row.date, windows);
+      const eventId = generateEventId(row, csvSource);
+
+      events.push({
+        id: eventId,
+        conversationId: window?.id,
+        timestamp: row.date.toISOString(),
+        model: row.model,
+        kind: row.kind,
+        inputTokens: row.inputWithCache ?? row.inputWithoutCache ?? undefined,
+        outputTokens: row.outputTokens ?? undefined,
+        cacheReadTokens: row.cacheRead ?? undefined,
+        totalTokens: row.totalTokens ?? undefined,
+        cost: row.cost ?? undefined,
+        csvSource,
+      });
+    }
+
+    const existingCountBySource = await billingEventsRepo.countBySource(csvSource);
+    if (existingCountBySource > 0) {
+      await billingEventsRepo.deleteBySource(csvSource);
+    }
+
+    const BATCH_SIZE = 1000;
+    for (let i = 0; i < events.length; i += BATCH_SIZE) {
+      const batch = events.slice(i, i + BATCH_SIZE);
+      await billingEventsRepo.bulkInsert(batch);
+    }
+
+    return { success: true, eventsCount: events.length };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function billingSyncCommand(options: BillingSyncOptions): Promise<void> {
   console.log('=== Cursor Billing Sync ===\n');
 

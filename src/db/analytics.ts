@@ -1387,3 +1387,88 @@ export async function getRecentConversations(
       ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0),
   }));
 }
+
+export interface UnifiedModelStats {
+  model: string;
+  source: string;
+  conversations: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost?: number;
+  hasBillingData: boolean;
+}
+
+export async function getUnifiedModelStats(period: PeriodFilter): Promise<UnifiedModelStats[]> {
+  const [conversationStats, billingStats, hasBilling] = await Promise.all([
+    getStatsByModel(period),
+    getBillingByModel(period),
+    hasBillingData(),
+  ]);
+
+  if (!hasBilling || billingStats.length === 0) {
+    return conversationStats.map(s => ({
+      model: s.model,
+      source: s.source,
+      conversations: s.conversations,
+      inputTokens: s.inputTokens,
+      outputTokens: s.outputTokens,
+      hasBillingData: false,
+    }));
+  }
+
+  const billingByModel = new Map(billingStats.map(b => [b.model, b]));
+  const result: UnifiedModelStats[] = [];
+  const usedCursorModels = new Set<string>();
+
+  for (const convStat of conversationStats) {
+    if (convStat.source === 'cursor') {
+      const billing = billingByModel.get(convStat.model);
+      if (billing) {
+        result.push({
+          model: convStat.model,
+          source: 'cursor',
+          conversations: convStat.conversations,
+          inputTokens: billing.inputTokens,
+          outputTokens: billing.outputTokens,
+          cost: billing.cost,
+          hasBillingData: true,
+        });
+        usedCursorModels.add(convStat.model);
+      } else {
+        result.push({
+          model: convStat.model,
+          source: convStat.source,
+          conversations: convStat.conversations,
+          inputTokens: convStat.inputTokens,
+          outputTokens: convStat.outputTokens,
+          hasBillingData: false,
+        });
+      }
+    } else {
+      result.push({
+        model: convStat.model,
+        source: convStat.source,
+        conversations: convStat.conversations,
+        inputTokens: convStat.inputTokens,
+        outputTokens: convStat.outputTokens,
+        hasBillingData: false,
+      });
+    }
+  }
+
+  for (const billing of billingStats) {
+    if (!usedCursorModels.has(billing.model)) {
+      result.push({
+        model: billing.model,
+        source: 'cursor',
+        conversations: 0,
+        inputTokens: billing.inputTokens,
+        outputTokens: billing.outputTokens,
+        cost: billing.cost,
+        hasBillingData: true,
+      });
+    }
+  }
+
+  return result.sort((a, b) => (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens));
+}

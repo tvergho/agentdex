@@ -45,6 +45,7 @@ import { printRichSummary } from './stats';
 import { loadConfig } from '../../config/index.js';
 import { enrichUntitledConversations } from '../../features/enrichment/index.js';
 import { updateSyncCache } from '../../utils/sync-cache';
+import { syncCursorBillingSilent } from './billing';
 
 /**
  * Count messages that still need embedding (have zero vectors or wrong dimensions).
@@ -728,6 +729,16 @@ export async function runSync(
 
       const started = await spawnBackgroundEmbedding();
       progress.embeddingStarted = started;
+    }
+
+    // ========== PHASE 6c: Sync Cursor billing (silent, non-blocking) ==========
+    try {
+      const billingResult = await syncCursorBillingSilent();
+      if (billingResult.success && billingResult.eventsCount && billingResult.eventsCount > 0) {
+        console.error(`[sync] Synced ${billingResult.eventsCount} Cursor billing events`);
+      }
+    } catch {
+      // Billing sync failure should not block the main sync
     }
 
     // ========== PHASE 7: Enrich untitled conversations (if enabled) ==========
