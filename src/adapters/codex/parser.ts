@@ -466,9 +466,15 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
           continue;
         }
 
-        // Use first user message as title
         if (msg.role === 'user' && title === 'Untitled') {
-          title = content.slice(0, 100).split('\n')[0] || 'Untitled';
+          const lines = content.split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('<') && !trimmed.startsWith('#')) {
+              title = trimmed.slice(0, 100);
+              break;
+            }
+          }
         }
 
         // If this is an assistant message, attach any pending tool calls and edits
