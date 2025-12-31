@@ -1056,8 +1056,8 @@ function ConfigApp({ onLaunchOpencode }: ConfigAppProps) {
  * Returns true if any new credentials were configured
  */
 async function runOpencodeAuth(): Promise<boolean> {
+  const opencodePath = await getOpencodeBinPath();
   return new Promise((resolve) => {
-    const opencodePath = getOpencodeBinPath();
     const child = spawn(opencodePath, ['auth', 'login'], {
       stdio: 'inherit',
       env: {

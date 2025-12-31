@@ -12,7 +12,7 @@ import { mkdirSync, existsSync } from 'fs';
 import { getCodexCredentials } from './credentials.js';
 import { getOpencodeBinPath } from '../../utils/paths.js';
 
-const OPENCODE_BIN = getOpencodeBinPath();
+
 
 // Use a separate local OpenCode data directory for Codex operations
 const DEX_OPENCODE_CODEX_HOME = join(homedir(), '.dex', 'opencode-codex');
@@ -81,7 +81,8 @@ async function startServer(): Promise<OpenCodeServerState> {
   // Find an available port (let the OS choose)
   const port = 0;
 
-  const proc = spawn(OPENCODE_BIN, ['serve', `--port=${port}`], {
+  const opencodeBin = await getOpencodeBinPath();
+  const proc = spawn(opencodeBin, ['serve', `--port=${port}`], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
     env: {

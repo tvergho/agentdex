@@ -14,8 +14,6 @@ import { getClaudeCodeCredentials } from './claude-code/credentials.js';
 import { getCodexCredentials } from './codex/credentials.js';
 import { getOpencodeBinPath } from '../utils/paths.js';
 
-const OPENCODE_BIN = getOpencodeBinPath();
-
 // Isolated data directory for dex's OpenCode instance
 const DEX_OPENCODE_HOME = join(homedir(), '.dex', 'opencode');
 
@@ -127,7 +125,8 @@ async function ensureServer(): Promise<string> {
       mkdirSync(DEX_OPENCODE_HOME, { recursive: true });
     }
 
-    const proc = spawn(OPENCODE_BIN, ['serve', '--port=0'], {
+    const opencodeBin = await getOpencodeBinPath();
+    const proc = spawn(opencodeBin, ['serve', '--port=0'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
       env: {

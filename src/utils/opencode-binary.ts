@@ -7,9 +7,12 @@ import { execSync } from 'child_process';
 const DEX_BIN_DIR = join(homedir(), '.dex', 'bin');
 const OPENCODE_BIN_PATH = join(DEX_BIN_DIR, 'opencode');
 
+// Dev override: set DEX_OPENCODE_BIN to use a local binary
+const DEV_OPENCODE_BIN = process.env.DEX_OPENCODE_BIN;
+
 const FORK_OWNER = 'tvergho';
 const FORK_REPO = 'opencode';
-const RELEASE_VERSION = 'v1.0.0-fork.5';
+const RELEASE_VERSION = 'v1.0.0-fork.6';
 
 function getAssetName(): string {
   const p = platform();
@@ -44,6 +47,14 @@ async function downloadBinary(): Promise<void> {
   console.log('Extracting...');
   execSync(`unzip -o "${zipPath}" -d "${DEX_BIN_DIR}"`, { stdio: 'pipe' });
 
+  // Handle nested directory structure: opencode-darwin-arm64/bin/opencode
+  const extractedDir = join(DEX_BIN_DIR, assetName.replace('.zip', ''));
+  const extractedBin = join(extractedDir, 'bin', 'opencode');
+  if (existsSync(extractedBin)) {
+    execSync(`mv "${extractedBin}" "${OPENCODE_BIN_PATH}"`, { stdio: 'pipe' });
+    execSync(`rm -rf "${extractedDir}"`, { stdio: 'pipe' });
+  }
+
   chmodSync(OPENCODE_BIN_PATH, 0o755);
   unlinkSync(zipPath);
 
@@ -51,6 +62,13 @@ async function downloadBinary(): Promise<void> {
 }
 
 export async function ensureOpencodeBinary(): Promise<string> {
+  if (DEV_OPENCODE_BIN) {
+    if (!existsSync(DEV_OPENCODE_BIN)) {
+      throw new Error(`DEX_OPENCODE_BIN set but binary not found at: ${DEV_OPENCODE_BIN}`);
+    }
+    return DEV_OPENCODE_BIN;
+  }
+
   if (existsSync(OPENCODE_BIN_PATH)) {
     return OPENCODE_BIN_PATH;
   }
@@ -60,5 +78,5 @@ export async function ensureOpencodeBinary(): Promise<string> {
 }
 
 export function getOpencodeBinLocation(): string {
-  return OPENCODE_BIN_PATH;
+  return DEV_OPENCODE_BIN ?? OPENCODE_BIN_PATH;
 }

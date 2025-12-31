@@ -55,11 +55,16 @@ function ensureIsolatedConfig(): void {
     },
   };
 
-  // Add Codex plugin config if OpenAI credentials exist
-  // This makes GPT models available regardless of default provider
   if (openaiCreds) {
     config.plugin = [`opencode-openai-codex-auth@${PLUGIN_VERSION}`];
-    config.provider = OPENCODE_CODEX_CONFIG.provider;
+    config.provider = {
+      ...OPENCODE_CODEX_CONFIG.provider,
+      anthropic: {},
+    };
+  } else if (anthropicCreds) {
+    config.provider = {
+      anthropic: {},
+    };
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));

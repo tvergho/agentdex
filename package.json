@@ -36,6 +36,8 @@
   "scripts": {
     "dev": "LANCEDB_LOG=error tsx src/index.ts",
     "dev:bun": "LANCEDB_LOG=error bun run src/index.ts",
+    "dev:chat": "DEX_OPENCODE_BIN=${DEX_OPENCODE_BIN:-$HOME/.dex/dev/opencode} LANCEDB_LOG=error tsx src/index.ts chat",
+    "opencode:build": "cd /tmp/opencode-fork && bun install && bun run build --single && mkdir -p ~/.dex/dev && cp /tmp/opencode-fork/packages/opencode/dist/opencode-darwin-arm64/bin/opencode ~/.dex/dev/opencode",
     "build": "tsup src/index.ts --format esm --target node18 --shims",
     "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit",
@@ -61,7 +63,7 @@
     "ink": "5.2.1",
     "marked": "17.0.1",
     "marked-terminal": "7.3.0",
-    "opencode-ai": "1.0.123",
+
     "react": "18.3.1",
     "tiktoken": "1.0.22",
     "zod": "3.25.76"

@@ -12,7 +12,7 @@ import { mkdirSync, existsSync } from 'fs';
 import { getClaudeCodeCredentials } from './credentials.js';
 import { getOpencodeBinPath } from '../../utils/paths.js';
 
-const OPENCODE_BIN = getOpencodeBinPath();
+
 
 // Use a local OpenCode data directory to avoid polluting global state
 const DEX_OPENCODE_HOME = join(homedir(), '.dex', 'opencode');
@@ -101,7 +101,8 @@ export async function startServer(options?: StartServerOptions): Promise<OpenCod
   // Find an available port (let the OS choose)
   const port = 0;
 
-  const proc = spawn(OPENCODE_BIN, ['serve', `--port=${port}`], {
+  const opencodeBin = await getOpencodeBinPath();
+  const proc = spawn(opencodeBin, ['serve', `--port=${port}`], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
     env,

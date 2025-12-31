@@ -185,10 +185,10 @@ function ChatSetupApp({ onComplete, initialSources, showImportPrompt }: ChatSetu
   );
 
   // Handle OpenCode auth
-  const handleOpencodeAuth = useCallback(() => {
+  const handleOpencodeAuth = useCallback(async () => {
     setPhase('opencode-auth');
 
-    const opencodePath = getOpencodeBinPath();
+    const opencodePath = await getOpencodeBinPath();
     const child = spawn(opencodePath, ['auth', 'login'], {
       stdio: 'inherit',
       env: {
