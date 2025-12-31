@@ -141,9 +141,11 @@ program
   .action(configCommand);
 
 program
-  .command('chat')
+  .command('chat [query...]')
   .description('Start an AI chat session with dex tools (requires OpenCode)')
-  .action(chatCommand);
+  .option('-p, --print', 'Print mode: output response to stdout without TUI')
+  .action((queryParts: string[], options: { print?: boolean }) => 
+    chatCommand({ query: queryParts.join(' '), print: options.print }));
 
 const billing = program
   .command('billing')
