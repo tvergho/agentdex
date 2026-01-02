@@ -9,10 +9,9 @@ import { getDataDir } from './config';
 import { adapters } from '../adapters/index';
 
 interface SyncCache {
-  // Map of adapter name -> last known quick mtime
   adapterMtimes: Record<string, number>;
-  // Timestamp of last sync completion
   lastSyncAt: number;
+  messagesSinceLastIndex: number;
 }
 
 const CACHE_FILE = 'sync-cache.json';
@@ -73,10 +72,14 @@ export function quickNeedsSync(): boolean {
  * Update the sync cache after a successful sync.
  * Called by sync.tsx after sync completes.
  */
-export function updateSyncCache(): void {
+export function updateSyncCache(messagesIndexed = 0, didRebuildIndex = false): void {
+  const existing = loadCache();
+  const previousUnindexed = existing?.messagesSinceLastIndex ?? 0;
+
   const cache: SyncCache = {
     adapterMtimes: {},
     lastSyncAt: Date.now(),
+    messagesSinceLastIndex: didRebuildIndex ? 0 : previousUnindexed + messagesIndexed,
   };
 
   for (const adapter of adapters) {
@@ -87,6 +90,11 @@ export function updateSyncCache(): void {
   }
 
   saveCache(cache);
+}
+
+export function getMessagesSinceLastIndex(): number {
+  const cache = loadCache();
+  return cache?.messagesSinceLastIndex ?? 0;
 }
 
 /**

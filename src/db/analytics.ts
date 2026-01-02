@@ -2,7 +2,7 @@
  * Analytics query functions for the stats dashboard
  */
 
-import { connect, getConversationsTable, getFilesTable, getFileEditsTable, getBillingEventsTable, withConnectionRecovery, isTransientError } from './index';
+import { connect, getConversationsTable, getMessagesTable, getFilesTable, getFileEditsTable, getBillingEventsTable, withConnectionRecovery, isTransientError } from './index';
 import type { Table } from '@lancedb/lancedb';
 import { Source, type Conversation } from '../schema/index';
 
@@ -490,16 +490,64 @@ export async function getCacheStats(period: PeriodFilter): Promise<CacheStats> {
 
 export async function getActivityByHour(period: PeriodFilter): Promise<number[]> {
   await connect();
-  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
-
-  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
-
-  // Initialize 24-hour array
   const byHour = new Array(24).fill(0);
 
-  for (const conv of filtered) {
+  const [convRows, hasBilling] = await Promise.all([
+    queryTableWithRetry(getConversationsTable, table => table.query().toArray()),
+    hasBillingData(),
+  ]);
+
+  const convInPeriod = convRows.filter(r => isInPeriod(r.created_at as string, period));
+  const convIdSet = new Set(convInPeriod.map(r => r.id as string));
+  const convSourceMap = new Map(convInPeriod.map(r => [r.id as string, r.source as string]));
+  
+  // Track which conversations have been counted via billing/messages
+  const countedConvIds = new Set<string>();
+
+  // For Cursor: prefer billing events if available
+  if (hasBilling) {
+    const billingRows = await queryTableWithRetry(getBillingEventsTable, table => table.query().toArray());
+    for (const event of billingRows) {
+      const timestamp = event.timestamp as string;
+      const convId = event.conversation_id as string;
+      if (!timestamp || !isInPeriod(timestamp, period)) continue;
+      if (convId && convIdSet.has(convId)) {
+        countedConvIds.add(convId);
+      }
+      const hour = new Date(timestamp).getHours();
+      byHour[hour] += 1;
+    }
+  }
+
+  // For non-Cursor: use message timestamps
+  const msgRows = await queryTableWithRetry(getMessagesTable, table => 
+    table.query().select(['conversation_id', 'timestamp']).toArray()
+  );
+
+  for (const msg of msgRows) {
+    const convId = msg.conversation_id as string;
+    if (!convIdSet.has(convId)) continue;
+    
+    const source = convSourceMap.get(convId);
+    if (source === Source.Cursor) continue;
+
+    const timestamp = msg.timestamp as string;
+    if (!timestamp) continue;
+    if (!isInPeriod(timestamp, period)) continue;
+
+    countedConvIds.add(convId);
+    const hour = new Date(timestamp).getHours();
+    byHour[hour] += 1;
+  }
+
+  // Fallback: use conversation.created_at for any conversation not yet counted
+  for (const conv of convInPeriod) {
+    const convId = conv.id as string;
+    if (countedConvIds.has(convId)) continue;
+    
     const createdAt = conv.created_at as string;
     if (!createdAt) continue;
+    
     const hour = new Date(createdAt).getHours();
     byHour[hour] += 1;
   }
@@ -509,16 +557,64 @@ export async function getActivityByHour(period: PeriodFilter): Promise<number[]>
 
 export async function getActivityByDayOfWeek(period: PeriodFilter): Promise<number[]> {
   await connect();
-  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
-
-  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
-
-  // Initialize 7-day array (0 = Sunday, 6 = Saturday)
   const byDay = new Array(7).fill(0);
 
-  for (const conv of filtered) {
+  const [convRows, hasBilling] = await Promise.all([
+    queryTableWithRetry(getConversationsTable, table => table.query().toArray()),
+    hasBillingData(),
+  ]);
+
+  const convInPeriod = convRows.filter(r => isInPeriod(r.created_at as string, period));
+  const convIdSet = new Set(convInPeriod.map(r => r.id as string));
+  const convSourceMap = new Map(convInPeriod.map(r => [r.id as string, r.source as string]));
+  
+  // Track which conversations have been counted via billing/messages
+  const countedConvIds = new Set<string>();
+
+  // For Cursor: prefer billing events if available
+  if (hasBilling) {
+    const billingRows = await queryTableWithRetry(getBillingEventsTable, table => table.query().toArray());
+    for (const event of billingRows) {
+      const timestamp = event.timestamp as string;
+      const convId = event.conversation_id as string;
+      if (!timestamp || !isInPeriod(timestamp, period)) continue;
+      if (convId && convIdSet.has(convId)) {
+        countedConvIds.add(convId);
+      }
+      const day = new Date(timestamp).getDay();
+      byDay[day] += 1;
+    }
+  }
+
+  // For non-Cursor: use message timestamps
+  const msgRows = await queryTableWithRetry(getMessagesTable, table => 
+    table.query().select(['conversation_id', 'timestamp']).toArray()
+  );
+
+  for (const msg of msgRows) {
+    const convId = msg.conversation_id as string;
+    if (!convIdSet.has(convId)) continue;
+    
+    const source = convSourceMap.get(convId);
+    if (source === Source.Cursor) continue;
+
+    const timestamp = msg.timestamp as string;
+    if (!timestamp) continue;
+    if (!isInPeriod(timestamp, period)) continue;
+
+    countedConvIds.add(convId);
+    const day = new Date(timestamp).getDay();
+    byDay[day] += 1;
+  }
+
+  // Fallback: use conversation.created_at for any conversation not yet counted
+  for (const conv of convInPeriod) {
+    const convId = conv.id as string;
+    if (countedConvIds.has(convId)) continue;
+    
     const createdAt = conv.created_at as string;
     if (!createdAt) continue;
+    
     const day = new Date(createdAt).getDay();
     byDay[day] += 1;
   }

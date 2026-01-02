@@ -44,7 +44,7 @@ import {
 import { printRichSummary } from './stats';
 import { loadConfig } from '../../config/index.js';
 import { enrichUntitledConversations } from '../../features/enrichment/index.js';
-import { updateSyncCache } from '../../utils/sync-cache';
+import { updateSyncCache, getMessagesSinceLastIndex } from '../../utils/sync-cache';
 import { syncCursorBillingSilent } from './billing';
 
 /**
@@ -593,8 +593,7 @@ export async function runSync(
         progress.embeddingStarted = started;
       }
 
-      // Update sync cache for fast subsequent checks
-      updateSyncCache();
+      updateSyncCache(0, false);
 
       progress.phase = 'done';
       progress.currentSource = undefined;
@@ -705,16 +704,24 @@ export async function runSync(
       });
     }
 
-    // ========== PHASE 6: Rebuild FTS index ==========
-    // Always rebuild FTS index, even for incremental syncs.
-    // This ensures the index stays fresh and doesn't become stale over time.
-    progress.phase = 'indexing';
-    progress.currentSource = undefined;
-    progress.currentProject = undefined;
-    onProgress({ ...progress });
+    // ========== PHASE 6: Rebuild indexes ==========
+    // FTS index must always be rebuilt - unindexed messages won't appear in search.
+    // Scalar indexes (btree on conversation_id, file_path) are optional optimizations.
+    const SCALAR_INDEX_THRESHOLD = 100;
+    const cumulativeUnindexed = getMessagesSinceLastIndex() + newMessages.length;
+    const shouldRebuildScalarIndexes = options.force || cumulativeUnindexed >= SCALAR_INDEX_THRESHOLD;
 
-    await rebuildFtsIndex();
-    await rebuildScalarIndexes();
+    if (newMessages.length > 0) {
+      progress.phase = 'indexing';
+      progress.currentSource = undefined;
+      progress.currentProject = undefined;
+      onProgress({ ...progress });
+
+      await rebuildFtsIndex();
+      if (shouldRebuildScalarIndexes) {
+        await rebuildScalarIndexes();
+      }
+    }
 
     // ========== PHASE 6b: Spawn embedding worker if needed ==========
     // Check for pending embeddings (messages with zero vectors).
@@ -763,8 +770,7 @@ export async function runSync(
       }
     }
 
-    // Update sync cache for fast subsequent checks
-    updateSyncCache();
+    updateSyncCache(newMessages.length, shouldRebuildScalarIndexes);
 
     progress.phase = 'done';
     progress.currentSource = undefined;

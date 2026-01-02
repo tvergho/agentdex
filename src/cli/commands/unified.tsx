@@ -17,7 +17,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
 import { connect, getMessagesTable } from '../../db/index';
 import { conversationRepo, search, searchByFilePath, getFileMatchesForConversations } from '../../db/repository';
-import { spawnDexCommand, spawnBackgroundCommandWithRetry } from '../../utils/spawn';
+import { spawnDexCommand, spawnBackgroundCommand } from '../../utils/spawn';
 import { quickNeedsSync } from '../../utils/sync-cache';
 import { getEmbeddingProgress, isEmbeddingInProgress, warmupQueryServer, stopQueryServer, needsEmbeddingRecovery, resetEmbeddingError } from '../../embeddings/index';
 
@@ -772,12 +772,12 @@ function UnifiedApp() {
     if (!quickNeedsSync()) {
       setSyncStatus({ phase: 'done' });
 
-      // Even if sync is skipped, always spawn embed worker
-      // It will check for pending embeddings and exit quickly if none needed
-      // This handles: interrupted embeddings, first-run after model download, error recovery, etc.
+      // Even if sync is skipped, spawn embed worker for pending embeddings
       if (!isEmbeddingInProgress()) {
-        // Use retry mechanism to ensure embed starts
-        spawnBackgroundCommandWithRetry('embed', 'embed', { maxRetries: 3, verifyDelayMs: 1500 });
+        if (needsEmbeddingRecovery()) {
+          resetEmbeddingError();
+        }
+        spawnBackgroundCommand('embed');
       }
       return;
     }

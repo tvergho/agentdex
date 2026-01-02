@@ -180,15 +180,34 @@ export function detectOpenCode(): boolean {
 }
 
 /**
- * Get the mtime of the session directory (quick check for changes).
- * Returns null if directory doesn't exist.
+ * Get the most recent mtime across OpenCode storage.
+ * Checks session files in each project since those update when sessions change.
  */
 export function getSessionRootMtime(): number | null {
   const storagePath = getOpenCodeStoragePath();
   const sessionDir = join(storagePath, 'session');
+
+  if (!existsSync(sessionDir)) return null;
+
+  let maxMtime = 0;
+
   try {
-    return statSync(sessionDir).mtimeMs;
-  } catch {
-    return null;
-  }
+    const projectDirs = readdirSync(sessionDir, { withFileTypes: true });
+    for (const entry of projectDirs) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+      const projectPath = join(sessionDir, entry.name);
+      try {
+        const files = readdirSync(projectPath);
+        for (const file of files) {
+          if (!file.endsWith('.json')) continue;
+          try {
+            maxMtime = Math.max(maxMtime, statSync(join(projectPath, file)).mtimeMs);
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
+  return maxMtime > 0 ? maxMtime : null;
 }
