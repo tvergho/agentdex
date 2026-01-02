@@ -1,7 +1,7 @@
 import Database, { type Database as BetterSqliteDatabase } from 'better-sqlite3';
-import { mkdtempSync, cpSync, rmSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, basename } from 'node:path';
+import { mkdtempSync, cpSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
+import { join, basename, dirname } from 'node:path';
 
 export interface RawBubble {
   bubbleId: string;
@@ -129,12 +129,83 @@ function mapBubbleType(type: number | undefined): RawBubble['type'] {
   return 'user';
 }
 
+function loadWorkspaceHistoryFromFiles(): string[] {
+  const workspaces: string[] = [];
+  
+  const workspaceStorageDir = join(homedir(), 'Library/Application Support/Cursor/User/workspaceStorage');
+  if (!existsSync(workspaceStorageDir)) return workspaces;
+  
+  try {
+    const subdirs = readdirSync(workspaceStorageDir, { withFileTypes: true });
+    for (const subdir of subdirs) {
+      if (!subdir.isDirectory()) continue;
+      
+      const workspaceJsonPath = join(workspaceStorageDir, subdir.name, 'workspace.json');
+      if (!existsSync(workspaceJsonPath)) continue;
+      
+      try {
+        const content = readFileSync(workspaceJsonPath, 'utf-8');
+        const data = JSON.parse(content);
+        const folder = data.folder;
+        if (folder?.startsWith('file://')) {
+          workspaces.push(decodeURIComponent(folder.replace('file://', '')));
+        }
+      } catch {}
+    }
+  } catch {}
+  
+  return workspaces;
+}
+
+function resolveRelativePathsToWorkspace(
+  relativePaths: string[],
+  knownWorkspaces: string[]
+): string | undefined {
+  if (relativePaths.length === 0 || knownWorkspaces.length === 0) return undefined;
+  
+  const workspaceMatches = new Map<string, number>();
+  
+  for (const relPath of relativePaths) {
+    if (!relPath || relPath.startsWith('/')) continue;
+    
+    for (const workspace of knownWorkspaces) {
+      const fullPath = join(workspace, relPath);
+      if (existsSync(fullPath)) {
+        workspaceMatches.set(workspace, (workspaceMatches.get(workspace) || 0) + 1);
+      }
+    }
+  }
+  
+  if (workspaceMatches.size === 0) return undefined;
+  
+  let bestWorkspace: string | undefined;
+  let maxMatches = 0;
+  for (const [workspace, count] of workspaceMatches) {
+    if (count > maxMatches) {
+      maxMatches = count;
+      bestWorkspace = workspace;
+    }
+  }
+  
+  return bestWorkspace;
+}
+
 // Extract workspace path from file paths (handles outliers like stdlib paths)
 // Optimized O(f) algorithm - single pass with early termination
 function extractWorkspacePath(filePaths: string[]): string | undefined {
   if (filePaths.length === 0) return undefined;
 
   const projectIndicators = new Set(['src', 'lib', 'app', 'packages', 'node_modules', 'dist', 'test', 'tests', 'scripts']);
+  const nonProjectDirectories = new Set(['Documents', 'Desktop', 'Downloads', 'Library', 'Applications', 'Pictures', 'Movies', 'Music']);
+  const MIN_WORKSPACE_DEPTH = 4;
+
+  const isValidWorkspacePath = (path: string): boolean => {
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length < MIN_WORKSPACE_DEPTH) return false;
+    const lastPart = parts[parts.length - 1];
+    if (lastPart && nonProjectDirectories.has(lastPart)) return false;
+    return true;
+  };
 
   // Filter to absolute paths and split them in one pass
   const splitPaths: string[][] = [];
@@ -189,38 +260,89 @@ function extractWorkspacePath(filePaths: string[]): string | undefined {
       }
     }
     if (cutoff > 0) {
-      return '/' + firstPath.slice(0, cutoff).join('/');
+      const candidate = '/' + firstPath.slice(0, cutoff).join('/');
+      return isValidWorkspacePath(candidate) ? candidate : undefined;
     }
     return undefined;
   }
 
-  // Trim common prefix at project indicator
   for (let i = 0; i < commonParts.length; i++) {
     if (projectIndicators.has(commonParts[i]!)) {
       if (i > 0) {
-        return '/' + commonParts.slice(0, i).join('/');
+        const candidate = '/' + commonParts.slice(0, i).join('/');
+        return isValidWorkspacePath(candidate) ? candidate : undefined;
       }
       return undefined;
     }
   }
 
-  // No indicator found - check if last common part is a file
   if (commonParts.length > 1) {
     const lastPart = commonParts[commonParts.length - 1];
+    let candidate: string;
     if (lastPart && lastPart.includes('.')) {
-      return '/' + commonParts.slice(0, -1).join('/');
+      candidate = '/' + commonParts.slice(0, -1).join('/');
+    } else {
+      candidate = '/' + commonParts.join('/');
     }
-    return '/' + commonParts.join('/');
+    return isValidWorkspacePath(candidate) ? candidate : undefined;
   }
 
   return undefined;
 }
 
-// Extract project name from workspace path
+function findRepoRoot(workspacePath: string): string {
+  const MIN_PATH_DEPTH = 3;
+  let current = workspacePath;
+  
+  while (current !== '/') {
+    const parts = current.split('/').filter(Boolean);
+    if (parts.length <= MIN_PATH_DEPTH) break;
+    
+    if (existsSync(join(current, '.git'))) {
+      return current;
+    }
+    current = dirname(current);
+  }
+  
+  return workspacePath;
+}
+
 function extractProjectName(workspacePath: string | undefined): string | undefined {
   if (!workspacePath) return undefined;
   const parts = workspacePath.split('/').filter(Boolean);
   return parts[parts.length - 1];
+}
+
+// Extract file paths from message text content
+// Parses Cursor's code reference format (```42:186:path/to/file.ts```) and absolute paths
+function extractFilePathsFromText(text: string | undefined): string[] {
+  if (!text) return [];
+
+  const paths = new Set<string>();
+
+  // Pattern 1: Cursor's code reference format - ```lineStart:lineEnd:path``` or ```lineStart-lineEnd:path```
+  // Example: ```42:186:functions/src/hubspot-etl/index.ts```
+  const codeRefPattern = /```(\d+)[:\-](\d+):([^`\n]+?)```/g;
+  let match;
+  while ((match = codeRefPattern.exec(text)) !== null) {
+    const path = match[3]?.trim();
+    if (path && !path.includes(' ') && path.includes('/')) {
+      // Convert to absolute path if it looks like a relative project path
+      paths.add(path);
+    }
+  }
+
+  // Pattern 2: Absolute file paths (macOS/Linux)
+  // Match paths starting with /Users/ or /home/ followed by typical project structure
+  const absolutePathPattern = /(?:^|\s|["'`(])(\/(Users|home)\/[^\s"'`)\n]+\.[a-zA-Z0-9]+)(?=[\s"'`)\n]|$)/gm;
+  while ((match = absolutePathPattern.exec(text)) !== null) {
+    const path = match[1]?.trim();
+    if (path) {
+      paths.add(path);
+    }
+  }
+
+  return Array.from(paths);
 }
 
 // Extract files associated with a specific bubble
@@ -562,6 +684,10 @@ export async function extractConversations(
   }
 }
 
+function loadWorkspaceHistory(): string[] {
+  return loadWorkspaceHistoryFromFiles();
+}
+
 async function extractFromDb(
   dbPath: string,
   onProgress?: (progress: ExtractionProgress) => void
@@ -570,20 +696,15 @@ async function extractFromDb(
 
   let diffsByComposer: Map<string, ParsedDiffRow[]>;
   let bubblesByComposer: Map<string, Map<string, BubbleData>>;
+  let knownWorkspaces: string[];
   let totalCount: number;
 
   {
     const db = openCursorDb(dbPath);
     try {
-      // Pre-load all codeBlockDiff entries upfront to avoid N+1 queries
-      // (diffs are small - only ~933 conversations have them)
       diffsByComposer = loadAllCodeBlockDiffs(db);
-
-      // Pre-load all bubbles for v9+ format in a single query
-      // This eliminates the per-conversation query bottleneck
       bubblesByComposer = loadAllBubbles(db);
-
-      // Get total count for progress reporting
+      knownWorkspaces = loadWorkspaceHistory();
       totalCount = (db.prepare("SELECT COUNT(*) as count FROM cursorDiskKV WHERE key LIKE 'composerData:%'").get() as { count: number }).count;
     } finally {
       db.close();
@@ -816,15 +937,24 @@ async function extractFromDb(
       const totalLinesAdded = allFileEdits.reduce((sum, e) => sum + e.linesAdded, 0);
       const totalLinesRemoved = allFileEdits.reduce((sum, e) => sum + e.linesRemoved, 0);
 
-      // Collect files from context and bubbles
       const files = collectFiles(data.context, bubbleDataList);
+      const textFilePaths = bubbleDataList.flatMap((b) => extractFilePathsFromText(b.text));
 
-      // Extract workspace path from files and edits (ignoring outlier stdlib paths)
       const filePaths = [
         ...files.map((f) => f.path),
         ...allFileEdits.map((edit) => edit.filePath),
+        ...textFilePaths,
       ];
-      const workspacePath = extractWorkspacePath(filePaths);
+      let workspacePath = extractWorkspacePath(filePaths);
+      
+      if (!workspacePath && textFilePaths.length > 0) {
+        workspacePath = resolveRelativePathsToWorkspace(textFilePaths, knownWorkspaces);
+      }
+      
+      if (workspacePath) {
+        workspacePath = findRepoRoot(workspacePath);
+      }
+      
       const projectName = extractProjectName(workspacePath);
 
       // Calculate token usage
