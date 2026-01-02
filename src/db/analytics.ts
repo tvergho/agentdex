@@ -5,6 +5,7 @@
 import { connect, getConversationsTable, getMessagesTable, getFilesTable, getFileEditsTable, getBillingEventsTable, withConnectionRecovery, isTransientError } from './index';
 import type { Table } from '@lancedb/lancedb';
 import { Source, type Conversation } from '../schema/index';
+import { isValidBillingEvent } from './repository';
 
 // --- Types ---
 
@@ -506,7 +507,8 @@ export async function getActivityByHour(period: PeriodFilter): Promise<number[]>
 
   // For Cursor: prefer billing events if available
   if (hasBilling) {
-    const billingRows = await queryTableWithRetry(getBillingEventsTable, table => table.query().toArray());
+    const allRows = await queryTableWithRetry(getBillingEventsTable, table => table.query().toArray());
+    const billingRows = allRows.filter(isValidBillingEvent);
     for (const event of billingRows) {
       const timestamp = event.timestamp as string;
       const convId = event.conversation_id as string;
@@ -573,7 +575,8 @@ export async function getActivityByDayOfWeek(period: PeriodFilter): Promise<numb
 
   // For Cursor: prefer billing events if available
   if (hasBilling) {
-    const billingRows = await queryTableWithRetry(getBillingEventsTable, table => table.query().toArray());
+    const allRows = await queryTableWithRetry(getBillingEventsTable, table => table.query().toArray());
+    const billingRows = allRows.filter(isValidBillingEvent);
     for (const event of billingRows) {
       const timestamp = event.timestamp as string;
       const convId = event.conversation_id as string;
@@ -1224,13 +1227,11 @@ export async function hasBillingData(): Promise<boolean> {
   }
 }
 
-/**
- * Get billing overview stats for a period (based on event timestamps).
- */
 export async function getBillingOverview(period: PeriodFilter): Promise<BillingOverview> {
   await connect();
   const table = await getBillingEventsTable();
-  const rows = await table.query().toArray();
+  const allRows = await table.query().toArray();
+  const rows = allRows.filter(isValidBillingEvent);
 
   let totalTokens = 0;
   let eventsWithTokens = 0;
@@ -1283,13 +1284,11 @@ export async function getBillingOverview(period: PeriodFilter): Promise<BillingO
   };
 }
 
-/**
- * Get billing stats by model for a period.
- */
 export async function getBillingByModel(period: PeriodFilter): Promise<BillingModelStats[]> {
   await connect();
   const table = await getBillingEventsTable();
-  const rows = await table.query().toArray();
+  const allRows = await table.query().toArray();
+  const rows = allRows.filter(isValidBillingEvent);
 
   const byModel = new Map<string, BillingModelStats>();
 
@@ -1320,13 +1319,11 @@ export async function getBillingByModel(period: PeriodFilter): Promise<BillingMo
   return Array.from(byModel.values()).sort((a, b) => b.totalTokens - a.totalTokens);
 }
 
-/**
- * Get daily billing token trend for a period.
- */
 export async function getDailyBillingTokens(period: PeriodFilter): Promise<DailyBillingTokens[]> {
   await connect();
   const table = await getBillingEventsTable();
-  const rows = await table.query().toArray();
+  const allRows = await table.query().toArray();
+  const rows = allRows.filter(isValidBillingEvent);
 
   const byDate = new Map<string, DailyBillingTokens>();
 
@@ -1379,7 +1376,8 @@ export async function getBillingTopConversations(
 ): Promise<BillingConversation[]> {
   await connect();
   const billingTable = await getBillingEventsTable();
-  const billingRows = await billingTable.query().toArray();
+  const allRows = await billingTable.query().toArray();
+  const billingRows = allRows.filter(isValidBillingEvent);
 
   // Aggregate by conversation
   const byConv = new Map<string, { tokens: number; events: number; cost: number }>();

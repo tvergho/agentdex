@@ -508,13 +508,11 @@ export async function billingSyncCommand(options: BillingSyncOptions): Promise<v
     }
   }
 
-  const BATCH_SIZE = 1000;
+  const BATCH_SIZE = 5000;
   for (let i = 0; i < events.length; i += BATCH_SIZE) {
     const batch = events.slice(i, i + BATCH_SIZE);
     await billingEventsRepo.bulkInsert(batch);
-    if ((i + BATCH_SIZE) % 5000 === 0 || i + BATCH_SIZE >= events.length) {
-      console.log(`  Inserted ${Math.min(i + BATCH_SIZE, events.length).toLocaleString()}/${events.length.toLocaleString()} events...`);
-    }
+    console.log(`  Inserted ${Math.min(i + BATCH_SIZE, events.length).toLocaleString()}/${events.length.toLocaleString()} events...`);
   }
 
   console.log('\n=== Sync Complete ===\n');

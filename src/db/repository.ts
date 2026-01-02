@@ -67,6 +67,45 @@ function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]>
   );
 }
 
+export const CORRUPTED_MARKERS = new Set([
+  'id', 'timestamp', 'model', 'kind', 'cost', 'csv_source',
+  'input_tokens', 'output_tokens', 'cache_read_tokens', 'total_tokens',
+  'conversation_id', 'ARROW1', 'ARROW', '',
+]);
+
+/**
+ * Validate a billing event row from LanceDB.
+ * Corrupted rows have Arrow schema metadata in data columns.
+ * Returns true if the row appears valid.
+ */
+export function isValidBillingEvent(row: Record<string, unknown>): boolean {
+  const timestamp = row.timestamp as string;
+  const model = row.model as string;
+  const csvSource = row.csv_source as string;
+
+  // Check timestamp format: should start with YYYY- (4 digits + hyphen)
+  if (!timestamp || !/^\d{4}-/.test(timestamp)) {
+    return false;
+  }
+
+  // Check model is not a column name or Arrow marker
+  if (model && CORRUPTED_MARKERS.has(model)) {
+    return false;
+  }
+
+  // Check csv_source is not a column name or Arrow marker
+  if (csvSource && CORRUPTED_MARKERS.has(csvSource)) {
+    return false;
+  }
+
+  // Check for binary garbage in csv_source (Arrow offsets)
+  if (csvSource && /[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(csvSource)) {
+    return false;
+  }
+
+  return true;
+}
+
 // Extract snippet around match positions
 function extractSnippet(
   content: string,
@@ -1697,22 +1736,24 @@ export const billingEventsRepo = {
   async bulkInsert(events: BillingEvent[]): Promise<void> {
     if (events.length === 0) return;
 
-    const table = await getBillingEventsTable();
-    const rows = events.map((e) => ({
-      id: e.id,
-      conversation_id: e.conversationId ?? '',
-      timestamp: e.timestamp,
-      model: e.model,
-      kind: e.kind,
-      input_tokens: e.inputTokens ?? 0,
-      output_tokens: e.outputTokens ?? 0,
-      cache_read_tokens: e.cacheReadTokens ?? 0,
-      total_tokens: e.totalTokens ?? 0,
-      cost: e.cost ?? 0,
-      csv_source: e.csvSource,
-    }));
+    await withConnectionRecovery(async () => {
+      const table = await getBillingEventsTable();
+      const rows = events.map((e) => ({
+        id: e.id,
+        conversation_id: e.conversationId ?? '',
+        timestamp: e.timestamp,
+        model: e.model,
+        kind: e.kind,
+        input_tokens: e.inputTokens ?? 0,
+        output_tokens: e.outputTokens ?? 0,
+        cache_read_tokens: e.cacheReadTokens ?? 0,
+        total_tokens: e.totalTokens ?? 0,
+        cost: e.cost ?? 0,
+        csv_source: e.csvSource ?? '',
+      }));
 
-    await table.add(rows);
+      await table.add(rows);
+    });
   },
 
   async deleteBySource(csvSource: string): Promise<void> {
@@ -1751,7 +1792,8 @@ export const billingEventsRepo = {
   }> {
     return withConnectionRecovery(async () => {
       const table = await getBillingEventsTable();
-      const results = await table.query().toArray();
+      const allRows = await table.query().toArray();
+      const results = allRows.filter(isValidBillingEvent);
 
       let totalTokens = 0;
       let eventsWithTokens = 0;
@@ -1790,12 +1832,12 @@ export const billingEventsRepo = {
   async getByConversation(conversationId: string): Promise<BillingEvent[]> {
     return withConnectionRecovery(async () => {
       const table = await getBillingEventsTable();
-      const results = await table
+      const allResults = await table
         .query()
         .where(`conversation_id = '${conversationId}'`)
         .toArray();
 
-      return results.map((row) => ({
+      return allResults.filter(isValidBillingEvent).map((row) => ({
         id: row.id as string,
         conversationId: (row.conversation_id as string) || undefined,
         timestamp: row.timestamp as string,
@@ -1831,7 +1873,7 @@ export const billingEventsRepo = {
       const ids = new Set<string>();
       for (const row of results) {
         const id = row.conversation_id as string;
-        if (id && id.length > 0) {
+        if (id && id.length > 0 && !CORRUPTED_MARKERS.has(id)) {
           ids.add(id);
         }
       }
