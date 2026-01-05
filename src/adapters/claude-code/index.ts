@@ -86,8 +86,8 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       source: Source.ClaudeCode,
       title: raw.title,
       subtitle: raw.gitBranch ? `branch: ${raw.gitBranch}` : undefined,
-      workspacePath: raw.workspacePath || raw.cwd,
-      projectName: (raw.workspacePath || raw.cwd)?.split('/').pop(),
+      workspacePath: raw.cwd || raw.workspacePath,
+      projectName: (raw.cwd || raw.workspacePath)?.split('/').pop(),
       model: raw.model,
       mode: 'agent', // Claude Code is always agent mode
       createdAt,

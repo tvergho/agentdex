@@ -24,18 +24,26 @@ export function getClaudeCodeRootPath(): string {
 
 /**
  * Desanitize a project path from the directory name format.
- * Claude Code uses `-` as a path separator, e.g.:
- * "-Users-tylervergho-Documents-GitHub-dex" -> "/Users/tylervergho/Documents/GitHub/dex"
+ * Claude Code encoding: / -> -, literal - -> --, . -> -
+ * e.g.: "-Users-foo-bar--baz" -> "/Users/foo/bar-baz"
+ * Note: We cannot distinguish . from / (both become -), so paths with dots
+ * may be slightly off. The cwd from JSONL entries should be preferred.
  */
 function desanitizeProjectPath(sanitized: string): string {
-  // Replace leading `-` with `/` and all other `-` with `/`
   // Handle Windows paths that start with drive letter (e.g., "C-Users-...")
   if (/^[A-Z]-/.test(sanitized)) {
-    // Windows path: "C-Users-foo" -> "C:/Users/foo"
-    return sanitized.replace(/^([A-Z])-/, '$1:/').replace(/-/g, '/');
+    return sanitized
+      .replace(/--/g, '\x00')  // Preserve literal hyphens
+      .replace(/^([A-Z])-/, '$1:/')
+      .replace(/-/g, '/')
+      .replace(/\x00/g, '-');  // Restore literal hyphens
   }
-  // Unix path: "-Users-foo" -> "/Users/foo"
-  return sanitized.replace(/^-/, '/').replace(/-/g, '/');
+  // Unix path: "-Users-foo--bar" -> "/Users/foo-bar"
+  return sanitized
+    .replace(/--/g, '\x00')  // Preserve literal hyphens
+    .replace(/^-/, '/')
+    .replace(/-/g, '/')
+    .replace(/\x00/g, '-');  // Restore literal hyphens
 }
 
 /**

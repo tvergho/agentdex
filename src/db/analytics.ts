@@ -14,10 +14,22 @@ export interface PeriodFilter {
   endDate: Date;
 }
 
+/**
+ * A "turn" is a user prompt - the consistent unit of interaction across sources.
+ * We count role='user' messages from the messages table for consistency.
+ */
+export interface TurnCounts {
+  byConversation: Map<string, number>;
+  bySource: Map<string, number>;
+  byMonth: Map<number, number>;  // 0-11 for Jan-Dec
+  total: number;
+}
+
 export interface DayActivity {
-  date: string;     // YYYY-MM-DD
+  date: string;
   conversations: number;
   messages: number;
+  turns: number;
   tokens: number;
   linesAdded: number;
   linesRemoved: number;
@@ -27,6 +39,7 @@ export interface SourceStats {
   source: string;
   conversations: number;
   messages: number;
+  turns: number;
   tokens: number;
 }
 
@@ -61,6 +74,7 @@ export interface CacheStats {
 export interface OverviewStats {
   conversations: number;
   messages: number;
+  turns: number;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalLinesAdded: number;
@@ -79,6 +93,7 @@ export interface ProjectStats {
   workspacePath: string;
   conversations: number;
   messages: number;
+  turns: number;
   inputTokens: number;
   outputTokens: number;
   linesAdded: number;
@@ -141,10 +156,6 @@ export function createPeriodFilter(days: number): PeriodFilter {
 
 // --- Query Helper ---
 
-/**
- * Execute a table query with retry logic for transient LanceDB errors.
- * Handles stale table references that occur during/after sync operations.
- */
 async function queryTableWithRetry<T>(
   getTable: () => Promise<Table>,
   query: (table: Table) => Promise<T>
@@ -153,6 +164,55 @@ async function queryTableWithRetry<T>(
     const table = await getTable();
     return query(table);
   });
+}
+
+export async function getTurnCounts(period?: PeriodFilter): Promise<TurnCounts> {
+  await connect();
+  
+  const [msgRows, convRows] = await Promise.all([
+    queryTableWithRetry(getMessagesTable, table => 
+      table.query().select(['conversation_id', 'role', 'timestamp']).toArray()
+    ),
+    queryTableWithRetry(getConversationsTable, table => 
+      table.query().select(['id', 'source', 'created_at']).toArray()
+    ),
+  ]);
+
+  const convSourceMap = new Map<string, string>();
+  const convDateMap = new Map<string, string>();
+  for (const c of convRows) {
+    convSourceMap.set(c.id as string, c.source as string);
+    convDateMap.set(c.id as string, c.created_at as string);
+  }
+
+  const byConversation = new Map<string, number>();
+  const bySource = new Map<string, number>();
+  const byMonth = new Map<number, number>();
+  let total = 0;
+
+  for (const m of msgRows) {
+    if ((m.role as string) !== 'user') continue;
+    
+    const convId = m.conversation_id as string;
+    const source = convSourceMap.get(convId) || 'unknown';
+    const timestamp = (m.timestamp as string) || convDateMap.get(convId);
+    
+    if (period) {
+      if (!timestamp || !isInPeriod(timestamp, period)) continue;
+    }
+
+    byConversation.set(convId, (byConversation.get(convId) || 0) + 1);
+    bySource.set(source, (bySource.get(source) || 0) + 1);
+    
+    if (timestamp) {
+      const month = new Date(timestamp).getMonth();
+      byMonth.set(month, (byMonth.get(month) || 0) + 1);
+    }
+    
+    total++;
+  }
+
+  return { byConversation, bySource, byMonth, total };
 }
 
 /**
@@ -187,7 +247,11 @@ function mapRowToConversation(row: Record<string, unknown>): Conversation {
 
 export async function getOverviewStats(period: PeriodFilter): Promise<OverviewStats> {
   await connect();
-  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
+  
+  const [rows, turnCounts] = await Promise.all([
+    queryTableWithRetry(getConversationsTable, table => table.query().toArray()),
+    getTurnCounts(period),
+  ]);
 
   const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
@@ -199,7 +263,6 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
 
   for (const conv of filtered) {
     messages += (conv.message_count as number) || 0;
-    // Include cache tokens in input for consistency with other stats functions
     totalInputTokens += ((conv.total_input_tokens as number) || 0) +
       ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
     totalOutputTokens += (conv.total_output_tokens as number) || 0;
@@ -210,6 +273,7 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
   return {
     conversations: filtered.length,
     messages,
+    turns: turnCounts.total,
     totalInputTokens,
     totalOutputTokens,
     totalLinesAdded,
@@ -219,11 +283,17 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
 
 export async function getDailyActivity(period: PeriodFilter): Promise<DayActivity[]> {
   await connect();
-  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
+  
+  const [convRows, msgRows] = await Promise.all([
+    queryTableWithRetry(getConversationsTable, table => table.query().toArray()),
+    queryTableWithRetry(getMessagesTable, table => 
+      table.query().select(['conversation_id', 'role', 'timestamp']).toArray()
+    ),
+  ]);
 
-  const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
+  const filtered = convRows.filter(r => isInPeriod(r.created_at as string, period));
+  const convDateMap = new Map(filtered.map(c => [c.id as string, (c.created_at as string)?.split('T')[0]]));
 
-  // Group by date
   const byDate = new Map<string, DayActivity>();
 
   for (const conv of filtered) {
@@ -235,6 +305,7 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
       date,
       conversations: 0,
       messages: 0,
+      turns: 0,
       tokens: 0,
       linesAdded: 0,
       linesRemoved: 0,
@@ -242,7 +313,6 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
 
     existing.conversations += 1;
     existing.messages += (conv.message_count as number) || 0;
-    // Include cache tokens for total context processed
     existing.tokens += ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
       ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
     existing.linesAdded += (conv.total_lines_added as number) || 0;
@@ -251,7 +321,18 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
     byDate.set(date, existing);
   }
 
-  // Sort by date
+  for (const msg of msgRows) {
+    if ((msg.role as string) !== 'user') continue;
+    const convId = msg.conversation_id as string;
+    const date = convDateMap.get(convId);
+    if (!date) continue;
+    
+    const existing = byDate.get(date);
+    if (existing) {
+      existing.turns += 1;
+    }
+  }
+
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -331,6 +412,8 @@ export async function getDailyTokensBySource(period: PeriodFilter): Promise<Dail
 
 export async function getStatsBySource(period: PeriodFilter): Promise<SourceStats[]> {
   await connect();
+  
+  const turnCounts = await getTurnCounts(period);
   const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
 
   const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
@@ -343,19 +426,22 @@ export async function getStatsBySource(period: PeriodFilter): Promise<SourceStat
       source,
       conversations: 0,
       messages: 0,
+      turns: 0,
       tokens: 0,
     };
 
     existing.conversations += 1;
     existing.messages += (conv.message_count as number) || 0;
-    // Include cache tokens for total context processed
     existing.tokens += ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
       ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
 
     bySource.set(source, existing);
   }
 
-  // Sort by token count descending
+  for (const [source, stats] of bySource) {
+    stats.turns = turnCounts.bySource.get(source) || 0;
+  }
+
   return Array.from(bySource.values()).sort((a, b) => b.tokens - a.tokens);
 }
 
@@ -761,12 +847,13 @@ function resolveProjectName(
 
 export async function getProjectStats(period: PeriodFilter): Promise<ProjectStats[]> {
   await connect();
-  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
+  
+  const [rows, allEdits, turnCounts] = await Promise.all([
+    queryTableWithRetry(getConversationsTable, table => table.query().toArray()),
+    queryTableWithRetry(getFileEditsTable, table => table.query().toArray()),
+    getTurnCounts(period),
+  ]);
 
-  // Load file edits for project inference
-  const allEdits = await queryTableWithRetry(getFileEditsTable, table => table.query().toArray());
-
-  // Group edits by conversation ID
   const editsByConvId = new Map<string, Array<{ file_path: string }>>();
   for (const edit of allEdits) {
     const existing = editsByConvId.get(edit.conversation_id as string) || [];
@@ -776,16 +863,19 @@ export async function getProjectStats(period: PeriodFilter): Promise<ProjectStat
 
   const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
-  // Group by project name (use project_name if available, otherwise extract from workspace_path or file edits)
+  const convToProject = new Map<string, string>();
   const byProject = new Map<string, ProjectStats>();
 
   for (const conv of filtered) {
     const projectName = resolveProjectName(conv as any, editsByConvId);
+    convToProject.set(conv.id as string, projectName);
+    
     const existing = byProject.get(projectName) || {
       projectName,
       workspacePath: (conv.workspace_path as string) || '',
       conversations: 0,
       messages: 0,
+      turns: 0,
       inputTokens: 0,
       outputTokens: 0,
       linesAdded: 0,
@@ -801,7 +891,6 @@ export async function getProjectStats(period: PeriodFilter): Promise<ProjectStat
     existing.linesAdded += (conv.total_lines_added as number) || 0;
     existing.linesRemoved += (conv.total_lines_removed as number) || 0;
 
-    // Track most recent activity
     const createdAt = conv.created_at as string;
     if (createdAt && (!existing.lastActivity || createdAt > existing.lastActivity)) {
       existing.lastActivity = createdAt;
@@ -811,7 +900,16 @@ export async function getProjectStats(period: PeriodFilter): Promise<ProjectStat
     byProject.set(projectName, existing);
   }
 
-  // Sort by total tokens descending
+  for (const [convId, turns] of turnCounts.byConversation) {
+    const projectName = convToProject.get(convId);
+    if (projectName) {
+      const stats = byProject.get(projectName);
+      if (stats) {
+        stats.turns += turns;
+      }
+    }
+  }
+
   return Array.from(byProject.values()).sort(
     (a, b) => (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens)
   );
@@ -1423,6 +1521,7 @@ export async function getBillingTopConversations(
 export interface SummaryStats {
   conversations: number;
   messages: number;
+  turns: number;
   inputTokens: number;
   outputTokens: number;
   linesAdded: number;
@@ -1440,6 +1539,7 @@ export async function getSummaryStats(days: number): Promise<SummaryStats> {
   return {
     conversations: overview.conversations,
     messages: overview.messages,
+    turns: overview.turns,
     inputTokens: overview.totalInputTokens,
     outputTokens: overview.totalOutputTokens,
     linesAdded: overview.totalLinesAdded,
