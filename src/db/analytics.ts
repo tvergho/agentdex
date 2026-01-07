@@ -135,6 +135,16 @@ export interface DailyTokensBySource {
 
 // --- Helper Functions ---
 
+/**
+ * Calculate total tokens from a conversation row (all 4 token types combined).
+ */
+function getTotalTokens(conv: Record<string, unknown>): number {
+  return ((conv.total_input_tokens as number) || 0) +
+    ((conv.total_output_tokens as number) || 0) +
+    ((conv.total_cache_creation_tokens as number) || 0) +
+    ((conv.total_cache_read_tokens as number) || 0);
+}
+
 function formatDate(date: Date): string {
   return date.toISOString().split('T')[0]!;
 }
@@ -313,8 +323,7 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
 
     existing.conversations += 1;
     existing.messages += (conv.message_count as number) || 0;
-    existing.tokens += ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
-      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    existing.tokens += getTotalTokens(conv);
     existing.linesAdded += (conv.total_lines_added as number) || 0;
     existing.linesRemoved += (conv.total_lines_removed as number) || 0;
 
@@ -351,8 +360,7 @@ export async function getDailyTokensBySource(period: PeriodFilter): Promise<Dail
     if (!date) continue;
 
     const source = (conv.source as string) || 'unknown';
-    const tokens = ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
-      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    const tokens = getTotalTokens(conv);
 
     const existing = byDate.get(date) || {
       date,
@@ -432,8 +440,7 @@ export async function getStatsBySource(period: PeriodFilter): Promise<SourceStat
 
     existing.conversations += 1;
     existing.messages += (conv.message_count as number) || 0;
-    existing.tokens += ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
-      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+    existing.tokens += getTotalTokens(conv);
 
     bySource.set(source, existing);
   }
@@ -491,13 +498,7 @@ export async function getTopConversationsByTokens(
   const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Sort by total tokens descending (including cache tokens)
-  filtered.sort((a, b) => {
-    const aTokens = ((a.total_input_tokens as number) || 0) + ((a.total_output_tokens as number) || 0) +
-      ((a.total_cache_creation_tokens as number) || 0) + ((a.total_cache_read_tokens as number) || 0);
-    const bTokens = ((b.total_input_tokens as number) || 0) + ((b.total_output_tokens as number) || 0) +
-      ((b.total_cache_creation_tokens as number) || 0) + ((b.total_cache_read_tokens as number) || 0);
-    return bTokens - aTokens;
-  });
+  filtered.sort((a, b) => getTotalTokens(b) - getTotalTokens(a));
 
   // Map raw rows to Conversation objects with proper camelCase properties
   return filtered.slice(0, limit).map(row => mapRowToConversation(row as Record<string, unknown>));
@@ -974,17 +975,27 @@ function getRelativePath(filePath: string, workspacePath?: string): string {
  * - /home/user/PROJECT/...
  * - /Users/.../.cursor/worktrees/PROJECT/ID/...
  */
+const WORKTREE_PARENT_DIRS = ['.conductor', '.worktrees', '.git-worktrees'];
+
 function extractProjectFromPath(filePath: string): { projectName: string; relativePath: string } | null {
   const parts = filePath.split('/');
 
-  // Special case: .cursor/worktrees/PROJECT/ID/...
-  // Pattern: /.cursor/worktrees/{project}/{hash}/...
   const cursorIdx = parts.findIndex(p => p === '.cursor');
   const cursorProjectName = parts[cursorIdx + 2];
   if (cursorIdx >= 0 && parts[cursorIdx + 1] === 'worktrees' && cursorProjectName) {
-    // Skip the hash directory (cursorIdx + 3) and take rest as relative path
     const relativePath = parts.slice(cursorIdx + 4).join('/');
     return { projectName: cursorProjectName, relativePath };
+  }
+
+  for (const worktreeDir of WORKTREE_PARENT_DIRS) {
+    const idx = parts.findIndex(p => p === worktreeDir);
+    if (idx > 0) {
+      const projectName = parts[idx - 1];
+      if (projectName) {
+        const relativePath = parts.slice(idx + 2).join('/');
+        return { projectName, relativePath };
+      }
+    }
   }
 
   // Look for common project root indicators
@@ -1577,8 +1588,7 @@ export async function getRecentConversations(
     title: (conv.title as string) || '(untitled)',
     source: (conv.source as string) || 'unknown',
     createdAt: (conv.created_at as string) || '',
-    totalTokens: ((conv.total_input_tokens as number) || 0) + ((conv.total_output_tokens as number) || 0) +
-      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0),
+    totalTokens: getTotalTokens(conv),
   }));
 }
 

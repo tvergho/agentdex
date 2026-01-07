@@ -6,6 +6,6 @@ export { MessageDetailView, type MessageDetailViewProps } from './MessageDetailV
 export { ExportActionMenu, type ExportActionMenuProps } from './ExportActionMenu';
 export { StatusToast, type StatusToastProps } from './StatusToast';
 export { StatusBar, type StatusBarProps, type SyncStatus, type SyncPhase } from './StatusBar';
-export { SelectableRow, SelectionIndicator, type SelectableRowProps } from './SelectableRow';
+export { SelectionIndicator } from './SelectableRow';
 export { SourceBadge, getSourceColor, type SourceBadgeProps } from './SourceBadge';
 export { SourceTokenTrend, SourceTokenBars, type SourceTokenTrendProps } from './SourceTokenTrend';

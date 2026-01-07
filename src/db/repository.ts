@@ -67,6 +67,81 @@ function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]>
   );
 }
 
+// ============ Row Mapping Helpers ============
+
+function conversationToRow(conv: Conversation): Record<string, unknown> {
+  return {
+    id: conv.id,
+    source: conv.source,
+    title: conv.title,
+    subtitle: conv.subtitle ?? '',
+    workspace_path: conv.workspacePath ?? '',
+    project_name: conv.projectName ?? '',
+    model: conv.model ?? '',
+    mode: conv.mode ?? '',
+    created_at: conv.createdAt ?? '',
+    updated_at: conv.updatedAt ?? '',
+    message_count: conv.messageCount,
+    source_ref_json: JSON.stringify(conv.sourceRef),
+    total_input_tokens: conv.totalInputTokens ?? 0,
+    total_output_tokens: conv.totalOutputTokens ?? 0,
+    total_cache_creation_tokens: conv.totalCacheCreationTokens ?? 0,
+    total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
+    total_lines_added: conv.totalLinesAdded ?? 0,
+    total_lines_removed: conv.totalLinesRemoved ?? 0,
+    compact_count: conv.compactCount ?? 0,
+    git_branch: conv.gitBranch ?? '',
+    git_commit_hash: conv.gitCommitHash ?? '',
+    git_repository_url: conv.gitRepositoryUrl ?? '',
+  };
+}
+
+function rowToConversation(row: Record<string, unknown>): Conversation {
+  return {
+    id: row.id as string,
+    source: row.source as Conversation['source'],
+    title: row.title as string,
+    subtitle: (row.subtitle as string) || undefined,
+    workspacePath: (row.workspace_path as string) || undefined,
+    projectName: (row.project_name as string) || undefined,
+    model: (row.model as string) || undefined,
+    mode: (row.mode as string) || undefined,
+    createdAt: (row.created_at as string) || undefined,
+    updatedAt: (row.updated_at as string) || undefined,
+    messageCount: (row.message_count as number) || 0,
+    sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
+    totalInputTokens: (row.total_input_tokens as number) || undefined,
+    totalOutputTokens: (row.total_output_tokens as number) || undefined,
+    totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
+    totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+    totalLinesAdded: (row.total_lines_added as number) || undefined,
+    totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+    compactCount: (row.compact_count as number) || undefined,
+    gitBranch: (row.git_branch as string) || undefined,
+    gitCommitHash: (row.git_commit_hash as string) || undefined,
+    gitRepositoryUrl: (row.git_repository_url as string) || undefined,
+  };
+}
+
+function rowToMessage(row: Record<string, unknown>): Message {
+  return {
+    id: row.id as string,
+    conversationId: row.conversation_id as string,
+    role: row.role as Message['role'],
+    content: row.content as string,
+    timestamp: (row.timestamp as string) || undefined,
+    messageIndex: (row.message_index as number) || 0,
+    inputTokens: (row.input_tokens as number) || undefined,
+    outputTokens: (row.output_tokens as number) || undefined,
+    cacheCreationTokens: (row.cache_creation_tokens as number) || undefined,
+    cacheReadTokens: (row.cache_read_tokens as number) || undefined,
+    totalLinesAdded: (row.total_lines_added as number) || undefined,
+    totalLinesRemoved: (row.total_lines_removed as number) || undefined,
+    isCompactSummary: (row.is_compact_summary as boolean) || undefined,
+    gitSnapshot: (row.git_snapshot as string) || undefined,
+  };
+}
+
 export const CORRUPTED_MARKERS = new Set([
   'id', 'timestamp', 'model', 'kind', 'cost', 'csv_source',
   'input_tokens', 'output_tokens', 'cache_read_tokens', 'total_tokens',
@@ -207,32 +282,10 @@ export const conversationRepo = {
       .limit(1)
       .toArray();
 
-    const row = {
-      id: conv.id,
-      source: conv.source,
-      title: conv.title,
-      subtitle: conv.subtitle ?? '',
-      workspace_path: conv.workspacePath ?? '',
-      project_name: conv.projectName ?? '',
-      model: conv.model ?? '',
-      mode: conv.mode ?? '',
-      created_at: conv.createdAt ?? '',
-      updated_at: conv.updatedAt ?? '',
-      message_count: conv.messageCount,
-      source_ref_json: JSON.stringify(conv.sourceRef),
-      total_input_tokens: conv.totalInputTokens ?? 0,
-      total_output_tokens: conv.totalOutputTokens ?? 0,
-      total_cache_creation_tokens: conv.totalCacheCreationTokens ?? 0,
-      total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
-      total_lines_added: conv.totalLinesAdded ?? 0,
-      total_lines_removed: conv.totalLinesRemoved ?? 0,
-      compact_count: conv.compactCount ?? 0,
-    };
-
     if (existing.length > 0) {
       await table.delete(`id = '${conv.id}'`);
     }
-    await table.add([row]);
+    await table.add([conversationToRow(conv)]);
   },
 
   /**
@@ -332,31 +385,8 @@ export const conversationRepo = {
       await table.delete(whereClause);
     }
 
-    // Convert all conversations to rows
-    const rows = conversations.map((conv) => ({
-      id: conv.id,
-      source: conv.source,
-      title: conv.title,
-      subtitle: conv.subtitle ?? '',
-      workspace_path: conv.workspacePath ?? '',
-      project_name: conv.projectName ?? '',
-      model: conv.model ?? '',
-      mode: conv.mode ?? '',
-      created_at: conv.createdAt ?? '',
-      updated_at: conv.updatedAt ?? '',
-      message_count: conv.messageCount,
-      source_ref_json: JSON.stringify(conv.sourceRef),
-      total_input_tokens: conv.totalInputTokens ?? 0,
-      total_output_tokens: conv.totalOutputTokens ?? 0,
-      total_cache_creation_tokens: conv.totalCacheCreationTokens ?? 0,
-      total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
-      total_lines_added: conv.totalLinesAdded ?? 0,
-      total_lines_removed: conv.totalLinesRemoved ?? 0,
-      compact_count: conv.compactCount ?? 0,
-    }));
-
-    // Bulk insert all rows
-    await table.add(rows);
+    // Convert all conversations to rows and bulk insert
+    await table.add(conversations.map(conversationToRow));
   },
 
   async findById(id: string): Promise<Conversation | null> {
@@ -365,29 +395,7 @@ export const conversationRepo = {
       const results = await table.query().where(`id = '${id}'`).limit(1).toArray();
 
       if (results.length === 0) return null;
-
-      const row = results[0]!;
-      return {
-        id: row.id as string,
-        source: row.source as Conversation['source'],
-        title: row.title as string,
-        subtitle: (row.subtitle as string) || undefined,
-        workspacePath: (row.workspace_path as string) || undefined,
-        projectName: (row.project_name as string) || undefined,
-        model: (row.model as string) || undefined,
-        mode: (row.mode as string) || undefined,
-        createdAt: (row.created_at as string) || undefined,
-        updatedAt: (row.updated_at as string) || undefined,
-        messageCount: (row.message_count as number) || 0,
-        sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-        totalInputTokens: (row.total_input_tokens as number) || undefined,
-        totalOutputTokens: (row.total_output_tokens as number) || undefined,
-        totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-        totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-        totalLinesAdded: (row.total_lines_added as number) || undefined,
-        totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-        compactCount: (row.compact_count as number) || undefined,
-      };
+      return rowToConversation(results[0]!);
     });
   },
 
@@ -457,28 +465,7 @@ export const conversationRepo = {
         ? filtered.slice(offset, offset + opts.limit)
         : filtered.slice(offset);
 
-      const conversations = limited.map((row) => ({
-        id: row.id as string,
-        source: row.source as Conversation['source'],
-        title: row.title as string,
-        subtitle: (row.subtitle as string) || undefined,
-        workspacePath: (row.workspace_path as string) || undefined,
-        projectName: (row.project_name as string) || undefined,
-        model: (row.model as string) || undefined,
-        mode: (row.mode as string) || undefined,
-        createdAt: (row.created_at as string) || undefined,
-        updatedAt: (row.updated_at as string) || undefined,
-        messageCount: (row.message_count as number) || 0,
-        sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-        totalInputTokens: (row.total_input_tokens as number) || undefined,
-        totalOutputTokens: (row.total_output_tokens as number) || undefined,
-        totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-        totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-        totalLinesAdded: (row.total_lines_added as number) || undefined,
-        totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-        compactCount: (row.compact_count as number) || undefined,
-      }));
-      return { conversations, total };
+      return { conversations: limited.map(rowToConversation), total };
     });
   },
 
@@ -528,32 +515,9 @@ export const conversationRepo = {
       return bDate.localeCompare(aDate);
     });
 
-    return untitled.slice(0, limit).map((row) => ({
-      id: row.id as string,
-      source: row.source as Conversation['source'],
-      title: row.title as string,
-      subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspace_path as string) || undefined,
-      projectName: (row.project_name as string) || undefined,
-      model: (row.model as string) || undefined,
-      mode: (row.mode as string) || undefined,
-      createdAt: (row.created_at as string) || undefined,
-      updatedAt: (row.updated_at as string) || undefined,
-      messageCount: (row.message_count as number) || 0,
-      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-      totalInputTokens: (row.total_input_tokens as number) || undefined,
-      totalOutputTokens: (row.total_output_tokens as number) || undefined,
-      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-      totalLinesAdded: (row.total_lines_added as number) || undefined,
-      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-      compactCount: (row.compact_count as number) || undefined,
-    }));
+    return untitled.slice(0, limit).map(rowToConversation);
   },
 
-  /**
-   * Count conversations with "Untitled" title
-   */
   async countUntitled(): Promise<number> {
     const table = await getConversationsTable();
     const results = await table.query().select(['title']).toArray();
@@ -599,32 +563,9 @@ export const conversationRepo = {
       return bDate.localeCompare(aDate);
     });
 
-    return untitled.slice(0, limit).map((row) => ({
-      id: row.id as string,
-      source: row.source as Conversation['source'],
-      title: row.title as string,
-      subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspace_path as string) || undefined,
-      projectName: (row.project_name as string) || undefined,
-      model: (row.model as string) || undefined,
-      mode: (row.mode as string) || undefined,
-      createdAt: (row.created_at as string) || undefined,
-      updatedAt: (row.updated_at as string) || undefined,
-      messageCount: (row.message_count as number) || 0,
-      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-      totalInputTokens: (row.total_input_tokens as number) || undefined,
-      totalOutputTokens: (row.total_output_tokens as number) || undefined,
-      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-      totalLinesAdded: (row.total_lines_added as number) || undefined,
-      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-      compactCount: (row.compact_count as number) || undefined,
-    }));
+    return untitled.slice(0, limit).map(rowToConversation);
   },
 
-  /**
-   * Update the title of a conversation
-   */
   async updateTitle(id: string, title: string): Promise<void> {
     await withConnectionRecovery(async () => {
       const table = await getConversationsTable();
@@ -676,27 +617,27 @@ export const conversationRepo = {
       results = results.filter((row) => idSet.has(row.id as string));
     }
 
-    return results.map((row) => ({
-      id: row.id as string,
-      source: row.source as Conversation['source'],
-      title: row.title as string,
-      subtitle: (row.subtitle as string) || undefined,
-      workspacePath: (row.workspace_path as string) || undefined,
-      projectName: (row.project_name as string) || undefined,
-      model: (row.model as string) || undefined,
-      mode: (row.mode as string) || undefined,
-      createdAt: (row.created_at as string) || undefined,
-      updatedAt: (row.updated_at as string) || undefined,
-      messageCount: (row.message_count as number) || 0,
-      sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
-      totalInputTokens: (row.total_input_tokens as number) || undefined,
-      totalOutputTokens: (row.total_output_tokens as number) || undefined,
-      totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
-      totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
-      totalLinesAdded: (row.total_lines_added as number) || undefined,
-      totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-      compactCount: (row.compact_count as number) || undefined,
-    }));
+    return results.map(rowToConversation);
+  },
+
+  async findByGitBranch(branch: string): Promise<Conversation[]> {
+    return withConnectionRecovery(async () => {
+      const table = await getConversationsTable();
+      const results = await table.query().toArray();
+
+      const filtered = results.filter((row) => {
+        const rowBranch = (row.git_branch as string) || '';
+        return rowBranch === branch;
+      });
+
+      filtered.sort((a, b) => {
+        const aDate = (a.updated_at as string) || '';
+        const bDate = (b.updated_at as string) || '';
+        return bDate.localeCompare(aDate);
+      });
+
+      return filtered.map(rowToConversation);
+    });
   },
 };
 
@@ -736,10 +677,10 @@ export const messageRepo = {
       conversation_id: msg.conversationId,
       role: msg.role,
       content: msg.content,
-      indexed_content: stripToolOutputs(msg.content), // Tool outputs stripped for FTS
+      indexed_content: stripToolOutputs(msg.content),
       timestamp: msg.timestamp ?? '',
       message_index: msg.messageIndex,
-      vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings
+      vector: new Array(EMBEDDING_DIMENSIONS).fill(0),
       input_tokens: msg.inputTokens ?? 0,
       output_tokens: msg.outputTokens ?? 0,
       cache_creation_tokens: msg.cacheCreationTokens ?? 0,
@@ -747,6 +688,7 @@ export const messageRepo = {
       total_lines_added: msg.totalLinesAdded ?? 0,
       total_lines_removed: msg.totalLinesRemoved ?? 0,
       is_compact_summary: msg.isCompactSummary ?? false,
+      git_snapshot: msg.gitSnapshot ?? '',
     }));
 
     await table.add(rows);
@@ -762,10 +704,10 @@ export const messageRepo = {
       conversation_id: msg.conversationId,
       role: msg.role,
       content: msg.content,
-      indexed_content: stripToolOutputs(msg.content), // Tool outputs stripped for FTS
+      indexed_content: stripToolOutputs(msg.content),
       timestamp: msg.timestamp ?? '',
       message_index: msg.messageIndex,
-      vector: new Array(EMBEDDING_DIMENSIONS).fill(0), // Placeholder, will be updated with embeddings
+      vector: new Array(EMBEDDING_DIMENSIONS).fill(0),
       input_tokens: msg.inputTokens ?? 0,
       output_tokens: msg.outputTokens ?? 0,
       cache_creation_tokens: msg.cacheCreationTokens ?? 0,
@@ -773,6 +715,7 @@ export const messageRepo = {
       total_lines_added: msg.totalLinesAdded ?? 0,
       total_lines_removed: msg.totalLinesRemoved ?? 0,
       is_compact_summary: msg.isCompactSummary ?? false,
+      git_snapshot: msg.gitSnapshot ?? '',
     }));
 
     await table.add(rows);
@@ -791,29 +734,12 @@ export const messageRepo = {
   async findByConversation(conversationId: string): Promise<Message[]> {
     return withConnectionRecovery(async () => {
       const table = await getMessagesTable();
-      // With snake_case columns, we can use direct filtering
       const results = await table
         .query()
         .where(`conversation_id = '${conversationId}'`)
         .toArray();
 
-      return results
-        .map((row) => ({
-          id: row.id as string,
-          conversationId: row.conversation_id as string,
-          role: row.role as Message['role'],
-          content: row.content as string,
-          timestamp: (row.timestamp as string) || undefined,
-          messageIndex: (row.message_index as number) || 0,
-          inputTokens: (row.input_tokens as number) || undefined,
-          outputTokens: (row.output_tokens as number) || undefined,
-          cacheCreationTokens: (row.cache_creation_tokens as number) || undefined,
-          cacheReadTokens: (row.cache_read_tokens as number) || undefined,
-          totalLinesAdded: (row.total_lines_added as number) || undefined,
-          totalLinesRemoved: (row.total_lines_removed as number) || undefined,
-          isCompactSummary: (row.is_compact_summary as boolean) || undefined,
-        }))
-        .sort((a, b) => a.messageIndex - b.messageIndex);
+      return results.map(rowToMessage).sort((a, b) => a.messageIndex - b.messageIndex);
     });
   },
 
