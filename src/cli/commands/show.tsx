@@ -14,10 +14,7 @@ import { connect } from '../../db/index';
 import { conversationRepo, messageRepo, filesRepo, messageFilesRepo } from '../../db/repository';
 import type { Conversation, Message, ConversationFile, MessageFile } from '../../schema/index';
 import { ExportActionMenu, StatusToast } from '../components/index';
-import {
-  exportConversationsToFile,
-  exportConversationsToClipboard,
-} from '../../utils/export-actions';
+import { useExport } from '../hooks/useExport';
 
 function MessageView({
   message,
@@ -68,8 +65,6 @@ function MessageView({
   );
 }
 
-type ExportMode = 'none' | 'action-menu';
-
 function ShowApp({ conversationId }: { conversationId: string }) {
   const { exit } = useApp();
   const { width, height } = useScreenSize();
@@ -81,14 +76,18 @@ function ShowApp({ conversationId }: { conversationId: string }) {
   const [messageFiles, setMessageFiles] = useState<MessageFile[]>([]);
   const [scrollOffset, setScrollOffset] = useState(0);
 
-  // Export state
-  const [exportMode, setExportMode] = useState<ExportMode>('none');
-  const [exportActionIndex, setExportActionIndex] = useState(0);
-
-  // Status toast
-  const [statusMessage, setStatusMessage] = useState('');
-  const [statusType, setStatusType] = useState<'success' | 'error'>('success');
-  const [statusVisible, setStatusVisible] = useState(false);
+  // Export hook
+  const {
+    exportMode,
+    exportActionIndex,
+    statusMessage,
+    statusType,
+    statusVisible,
+    openExportMenu,
+    handleExportInput,
+  } = useExport({
+    getConversations: useCallback(() => conversation ? [conversation] : [], [conversation]),
+  });
 
   useEffect(() => {
     async function loadConversation() {
@@ -125,38 +124,6 @@ function ShowApp({ conversationId }: { conversationId: string }) {
   // Scroll offset should stop when last message is visible at bottom
   const maxOffset = Math.max(0, messages.length - messagesPerPage);
 
-  // Show status toast with auto-dismiss
-  const showStatus = useCallback((message: string, type: 'success' | 'error') => {
-    setStatusMessage(message);
-    setStatusType(type);
-    setStatusVisible(true);
-    setTimeout(() => setStatusVisible(false), 3000);
-  }, []);
-
-  // Execute the selected export action
-  const executeExportAction = useCallback(async () => {
-    if (!conversation) return;
-
-    try {
-      if (exportActionIndex === 0) {
-        // Export to file
-        const outputDir = await exportConversationsToFile([conversation]);
-        showStatus(`Exported to ${outputDir}`, 'success');
-        setExportMode('none');
-        setExportActionIndex(0);
-      } else if (exportActionIndex === 1) {
-        // Copy to clipboard
-        await exportConversationsToClipboard([conversation]);
-        showStatus('Copied to clipboard', 'success');
-        setExportMode('none');
-        setExportActionIndex(0);
-      }
-    } catch (err) {
-      showStatus(`Export failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
-      setExportMode('none');
-    }
-  }, [conversation, exportActionIndex, showStatus]);
-
   useInput((input, key) => {
     // Priority 1: Quit
     if (input === 'q') {
@@ -165,33 +132,23 @@ function ShowApp({ conversationId }: { conversationId: string }) {
     }
 
     // Priority 2: Export action menu
-    if (exportMode === 'action-menu') {
-      if (input === 'j' || key.downArrow) {
-        setExportActionIndex((i) => Math.min(i + 1, 1)); // Only 2 options (0-1)
-      } else if (input === 'k' || key.upArrow) {
-        setExportActionIndex((i) => Math.max(i - 1, 0));
-      } else if (key.return) {
-        executeExportAction();
-      } else if (key.escape) {
-        setExportMode('none');
-        setExportActionIndex(0);
-      }
+    if (handleExportInput(input, key)) {
       return;
     }
 
-    // Priority 4: Normal mode - export trigger
+    // Priority 3: Normal mode - export trigger
     if (input === 'e' && conversation) {
-      setExportMode('action-menu');
+      openExportMenu();
       return;
     }
 
-    // Priority 5: Escape exits in normal mode
+    // Priority 4: Escape exits in normal mode
     if (key.escape) {
       exit();
       return;
     }
 
-    // Priority 6: Normal scrolling
+    // Priority 5: Normal scrolling
     if (messages.length === 0) return;
 
     if (input === 'j' || key.downArrow) {

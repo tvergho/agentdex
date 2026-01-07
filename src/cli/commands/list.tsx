@@ -24,10 +24,7 @@ import {
 } from '../../utils/format';
 import type { Conversation } from '../../schema/index';
 import { ExportActionMenu, StatusToast } from '../components/index';
-import {
-  exportConversationsToFile,
-  exportConversationsToClipboard,
-} from '../../utils/export-actions';
+import { useExport } from '../hooks/useExport';
 
 interface ListOptions {
   limit?: string;
@@ -124,8 +121,6 @@ function ConversationRow({
   );
 }
 
-type ExportMode = 'none' | 'action-menu';
-
 function ListApp({
   limit,
   source,
@@ -144,14 +139,27 @@ function ListApp({
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Export state
-  const [exportMode, setExportMode] = useState<ExportMode>('none');
-  const [exportActionIndex, setExportActionIndex] = useState(0);
+  // Get conversations to export (used by useExport hook)
+  const getConversationsToExport = useCallback((): Conversation[] => {
+    if (multiSelectMode && selectedIds.size > 0) {
+      return conversations.filter((c) => selectedIds.has(c.id));
+    }
+    const current = conversations[selectedIndex];
+    return current ? [current] : [];
+  }, [conversations, selectedIndex, multiSelectMode, selectedIds]);
 
-  // Status toast
-  const [statusMessage, setStatusMessage] = useState('');
-  const [statusType, setStatusType] = useState<'success' | 'error'>('success');
-  const [statusVisible, setStatusVisible] = useState(false);
+  // Export hook
+  const {
+    exportMode,
+    exportActionIndex,
+    statusMessage,
+    statusType,
+    statusVisible,
+    openExportMenu,
+    handleExportInput,
+  } = useExport({
+    getConversations: getConversationsToExport,
+  });
 
   useEffect(() => {
     async function loadConversations() {
@@ -184,52 +192,6 @@ function ListApp({
     return conversations.slice(scrollOffset, scrollOffset + visibleCount);
   }, [conversations, scrollOffset, visibleCount]);
 
-  // Show status toast with auto-dismiss
-  const showStatus = useCallback((message: string, type: 'success' | 'error') => {
-    setStatusMessage(message);
-    setStatusType(type);
-    setStatusVisible(true);
-    setTimeout(() => setStatusVisible(false), 3000);
-  }, []);
-
-  // Get conversations to export
-  const getConversationsToExport = useCallback((): Conversation[] => {
-    if (multiSelectMode && selectedIds.size > 0) {
-      return conversations.filter((c) => selectedIds.has(c.id));
-    }
-    const current = conversations[selectedIndex];
-    return current ? [current] : [];
-  }, [conversations, selectedIndex, multiSelectMode, selectedIds]);
-
-  // Execute the selected export action
-  const executeExportAction = useCallback(async () => {
-    const toExport = getConversationsToExport();
-    if (toExport.length === 0) return;
-
-    try {
-      if (exportActionIndex === 0) {
-        // Export to file
-        const outputDir = await exportConversationsToFile(toExport);
-        showStatus(`Exported ${toExport.length} to ${outputDir}`, 'success');
-        setExportMode('none');
-        setExportActionIndex(0);
-        setMultiSelectMode(false);
-        setSelectedIds(new Set());
-      } else if (exportActionIndex === 1) {
-        // Copy to clipboard
-        await exportConversationsToClipboard(toExport);
-        showStatus(`Copied ${toExport.length} conversation(s)`, 'success');
-        setExportMode('none');
-        setExportActionIndex(0);
-        setMultiSelectMode(false);
-        setSelectedIds(new Set());
-      }
-    } catch (err) {
-      showStatus(`Export failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
-      setExportMode('none');
-    }
-  }, [getConversationsToExport, exportActionIndex, showStatus]);
-
   useInput((input, key) => {
     // Priority 1: Quit
     if (input === 'q') {
@@ -238,21 +200,11 @@ function ListApp({
     }
 
     // Priority 2: Export action menu
-    if (exportMode === 'action-menu') {
-      if (input === 'j' || key.downArrow) {
-        setExportActionIndex((i) => Math.min(i + 1, 1)); // Only 2 options (0-1)
-      } else if (input === 'k' || key.upArrow) {
-        setExportActionIndex((i) => Math.max(i - 1, 0));
-      } else if (key.return) {
-        executeExportAction();
-      } else if (key.escape) {
-        setExportMode('none');
-        setExportActionIndex(0);
-      }
+    if (handleExportInput(input, key)) {
       return;
     }
 
-    // Priority 4: Multi-select mode
+    // Priority 3: Multi-select mode
     if (multiSelectMode) {
       if (input === ' ') {
         const current = conversations[selectedIndex];
@@ -270,7 +222,7 @@ function ListApp({
         return;
       }
       if (input === 'e' && selectedIds.size > 0) {
-        setExportMode('action-menu');
+        openExportMenu();
         return;
       }
       if (input === 'v' || key.escape) {
@@ -289,9 +241,9 @@ function ListApp({
 
     if (conversations.length === 0) return;
 
-    // Priority 6: Export trigger (single)
+    // Priority 5: Export trigger (single)
     if (input === 'e' && !multiSelectMode) {
-      setExportMode('action-menu');
+      openExportMenu();
       return;
     }
 
