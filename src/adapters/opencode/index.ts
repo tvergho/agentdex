@@ -1,18 +1,18 @@
-import { createHash } from 'crypto';
 import { detectOpenCode, discoverProjects, discoverSessions, getSessionRootMtime } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
 import {
   Source,
   type Conversation,
   type Message,
-  type SourceRef,
   type ToolCall,
   type ConversationFile,
   type MessageFile,
   type FileEdit,
+  type SourceRef,
 } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation, ExtractionProgress } from '../types.js';
 import { countCombinedMessages } from '../types.js';
+import { createConversationId, createSourceRef, parseTimestamps, createDeterministicId } from '../utils.js';
 
 export class OpenCodeAdapter implements SourceAdapter {
   name = Source.OpenCode;
@@ -99,38 +99,9 @@ export class OpenCodeAdapter implements SourceAdapter {
   }
 
   normalize(raw: RawConversation, location: SourceLocation): NormalizedConversation {
-    // Create deterministic ID from source + session ID
-    const conversationId = createHash('sha256')
-      .update(`opencode:${raw.sessionId}`)
-      .digest('hex')
-      .slice(0, 32);
-
-    const sourceRef: SourceRef = {
-      source: Source.OpenCode,
-      workspacePath: location.workspacePath,
-      originalId: raw.sessionId,
-      dbPath: location.dbPath,
-    };
-
-    // Parse timestamps
-    let createdAt: string | undefined;
-    let updatedAt: string | undefined;
-
-    if (raw.createdAt) {
-      try {
-        createdAt = new Date(raw.createdAt).toISOString();
-      } catch {
-        // Skip invalid timestamps
-      }
-    }
-
-    if (raw.updatedAt) {
-      try {
-        updatedAt = new Date(raw.updatedAt).toISOString();
-      } catch {
-        // Skip invalid timestamps
-      }
-    }
+    const conversationId = createConversationId('opencode', raw.sessionId);
+    const sourceRef = createSourceRef(Source.OpenCode, raw.sessionId, location.workspacePath, location.dbPath);
+    const { createdAt, updatedAt } = parseTimestamps(raw);
 
     // Filter to messages with content
     // Tool-only messages (empty content) are excluded from the count to be consistent with other providers
@@ -161,7 +132,6 @@ export class OpenCodeAdapter implements SourceAdapter {
     // Propagate stats from tool-only assistant messages to the nearest visible assistant message
     const mainMessageIds = new Set(mainMessages.map((m) => m.id));
 
-    // Track aggregated stats per visible message
     interface AggregatedStats {
       added: number;
       removed: number;
@@ -171,10 +141,10 @@ export class OpenCodeAdapter implements SourceAdapter {
       peakCacheReadTokens: number;
       peakContext: number;
       fileEdits: typeof raw.messages[0]['fileEdits'];
+      gitSnapshot?: string;
     }
     const aggregatedStats = new Map<string, AggregatedStats>();
 
-    // Initialize stats for main messages
     for (const msg of mainMessages) {
       const ctx =
         (msg.inputTokens ?? 0) + (msg.cacheCreationTokens ?? 0) + (msg.cacheReadTokens ?? 0);
@@ -187,6 +157,7 @@ export class OpenCodeAdapter implements SourceAdapter {
         peakCacheReadTokens: msg.cacheReadTokens ?? 0,
         peakContext: ctx,
         fileEdits: [...msg.fileEdits],
+        gitSnapshot: msg.gitSnapshot,
       });
     }
 
@@ -249,6 +220,7 @@ export class OpenCodeAdapter implements SourceAdapter {
         cacheReadTokens: stats?.peakCacheReadTokens,
         totalLinesAdded: stats && stats.added > 0 ? stats.added : undefined,
         totalLinesRemoved: stats && stats.removed > 0 ? stats.removed : undefined,
+        gitSnapshot: stats?.gitSnapshot,
       };
     });
 
@@ -313,11 +285,7 @@ export class OpenCodeAdapter implements SourceAdapter {
         const edit = msgFileEdits[j];
         if (!edit) continue;
 
-        // Create deterministic ID from edit properties
-        const editId = createHash('sha256')
-          .update(`${messageId}:edit:${j}:${edit.filePath}`)
-          .digest('hex')
-          .slice(0, 32);
+        const editId = createDeterministicId(messageId, 'edit', j, edit.filePath);
 
         fileEdits.push({
           id: editId,
@@ -327,6 +295,7 @@ export class OpenCodeAdapter implements SourceAdapter {
           editType: edit.editType,
           linesAdded: edit.linesAdded,
           linesRemoved: edit.linesRemoved,
+          newContent: edit.newContent,
         });
       }
     }

@@ -1,9 +1,9 @@
-import { createHash } from 'crypto';
 import { detectClaudeCode, discoverProjects, getProjectsRootMtime } from './paths.js';
 import { extractConversations, type RawConversation } from './parser.js';
-import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index.js';
+import { Source, type Conversation, type Message, type ToolCall, type ConversationFile, type MessageFile, type FileEdit, type SourceRef } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation, ExtractionProgress } from '../types.js';
 import { countCombinedMessages } from '../types.js';
+import { createConversationId, createSourceRef, parseTimestamps, createDeterministicId } from '../utils.js';
 
 export class ClaudeCodeAdapter implements SourceAdapter {
   name = Source.ClaudeCode;
@@ -43,44 +43,14 @@ export class ClaudeCodeAdapter implements SourceAdapter {
   }
 
   normalize(raw: RawConversation, location: SourceLocation): NormalizedConversation {
-    // Create deterministic ID from source + session ID
-    const conversationId = createHash('sha256')
-      .update(`claude-code:${raw.sessionId}`)
-      .digest('hex')
-      .slice(0, 32);
-
-    const sourceRef: SourceRef = {
-      source: Source.ClaudeCode,
-      workspacePath: location.workspacePath,
-      originalId: raw.sessionId,
-      dbPath: location.dbPath,
-    };
-
-    // Parse timestamps
-    let createdAt: string | undefined;
-    let updatedAt: string | undefined;
-
-    if (raw.createdAt) {
-      try {
-        createdAt = new Date(raw.createdAt).toISOString();
-      } catch {
-        // Skip invalid timestamps
-      }
-    }
-
-    if (raw.updatedAt) {
-      try {
-        updatedAt = new Date(raw.updatedAt).toISOString();
-      } catch {
-        // Skip invalid timestamps
-      }
-    }
+    const conversationId = createConversationId('claude-code', raw.sessionId);
+    const sourceRef = createSourceRef(Source.ClaudeCode, raw.sessionId, location.workspacePath, location.dbPath);
+    const { createdAt, updatedAt } = parseTimestamps(raw);
 
     // Filter to main messages (non-sidechain with content)
     // Tool-only messages (empty content) are excluded from the count to be consistent with other providers
     const mainMessages = raw.messages.filter((m) => !m.isSidechain && m.content.trim().length > 0);
 
-    // Build conversation
     const conversation: Conversation = {
       id: conversationId,
       source: Source.ClaudeCode,
@@ -89,11 +59,12 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       workspacePath: raw.cwd || raw.workspacePath,
       projectName: (raw.cwd || raw.workspacePath)?.split('/').pop(),
       model: raw.model,
-      mode: 'agent', // Claude Code is always agent mode
+      mode: 'agent',
       createdAt,
       updatedAt,
       messageCount: countCombinedMessages(mainMessages),
       sourceRef,
+      gitBranch: raw.gitBranch,
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
       totalCacheCreationTokens: raw.totalCacheCreationTokens,
@@ -259,11 +230,7 @@ export class ClaudeCodeAdapter implements SourceAdapter {
         const edit = msgFileEdits[j];
         if (!edit) continue;
 
-        // Create deterministic ID from edit properties
-        const editId = createHash('sha256')
-          .update(`${messageId}:edit:${j}:${edit.filePath}`)
-          .digest('hex')
-          .slice(0, 32);
+        const editId = createDeterministicId(messageId, 'edit', j, edit.filePath);
 
         fileEdits.push({
           id: editId,

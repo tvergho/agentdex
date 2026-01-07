@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs';
+import { countLines } from '../utils.js';
 
 // Raw types matching the JSONL structure
 
@@ -47,6 +48,7 @@ interface CodexSessionMeta {
   git?: {
     commit_hash?: string;
     branch?: string;
+    repository_url?: string;
   };
 }
 
@@ -122,6 +124,8 @@ export interface RawConversation {
   projectName?: string;
   cwd?: string;
   gitBranch?: string;
+  gitCommitHash?: string;
+  gitRepositoryUrl?: string;
   model?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -213,14 +217,6 @@ function getFileRole(toolName: string): RawFile['role'] {
     return 'edited';
   }
   return 'mentioned';
-}
-
-/**
- * Count lines in a string, handling edge cases.
- */
-function countLines(str: string): number {
-  if (!str) return 0;
-  return str.split('\n').length;
 }
 
 // Extract workspace path from file paths (with fallback for mixed system paths)
@@ -620,6 +616,8 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
     projectName,
     cwd: sessionCwd || turnContextCwd,
     gitBranch: sessionMeta?.git?.branch,
+    gitCommitHash: sessionMeta?.git?.commit_hash,
+    gitRepositoryUrl: sessionMeta?.git?.repository_url,
     model,
     createdAt,
     updatedAt,

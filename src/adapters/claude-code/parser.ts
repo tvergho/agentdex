@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import type { ClaudeCodeProject } from './paths.js';
+import { countLines } from '../utils.js';
 
 // Raw types matching the JSONL structure
 interface ClaudeMessageContent {
@@ -302,15 +303,6 @@ function extractFilesFromToolCalls(toolCalls: RawToolCall[]): RawFile[] {
 }
 
 /**
- * Count lines in a string, handling edge cases.
- */
-function countLines(str: string): number {
-  if (!str) return 0;
-  // A string with no newlines is still 1 line
-  return str.split('\n').length;
-}
-
-/**
  * Extract file edits from tool calls (Edit and Write tools).
  */
 function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] {
@@ -330,7 +322,7 @@ function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] 
             editType: 'modify',
             linesRemoved: countLines(oldString),
             linesAdded: countLines(newString),
-            // Note: newContent not stored here - tool outputs are interleaved in message content
+            newContent: newString,
           });
         }
       } catch {
@@ -348,7 +340,7 @@ function extractFileEditsFromToolCalls(toolCalls: RawToolCall[]): RawFileEdit[] 
             editType: 'create',
             linesRemoved: 0,
             linesAdded: countLines(content),
-            // Note: newContent not stored here - tool outputs are interleaved in message content
+            newContent: content,
           });
         }
       } catch {

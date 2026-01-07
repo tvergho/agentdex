@@ -1,9 +1,9 @@
-import { createHash } from 'crypto';
 import { detectCodex, discoverSessions, getSessionsRootMtime } from './paths.js';
 import { extractConversation, type RawConversation } from './parser.js';
-import { Source, type Conversation, type Message, type SourceRef, type ToolCall, type ConversationFile, type MessageFile, type FileEdit } from '../../schema/index.js';
+import { Source, type Conversation, type Message, type ToolCall, type ConversationFile, type MessageFile, type FileEdit, type SourceRef } from '../../schema/index.js';
 import type { SourceAdapter, SourceLocation, NormalizedConversation, ExtractionProgress } from '../types.js';
 import { countCombinedMessages } from '../types.js';
+import { createConversationId, createSourceRef, parseTimestamps, createDeterministicId } from '../utils.js';
 
 export class CodexAdapter implements SourceAdapter {
   name = Source.Codex;
@@ -48,38 +48,11 @@ export class CodexAdapter implements SourceAdapter {
   }
 
   normalize(raw: RawConversation, location: SourceLocation): NormalizedConversation {
-    // Create deterministic ID from source + session ID
-    const conversationId = createHash('sha256').update(`codex:${raw.sessionId}`).digest('hex').slice(0, 32);
-
+    const conversationId = createConversationId('codex', raw.sessionId);
     const workspacePath = raw.workspacePath || raw.cwd || location.workspacePath;
     const projectName = raw.projectName || (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : undefined);
-
-    const sourceRef: SourceRef = {
-      source: Source.Codex,
-      workspacePath,
-      originalId: raw.sessionId,
-      dbPath: location.dbPath,
-    };
-
-    // Parse timestamps
-    let createdAt: string | undefined;
-    let updatedAt: string | undefined;
-
-    if (raw.createdAt) {
-      try {
-        createdAt = new Date(raw.createdAt).toISOString();
-      } catch {
-        // Skip invalid timestamps
-      }
-    }
-
-    if (raw.updatedAt) {
-      try {
-        updatedAt = new Date(raw.updatedAt).toISOString();
-      } catch {
-        // Skip invalid timestamps
-      }
-    }
+    const sourceRef = createSourceRef(Source.Codex, raw.sessionId, workspacePath, location.dbPath);
+    const { createdAt, updatedAt } = parseTimestamps(raw);
 
     // Build conversation
     const conversation: Conversation = {
@@ -95,6 +68,9 @@ export class CodexAdapter implements SourceAdapter {
       updatedAt,
       messageCount: countCombinedMessages(raw.messages),
       sourceRef,
+      gitBranch: raw.gitBranch,
+      gitCommitHash: raw.gitCommitHash,
+      gitRepositoryUrl: raw.gitRepositoryUrl,
       // Token totals from session
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
@@ -169,11 +145,7 @@ export class CodexAdapter implements SourceAdapter {
         const edit = msg.fileEdits[j];
         if (!edit) continue;
 
-        // Create deterministic ID from edit properties
-        const editId = createHash('sha256')
-          .update(`${messageId}:edit:${j}:${edit.filePath}`)
-          .digest('hex')
-          .slice(0, 32);
+        const editId = createDeterministicId(messageId, 'edit', j, edit.filePath);
 
         fileEdits.push({
           id: editId,

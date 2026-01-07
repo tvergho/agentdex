@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { OpenCodeSession } from './paths.js';
+import { countLines } from '../utils.js';
 
 // ============ Raw JSON Types (matching OpenCode storage format) ============
 
@@ -70,9 +71,7 @@ interface OpenCodePartJson {
   sessionID: string;
   messageID: string;
   type: 'text' | 'tool' | 'reasoning' | 'step-start' | 'step-finish';
-  // Text part
   text?: string;
-  // Tool part
   callID?: string;
   tool?: string;
   state?: {
@@ -86,7 +85,6 @@ interface OpenCodePartJson {
       end?: number;
     };
   };
-  // Step-finish part
   reason?: string;
   cost?: number;
   tokens?: {
@@ -98,7 +96,6 @@ interface OpenCodePartJson {
       write?: number;
     };
   };
-  // Reasoning part
   metadata?: {
     openai?: {
       itemId?: string;
@@ -109,6 +106,7 @@ interface OpenCodePartJson {
     start?: number;
     end?: number;
   };
+  snapshot?: string;
 }
 
 // ============ Parsed/Normalized Types ============
@@ -127,6 +125,7 @@ export interface RawMessage {
   cacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
+  gitSnapshot?: string;
 }
 
 export interface RawToolCall {
@@ -147,6 +146,7 @@ export interface RawFileEdit {
   editType: 'create' | 'modify' | 'delete';
   linesAdded: number;
   linesRemoved: number;
+  newContent?: string;
 }
 
 export interface RawConversation {
@@ -218,14 +218,6 @@ function timestampToIso(ts: number | undefined): string | undefined {
 }
 
 /**
- * Count lines in a string.
- */
-function countLines(str: string): number {
-  if (!str) return 0;
-  return str.split('\n').length;
-}
-
-/**
  * Extract file path from tool input.
  */
 function extractFilePath(input: Record<string, unknown>): string | undefined {
@@ -276,6 +268,7 @@ function extractFileEditsFromToolCall(
         editType: 'modify',
         linesRemoved: countLines(oldString),
         linesAdded: countLines(newString),
+        newContent: newString,
       };
     }
   } else if (lowerName === 'write') {
@@ -288,6 +281,7 @@ function extractFileEditsFromToolCall(
         editType: 'create',
         linesRemoved: 0,
         linesAdded: countLines(content),
+        newContent: content,
       };
     }
   }
@@ -431,17 +425,25 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
       cacheCreationTokens = msg.tokens.cache?.write;
     }
 
-    // Also check step-finish parts for aggregated tokens
+    let gitSnapshot: string | undefined;
+
     for (const part of parts) {
-      if (part.type === 'step-finish' && part.tokens) {
-        // Prefer step-finish tokens as they may be more accurate
-        inputTokens = (inputTokens || 0) + (part.tokens.input || 0);
-        outputTokens = (outputTokens || 0) + (part.tokens.output || 0);
-        if (part.tokens.cache?.read) {
-          cacheReadTokens = (cacheReadTokens || 0) + part.tokens.cache.read;
+      if (part.type === 'step-start' && part.snapshot && !gitSnapshot) {
+        gitSnapshot = part.snapshot;
+      }
+      if (part.type === 'step-finish') {
+        if (part.tokens) {
+          inputTokens = (inputTokens || 0) + (part.tokens.input || 0);
+          outputTokens = (outputTokens || 0) + (part.tokens.output || 0);
+          if (part.tokens.cache?.read) {
+            cacheReadTokens = (cacheReadTokens || 0) + part.tokens.cache.read;
+          }
+          if (part.tokens.cache?.write) {
+            cacheCreationTokens = (cacheCreationTokens || 0) + part.tokens.cache.write;
+          }
         }
-        if (part.tokens.cache?.write) {
-          cacheCreationTokens = (cacheCreationTokens || 0) + part.tokens.cache.write;
+        if (part.snapshot && !gitSnapshot) {
+          gitSnapshot = part.snapshot;
         }
       }
     }
@@ -472,6 +474,7 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
       cacheCreationTokens,
       totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
       totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
+      gitSnapshot,
     });
   }
 
