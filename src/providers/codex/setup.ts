@@ -12,7 +12,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 /** Current plugin version - update when upgrading */
-export const PLUGIN_VERSION = '4.0.2';
+export const PLUGIN_VERSION = '4.4.0';
 
 /**
  * Full OpenCode configuration with the Codex auth plugin

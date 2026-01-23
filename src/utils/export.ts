@@ -33,15 +33,41 @@ export function generateFilename(conv: Conversation): string {
   return `${prefix}${title}.md`;
 }
 
+const WORKTREE_PARENT_DIRS = ['.conductor', '.worktrees', '.git-worktrees'];
+
 /**
- * Get project name from workspace path
+ * Get the main repository name from a workspace path.
+ * Handles git worktree patterns where worktrees live in a hidden subdirectory:
+ * - /path/to/repo/.conductor/branch-name -> "repo"
+ * - /path/to/repo/.worktrees/feature -> "repo"
+ * - /path/to/.cursor/worktrees/repo/hash -> "repo"
  */
-export function getProjectName(workspacePath: string | undefined): string {
+export function getRepoName(workspacePath: string | undefined): string {
   if (!workspacePath) return '';
-  // Remove trailing slashes before splitting
   const normalized = workspacePath.replace(/\/+$/, '');
   const parts = normalized.split('/');
-  return parts[parts.length - 1] || workspacePath;
+
+  const cursorIdx = parts.findIndex((p) => p === '.cursor');
+  if (cursorIdx >= 0 && parts[cursorIdx + 1] === 'worktrees') {
+    return parts[cursorIdx + 2] || '';
+  }
+
+  for (const worktreeDir of WORKTREE_PARENT_DIRS) {
+    const idx = parts.findIndex((p) => p === worktreeDir);
+    if (idx > 0) {
+      return parts[idx - 1] || '';
+    }
+  }
+
+  return parts[parts.length - 1] || '';
+}
+
+/**
+ * Get project name from workspace path.
+ * @deprecated Use getRepoName for repository name extraction
+ */
+export function getProjectName(workspacePath: string | undefined): string {
+  return getRepoName(workspacePath);
 }
 
 /**

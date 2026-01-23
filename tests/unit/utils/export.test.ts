@@ -6,6 +6,7 @@ import { describe, it, expect } from 'bun:test';
 import {
   generateFilename,
   getProjectName,
+  getRepoName,
   conversationToMarkdown,
   isValidDate,
   parseDate,
@@ -105,27 +106,47 @@ describe('generateFilename', () => {
   });
 });
 
-describe('getProjectName', () => {
-  it('extracts project name from full path', () => {
-    expect(getProjectName('/home/user/projects/myapp')).toBe('myapp');
+describe('getRepoName', () => {
+  it('extracts repo name from simple path', () => {
+    expect(getRepoName('/home/user/projects/myapp')).toBe('myapp');
   });
 
   it('handles paths with trailing slash', () => {
-    expect(getProjectName('/home/user/projects/myapp/')).toBe('myapp');
+    expect(getRepoName('/home/user/projects/myapp/')).toBe('myapp');
   });
 
   it('returns empty string for undefined path', () => {
-    expect(getProjectName(undefined)).toBe('');
+    expect(getRepoName(undefined)).toBe('');
   });
 
-  it('handles single directory name', () => {
-    expect(getProjectName('myapp')).toBe('myapp');
+  it('extracts parent repo name from .conductor worktree path', () => {
+    expect(getRepoName('/Users/dev/Nooks.in/.conductor/thebes')).toBe('Nooks.in');
+    expect(getRepoName('/Users/dev/myrepo/.conductor/feature-branch')).toBe('myrepo');
   });
 
-  it('handles Windows-style paths', () => {
-    // The function uses '/' split, so Windows paths would need separate handling
-    // This test documents current behavior
-    expect(getProjectName('C:\\Users\\project')).toBe('C:\\Users\\project');
+  it('extracts parent repo name from .worktrees path', () => {
+    expect(getRepoName('/Users/dev/myrepo/.worktrees/feature')).toBe('myrepo');
+  });
+
+
+
+  it('extracts parent repo name from .git-worktrees path', () => {
+    expect(getRepoName('/Users/dev/myrepo/.git-worktrees/hotfix')).toBe('myrepo');
+  });
+
+  it('extracts repo name from .cursor/worktrees path', () => {
+    expect(getRepoName('/Users/dev/.cursor/worktrees/myrepo/abc123')).toBe('myrepo');
+  });
+
+  it('handles nested worktree paths with subdirs', () => {
+    expect(getRepoName('/Users/dev/Documents/Nooks.in/.conductor/branch-name/subdir')).toBe('Nooks.in');
+  });
+});
+
+describe('getProjectName (deprecated)', () => {
+  it('delegates to getRepoName', () => {
+    expect(getProjectName('/home/user/projects/myapp')).toBe('myapp');
+    expect(getProjectName('/Users/dev/Nooks.in/.conductor/thebes')).toBe('Nooks.in');
   });
 });
 
