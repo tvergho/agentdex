@@ -42,6 +42,7 @@ import { configCommand } from './cli/commands/config';
 import { embedCommand } from './cli/commands/embed';
 import { chatCommand } from './cli/commands/chat';
 import { billingImportCommand, billingStatsCommand, billingSyncCommand } from './cli/commands/billing';
+import { reviewCommand } from './cli/commands/review';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version: string };
@@ -146,6 +147,43 @@ program
   .option('-p, --print', 'Print mode: output response to stdout without TUI')
   .action((queryParts: string[], options: { print?: boolean }) => 
     chatCommand({ query: queryParts.join(' '), print: options.print }));
+
+program
+  .command('review [branch]')
+  .description('Correlate git commits with chat conversations')
+  .option('-b, --base <branch>', 'Base branch to compare against', 'main')
+  .option('-l, --limit <number>', 'Maximum number of commits to analyze', '100')
+  .option('-r, --repo <path>', 'Repository path (defaults to current directory)')
+  .option('-j, --json', 'Output as JSON')
+  .option('-e, --export <path>', 'Export review as markdown to directory')
+  .action(reviewCommand);
+
+program
+  .command('review-web <exportPath>')
+  .description('Start web server for existing review export')
+  .option('-p, --port <number>', 'Port to run server on', '3456')
+  .action(async (exportPath: string, options: { port?: string }) => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const dataPath = path.default.join(exportPath, 'data.json');
+
+    if (!fs.default.existsSync(dataPath)) {
+      console.error(`Error: ${dataPath} not found. Run 'dex review --export ${exportPath}' first.`);
+      process.exit(1);
+    }
+
+    const data = JSON.parse(fs.default.readFileSync(dataPath, 'utf-8'));
+    const { startReviewServer } = await import('./cli/commands/review-web/server.js');
+    const { default: open } = await import('open');
+
+    const port = parseInt(options.port || '3456', 10);
+    const { port: actualPort } = await startReviewServer({ data, port });
+    const url = `http://localhost:${actualPort}`;
+
+    console.log(`\n🌐 Review server running at ${url}`);
+    console.log('   Press Ctrl+C to stop\n');
+    await open(url);
+  });
 
 const billing = program
   .command('billing')

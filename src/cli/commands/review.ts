@@ -702,6 +702,9 @@ export async function reviewCommand(branch: string | undefined, options: ReviewO
 
   if (options.export) {
     const { exportReviewData, writeMarkdownExport } = await import('./review-export.js');
+    const { startReviewServer } = await import('./review-web/server.js');
+    const { default: open } = await import('open');
+
     const exportData = await exportReviewData(
       gitRoot,
       targetBranch,
@@ -711,7 +714,18 @@ export async function reviewCommand(branch: string | undefined, options: ReviewO
       result.commitCoverage,
       branchDiff
     );
+
     writeMarkdownExport(exportData, options.export);
+
+    const { port } = await startReviewServer({ data: exportData });
+    const url = `http://localhost:${port}`;
+
+    console.log(`\n🌐 Review server running at ${url}`);
+    console.log('   Press Ctrl+C to stop\n');
+
+    await open(url);
+
+    await new Promise(() => {});
   } else if (options.json) {
     printJsonOutput(result);
   } else {

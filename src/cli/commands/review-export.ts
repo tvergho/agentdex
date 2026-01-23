@@ -13,6 +13,8 @@ interface ExportConversation {
   date: string;
   messageCount: number;
   messages: Message[];
+  confidence: 'high' | 'medium' | 'low';
+  matchReasons: string[];
 }
 
 interface LineAttribution {
@@ -44,7 +46,7 @@ interface BranchDiffExport {
   lineAttributions: LineAttribution[];
 }
 
-interface ExportData {
+export interface ExportData {
   branch: string;
   baseBranch: string;
   exportedAt: string;
@@ -70,6 +72,8 @@ export async function exportReviewData(
     conversation: Conversation;
     commits: CommitInfo[];
     allCodeLines: Set<string>;
+    confidence: 'high' | 'medium' | 'low';
+    matchReasons: string[];
   }>,
   commitCoverage: Array<{
     commit: CommitInfo;
@@ -116,38 +120,39 @@ export async function exportReviewData(
       date: match.conversation.updatedAt || match.conversation.createdAt || '',
       messageCount: match.conversation.messageCount,
       messages,
+      confidence: match.confidence,
+      matchReasons: match.matchReasons,
     });
   }
 
   let branchDiffExport: BranchDiffExport | null = null;
   
   if (branchDiff) {
-    const branchDiffLines = extractAddedLines(branchDiff.rawDiff);
+    const branchDiffLines = extractAddedLinesWithPaths(branchDiff.rawDiff);
     const branchLineAttributions: LineAttribution[] = [];
-    const attributedLineContents = new Set<string>();
+    const attributedLineKeys = new Set<string>();
 
     for (const match of conversations) {
-      for (let i = 0; i < branchDiffLines.length; i++) {
-        const diffLine = branchDiffLines[i];
-        if (!diffLine) continue;
-        if (attributedLineContents.has(diffLine)) continue;
+      for (const diffLine of branchDiffLines) {
+        const lineKey = `${diffLine.filePath}:${diffLine.lineNumber}`;
+        if (attributedLineKeys.has(lineKey)) continue;
 
         let matched = false;
         for (const codeLine of match.allCodeLines) {
-          if (diffLine.includes(codeLine) || codeLine.includes(diffLine)) {
+          if (diffLine.content.includes(codeLine) || codeLine.includes(diffLine.content)) {
             matched = true;
             break;
           }
         }
 
         if (matched) {
-          attributedLineContents.add(diffLine);
+          attributedLineKeys.add(lineKey);
           branchLineAttributions.push({
-            lineNumber: i,
-            lineContent: diffLine,
+            lineNumber: diffLine.lineNumber,
+            lineContent: diffLine.content,
             conversationId: match.conversation.id,
             conversationTitle: match.conversation.title,
-            fileEditPath: '',
+            fileEditPath: diffLine.filePath,
           });
         }
       }
@@ -183,17 +188,43 @@ export async function exportReviewData(
   };
 }
 
-function extractAddedLines(diff: string): string[] {
-  const lines: string[] = [];
+interface ExtractedLine {
+  content: string;
+  filePath: string;
+  lineNumber: number;
+}
+
+function extractAddedLinesWithPaths(diff: string): ExtractedLine[] {
+  const results: ExtractedLine[] = [];
+  let currentFile = '';
+  let lineNumber = 0;
+  
   for (const line of diff.split('\n')) {
+    if (line.startsWith('+++ b/')) {
+      currentFile = line.slice(6);
+      continue;
+    }
+    
+    if (line.startsWith('@@')) {
+      const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+      if (match && match[1]) {
+        lineNumber = parseInt(match[1], 10) - 1;
+      }
+      continue;
+    }
+    
     if (line.startsWith('+') && !line.startsWith('+++')) {
+      lineNumber++;
       const content = line.slice(1).trim();
       if (content.length > 0) {
-        lines.push(content);
+        results.push({ content, filePath: currentFile, lineNumber });
       }
+    } else if (!line.startsWith('-') && !line.startsWith('\\')) {
+      lineNumber++;
     }
   }
-  return lines;
+  
+  return results;
 }
 
 function escapeMarkdown(text: string): string {
@@ -336,7 +367,18 @@ export function writeMarkdownExport(data: ExportData, outputDir: string): void {
   writeFileSync(jsonPath, jsonData);
 
   const htmlPath = join(outputDir, 'index.html');
-  const htmlContent = generateReviewHtml(JSON.stringify(data));
+  const trimmedData = {
+    ...data,
+    conversations: data.conversations.map((conv) => ({
+      ...conv,
+      messages: conv.messages.slice(0, 20).map((msg) => ({
+        ...msg,
+        content: msg.content?.slice(0, 2000) || '',
+      })),
+    })),
+    commits: data.commits.slice(0, 50).map((c) => ({ ...c, diff: '' })),
+  };
+  const htmlContent = generateReviewHtml(JSON.stringify(trimmedData));
   writeFileSync(htmlPath, htmlContent);
 
   console.log(`\n✓ Exported to ${outputDir}/`);
