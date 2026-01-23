@@ -286,8 +286,8 @@ function OverviewTab({
                 <Text color="gray">{formatLargeNumber(s.messages).padStart(10)}</Text>
                 <Text color="gray">{formatLargeNumber(s.tokens).padStart(10)}</Text>
                 <Text>  </Text>
-                <Text color={sourceColor}>{'█'.repeat(filledWidth)}</Text>
-                <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                <Text color={sourceColor}>{'█'.repeat(Math.max(0, filledWidth))}</Text>
+                <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
               </Box>
             );
           })}
@@ -407,7 +407,7 @@ function TokensTab({
                 <Box key={idx}>
                   <Text>{displayLabel} </Text>
                   <Text color="cyan">{'█'.repeat(filledWidth)}</Text>
-                  <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                  <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
                   <Text color="gray"> {formatLargeNumber(total).padStart(6)}</Text>
                   {m.cost !== undefined && <Text color="green">{costStr}</Text>}
                 </Box>
@@ -498,7 +498,7 @@ function TokensTab({
                   <Box key={idx}>
                     <Text>{displayLabel} </Text>
                     <Text color="yellow">{'█'.repeat(filledWidth)}</Text>
-                    <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                    <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
                     <Text color="gray"> {formatLargeNumber(m.totalTokens).padStart(6)}</Text>
                   </Box>
                 );
@@ -536,7 +536,7 @@ function TokensTab({
                   </Text>
                   <Text color="cyan">{formatLargeNumber(total).padStart(6)}  </Text>
                   <Text color="cyan">{'█'.repeat(filledWidth)}</Text>
-                  <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                  <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
                   <Text bold={isSelected}>  {title}</Text>
                 </Box>
               );
@@ -674,8 +674,8 @@ function ProjectsTab({
                   <Text color="gray">{String(p.conversations).padStart(8)}</Text>
                   <Text color="gray">{formatLargeNumber(total).padStart(10)}</Text>
                   <Text>  </Text>
-                  <Text color="cyan">{'█'.repeat(filledWidth)}</Text>
-                  <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                  <Text color="cyan">{'█'.repeat(Math.max(0, filledWidth))}</Text>
+                  <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
                 </Box>
               );
             })}
@@ -828,8 +828,8 @@ function FilesTab({
                 return (
                   <Box key={idx}>
                     <Text>{item.label.padEnd(8)}</Text>
-                    <Text color={item.color as any}>{'█'.repeat(filledWidth)}</Text>
-                    <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                    <Text color={item.color as any}>{'█'.repeat(Math.max(0, filledWidth))}</Text>
+                    <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
                     <Text color="gray"> {String(percent).padStart(3)}%</Text>
                   </Box>
                 );
@@ -858,8 +858,8 @@ function FilesTab({
                 return (
                   <Box key={idx}>
                     <Text color="cyan">{ft.extension.padEnd(10)}</Text>
-                    <Text color="cyan">{'█'.repeat(filledWidth)}</Text>
-                    <Text color="gray">{'░'.repeat(emptyWidth)}</Text>
+                    <Text color="cyan">{'█'.repeat(Math.max(0, filledWidth))}</Text>
+                    <Text color="gray">{'░'.repeat(Math.max(0, emptyWidth))}</Text>
                     <Text color="gray"> {String(ft.editCount).padStart(4)}</Text>
                   </Box>
                 );
