@@ -13,7 +13,7 @@ const DEV_OPENCODE_BIN = process.env.DEX_OPENCODE_BIN;
 // Fork binary config - only darwin-arm64 is built from fork
 const FORK_OWNER = 'tvergho';
 const FORK_REPO = 'opencode';
-const RELEASE_VERSION = 'v1.0.0-fork.7';
+const RELEASE_VERSION = 'v1.0.0-fork.8';
 
 // Check if we should use the fork binary (only darwin-arm64)
 function shouldUseForkBinary(): boolean {
