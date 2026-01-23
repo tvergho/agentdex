@@ -9,3 +9,4 @@ export { StatusBar, type StatusBarProps, type SyncStatus, type SyncPhase } from 
 export { SelectionIndicator } from './SelectableRow';
 export { SourceBadge, getSourceColor, type SourceBadgeProps } from './SourceBadge';
 export { SourceTokenTrend, SourceTokenBars, type SourceTokenTrendProps } from './SourceTokenTrend';
+export { FullSourceTimeline, type FullSourceTimelineProps } from './FullSourceTimeline';

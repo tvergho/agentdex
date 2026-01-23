@@ -132,9 +132,14 @@ export interface RawConversation {
   messages: RawMessage[];
   files: RawFile[];
   fileEdits: RawFileEdit[];
+  // PEAK view (max context window, no compaction in Codex)
   totalInputTokens?: number;
   totalOutputTokens?: number;
   totalCacheReadTokens?: number;
+  // SUM view (total across all API calls, matches billing)
+  sumInputTokens?: number;
+  sumOutputTokens?: number;
+  sumCacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
 }
@@ -552,46 +557,95 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
   }
 
   // Extract token usage from token_count events
-  // For input: use PEAK of last_token_usage (each API call's context, find max)
-  // For output: use cumulative total_token_usage (each output is new content)
-  let peakTotalContext = 0;
-  let peakCacheReadTokens = 0;
-  let totalOutputTokens: number | undefined;
-
+  // Track both PEAK (sum-of-peaks across compaction segments) and SUM (cumulative) views
   const tokenCountEntries = entries.filter(
     (e) => e.type === 'event_msg' && (e.payload as CodexTokenCount).type === 'token_count'
   );
 
-  for (const entry of tokenCountEntries) {
-    const tokenPayload = entry.payload as CodexTokenCount;
+  // SUM view - cumulative totals from last event (matches billing)
+  let sumInputTokens: number | undefined;
+  let sumCacheReadTokens: number | undefined;
+  let sumOutputTokens: number | undefined;
+
+  // PEAK view (sum-of-peaks) - track peak within each segment, sum across segments
+  // A segment boundary is detected when context drops significantly (compaction heuristic)
+  const COMPACTION_DROP_THRESHOLD = 0.5; // 50% drop indicates compaction
+  let segmentPeakInput = 0;
+  let segmentPeakCacheRead = 0;
+  let segmentPeakOutput = 0;
+  let segmentPeakContext = 0;
+  let prevContext = 0;
+
+  // Accumulated peaks across all segments
+  let totalPeakInput = 0;
+  let totalPeakCacheRead = 0;
+  let totalPeakOutput = 0;
+
+  // Track previous cumulative to calculate per-call deltas
+  let prevCumulativeInput = 0;
+  let prevCumulativeCached = 0;
+
+  for (const tokenEntry of tokenCountEntries) {
+    const tokenPayload = tokenEntry?.payload as CodexTokenCount;
+    const totalUsage = tokenPayload?.info?.total_token_usage;
     const lastUsage = tokenPayload?.info?.last_token_usage;
 
-    if (lastUsage) {
-      // Track peak input context
-      const inputTokens = lastUsage.input_tokens ?? 0;
-      const cacheTokens = lastUsage.cached_input_tokens ?? 0;
-      const totalContext = inputTokens + cacheTokens;
-
-      if (totalContext > peakTotalContext) {
-        peakTotalContext = totalContext;
-        peakCacheReadTokens = cacheTokens;
-      }
-    }
-  }
-
-  // Get cumulative output from last event
-  if (tokenCountEntries.length > 0) {
-    const lastTokenEntry = tokenCountEntries[tokenCountEntries.length - 1];
-    const tokenPayload = lastTokenEntry?.payload as CodexTokenCount;
-    const totalUsage = tokenPayload?.info?.total_token_usage;
-
     if (totalUsage) {
-      totalOutputTokens = totalUsage.output_tokens;
+      // Update SUM view with latest cumulative
+      sumInputTokens = totalUsage.input_tokens;
+      sumCacheReadTokens = totalUsage.cached_input_tokens;
+      sumOutputTokens = totalUsage.output_tokens;
+
+      // Calculate per-call context (delta from previous cumulative)
+      const currInput = totalUsage.input_tokens || 0;
+      const currCached = totalUsage.cached_input_tokens || 0;
+
+      // Use last_token_usage if available for more accurate per-call data
+      const callInput = lastUsage?.input_tokens ?? (currInput - prevCumulativeInput);
+      const callCached = lastUsage?.cached_input_tokens ?? (currCached - prevCumulativeCached);
+      const callContext = callInput + callCached;
+      const callOutput = lastUsage?.output_tokens ?? totalUsage.output_tokens ?? 0;
+
+      // Detect compaction: significant drop in context size
+      const isCompaction = prevContext > 0 && callContext > 0 &&
+        callContext < prevContext * COMPACTION_DROP_THRESHOLD;
+
+      if (isCompaction) {
+        // End previous segment - add its peak to totals
+        totalPeakInput += segmentPeakInput;
+        totalPeakCacheRead += segmentPeakCacheRead;
+        totalPeakOutput += segmentPeakOutput;
+
+        // Start new segment
+        segmentPeakInput = callInput;
+        segmentPeakCacheRead = callCached;
+        segmentPeakOutput = callOutput;
+        segmentPeakContext = callContext;
+      } else {
+        // Track peak context within current segment
+        if (callContext > segmentPeakContext) {
+          segmentPeakContext = callContext;
+          segmentPeakInput = callInput;
+          segmentPeakCacheRead = callCached;
+          segmentPeakOutput = callOutput;
+        }
+      }
+
+      prevContext = callContext;
+      prevCumulativeInput = currInput;
+      prevCumulativeCached = currCached;
     }
   }
 
-  const totalInputTokens = peakTotalContext > 0 ? peakTotalContext : undefined;
-  const totalCacheReadTokens = peakCacheReadTokens > 0 ? peakCacheReadTokens : undefined;
+  // Add the final segment's peak
+  totalPeakInput += segmentPeakInput;
+  totalPeakCacheRead += segmentPeakCacheRead;
+  totalPeakOutput += segmentPeakOutput;
+
+  // Use sum-of-peaks for PEAK view, fallback to SUM if no peaks tracked
+  const totalInputTokens = totalPeakInput > 0 ? totalPeakInput : sumInputTokens;
+  const totalCacheReadTokens = totalPeakCacheRead > 0 ? totalPeakCacheRead : sumCacheReadTokens;
+  const totalOutputTokens = totalPeakOutput > 0 ? totalPeakOutput : sumOutputTokens;
 
   if (messages.length === 0) {
     return null;
@@ -624,9 +678,14 @@ export function extractConversation(sessionId: string, filePath: string): RawCon
     messages,
     files: allFiles,
     fileEdits: allEdits,
+    // PEAK view (max context window)
     totalInputTokens,
     totalOutputTokens,
     totalCacheReadTokens,
+    // SUM view (cumulative, matches billing)
+    sumInputTokens,
+    sumOutputTokens,
+    sumCacheReadTokens,
     totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
     totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
   };

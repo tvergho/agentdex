@@ -104,8 +104,12 @@ export class CursorAdapter implements SourceAdapter {
       updatedAt,
       messageCount: countCombinedMessages(mainBubbles.map(b => ({ role: b.type }))),
       sourceRef,
+      // PEAK view (Cursor conversation data doesn't track per-call tokens reliably)
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
+      // SUM view (same as PEAK for Cursor - use billing_events for accurate data)
+      sumInputTokens: raw.sumInputTokens,
+      sumOutputTokens: raw.sumOutputTokens,
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
     };

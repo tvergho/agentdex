@@ -161,10 +161,16 @@ export interface RawConversation {
   messages: RawMessage[];
   files: RawFile[];
   fileEdits: RawFileEdit[];
+  // PEAK view (sum-of-peaks, but no compaction in OpenCode so just single peak)
   totalInputTokens?: number;
   totalOutputTokens?: number;
   totalCacheCreationTokens?: number;
   totalCacheReadTokens?: number;
+  // SUM view (total across all API calls, matches billing)
+  sumInputTokens?: number;
+  sumOutputTokens?: number;
+  sumCacheCreationTokens?: number;
+  sumCacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
 }
@@ -482,23 +488,79 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
     return null;
   }
 
-  // Calculate conversation-level token totals
-  // For input context, find the peak (each API call has full context)
-  // For output tokens, SUM (each output is new content)
-  let peakMessage: RawMessage | undefined;
-  let peakContext = 0;
+  // Calculate both PEAK and SUM token views:
+  // - PEAK (sum-of-peaks): Sum of peak context from each segment between compactions
+  //   Compaction is detected heuristically when context drops by >50%
+  // - SUM: Total across all API calls (matches billing methodology)
+
+  // SUM view - total across all API calls
+  let sumInputTokens = 0;
+  let sumCacheCreationTokens = 0;
+  let sumCacheReadTokens = 0;
+  let sumOutputTokens = 0;
+
+  // PEAK view (sum-of-peaks) - track peak within each segment, sum across segments
+  // A segment boundary is detected when context drops significantly (compaction heuristic)
+  const COMPACTION_DROP_THRESHOLD = 0.5; // 50% drop indicates compaction
+  let segmentPeakInput = 0;
+  let segmentPeakCacheCreation = 0;
+  let segmentPeakCacheRead = 0;
+  let segmentPeakOutput = 0;
+  let segmentPeakContext = 0;
+  let prevContext = 0;
+
+  // Accumulated peaks across all segments
+  let totalPeakInput = 0;
+  let totalPeakCacheCreation = 0;
+  let totalPeakCacheRead = 0;
+  let totalPeakOutput = 0;
+
   for (const m of rawMessages) {
-    const totalContext =
-      (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
-    if (totalContext > peakContext) {
-      peakContext = totalContext;
-      peakMessage = m;
+    // Sum all tokens (billing view)
+    sumInputTokens += m.inputTokens || 0;
+    sumCacheCreationTokens += m.cacheCreationTokens || 0;
+    sumCacheReadTokens += m.cacheReadTokens || 0;
+    sumOutputTokens += m.outputTokens || 0;
+
+    // Calculate this message's context
+    const msgContext = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
+
+    // Detect compaction: significant drop in context size
+    const isCompaction = prevContext > 0 && msgContext > 0 &&
+      msgContext < prevContext * COMPACTION_DROP_THRESHOLD;
+
+    if (isCompaction) {
+      // End previous segment - add its peak to totals
+      totalPeakInput += segmentPeakInput;
+      totalPeakCacheCreation += segmentPeakCacheCreation;
+      totalPeakCacheRead += segmentPeakCacheRead;
+      totalPeakOutput += segmentPeakOutput;
+
+      // Start new segment with this message's context
+      segmentPeakInput = m.inputTokens || 0;
+      segmentPeakCacheCreation = m.cacheCreationTokens || 0;
+      segmentPeakCacheRead = m.cacheReadTokens || 0;
+      segmentPeakOutput = m.outputTokens || 0;
+      segmentPeakContext = msgContext;
+    } else {
+      // Track peak context within current segment
+      if (msgContext > segmentPeakContext) {
+        segmentPeakContext = msgContext;
+        segmentPeakInput = m.inputTokens || 0;
+        segmentPeakCacheCreation = m.cacheCreationTokens || 0;
+        segmentPeakCacheRead = m.cacheReadTokens || 0;
+        segmentPeakOutput = m.outputTokens || 0;
+      }
     }
+
+    prevContext = msgContext;
   }
-  const totalInputTokens = peakContext || 0;
-  const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
-  const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
-  const totalOutputTokens = rawMessages.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
+
+  // Don't forget to add the final segment's peak
+  totalPeakInput += segmentPeakInput;
+  totalPeakCacheCreation += segmentPeakCacheCreation;
+  totalPeakCacheRead += segmentPeakCacheRead;
+  totalPeakOutput += segmentPeakOutput;
 
   // Calculate total line changes
   const totalLinesAdded = allEdits.reduce((sum, e) => sum + e.linesAdded, 0);
@@ -516,10 +578,16 @@ export function extractConversation(session: OpenCodeSession): RawConversation |
     messages: rawMessages,
     files: allFiles,
     fileEdits: allEdits,
-    totalInputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
-    totalOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
-    totalCacheCreationTokens: totalCacheCreationTokens > 0 ? totalCacheCreationTokens : undefined,
-    totalCacheReadTokens: totalCacheReadTokens > 0 ? totalCacheReadTokens : undefined,
+    // PEAK view (sum-of-peaks across detected compaction segments)
+    totalInputTokens: totalPeakInput > 0 ? totalPeakInput : undefined,
+    totalOutputTokens: totalPeakOutput > 0 ? totalPeakOutput : undefined,
+    totalCacheCreationTokens: totalPeakCacheCreation > 0 ? totalPeakCacheCreation : undefined,
+    totalCacheReadTokens: totalPeakCacheRead > 0 ? totalPeakCacheRead : undefined,
+    // SUM view (total across all API calls, matches billing)
+    sumInputTokens: sumInputTokens > 0 ? sumInputTokens : undefined,
+    sumOutputTokens: sumOutputTokens > 0 ? sumOutputTokens : undefined,
+    sumCacheCreationTokens: sumCacheCreationTokens > 0 ? sumCacheCreationTokens : undefined,
+    sumCacheReadTokens: sumCacheReadTokens > 0 ? sumCacheReadTokens : undefined,
     totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
     totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
   };

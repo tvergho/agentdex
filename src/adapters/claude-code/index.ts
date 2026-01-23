@@ -65,10 +65,16 @@ export class ClaudeCodeAdapter implements SourceAdapter {
       messageCount: countCombinedMessages(mainMessages),
       sourceRef,
       gitBranch: raw.gitBranch,
+      // PEAK view (sum-of-peaks across compaction segments)
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
       totalCacheCreationTokens: raw.totalCacheCreationTokens,
       totalCacheReadTokens: raw.totalCacheReadTokens,
+      // SUM view (total across all API calls, matches billing)
+      sumInputTokens: raw.sumInputTokens,
+      sumOutputTokens: raw.sumOutputTokens,
+      sumCacheCreationTokens: raw.sumCacheCreationTokens,
+      sumCacheReadTokens: raw.sumCacheReadTokens,
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
       compactCount: raw.compactCount,

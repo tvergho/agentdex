@@ -71,10 +71,14 @@ export class CodexAdapter implements SourceAdapter {
       gitBranch: raw.gitBranch,
       gitCommitHash: raw.gitCommitHash,
       gitRepositoryUrl: raw.gitRepositoryUrl,
-      // Token totals from session
+      // PEAK view (max context window)
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
       totalCacheReadTokens: raw.totalCacheReadTokens,
+      // SUM view (cumulative, matches billing)
+      sumInputTokens: raw.sumInputTokens,
+      sumOutputTokens: raw.sumOutputTokens,
+      sumCacheReadTokens: raw.sumCacheReadTokens,
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
     };

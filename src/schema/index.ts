@@ -80,6 +80,8 @@ export const Message = z.object({
   totalLinesRemoved: z.number().optional(),
   // Compact summary flag (Claude Code only) - marks messages that are context restoration summaries
   isCompactSummary: z.boolean().optional(),
+  // Git snapshot - commit hash at time of message (OpenCode step-start/step-finish)
+  gitSnapshot: z.string().optional(),
 });
 export type Message = z.infer<typeof Message>;
 
@@ -109,16 +111,27 @@ export const Conversation = z.object({
   updatedAt: z.string().datetime().optional(),
   messageCount: z.number(),
   sourceRef: SourceRef,
-  // Aggregated token usage
+  // Token usage - PEAK context view (largest context window in conversation)
+  // Use for understanding context window utilization
   totalInputTokens: z.number().optional(),
   totalOutputTokens: z.number().optional(),
   totalCacheCreationTokens: z.number().optional(),
   totalCacheReadTokens: z.number().optional(),
+  // Token usage - SUM view (total across all API calls, matches billing)
+  // Use for cost tracking and billing comparison
+  sumInputTokens: z.number().optional(),
+  sumOutputTokens: z.number().optional(),
+  sumCacheCreationTokens: z.number().optional(),
+  sumCacheReadTokens: z.number().optional(),
   // Line edit tracking (aggregated from file_edits)
   totalLinesAdded: z.number().optional(),
   totalLinesRemoved: z.number().optional(),
   // Context compaction tracking (Claude Code only)
   compactCount: z.number().optional(),
+  // Git metadata for commit attribution
+  gitBranch: z.string().optional(),
+  gitCommitHash: z.string().optional(),
+  gitRepositoryUrl: z.string().optional(),
 });
 export type Conversation = z.infer<typeof Conversation>;
 

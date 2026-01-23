@@ -43,8 +43,14 @@ export interface RawConversation {
   model?: string;
   files: RawFile[];
   fileEdits: RawFileEdit[];
+  // PEAK view (max context window)
+  // Note: Cursor conversation data doesn't track per-call tokens reliably
+  // Use billing_events table for accurate SUM data
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  // SUM view (same as PEAK for Cursor - use billing_events for accurate data)
+  sumInputTokens?: number;
+  sumOutputTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
 }
@@ -957,12 +963,45 @@ async function extractFromDb(
       
       const projectName = extractProjectName(workspacePath);
 
-      // Calculate token usage
-      // For input tokens, use MAX instead of SUM because input_tokens represents the full context
-      // sent in each API call (including all prior history). Summing would count the same context
-      // multiple times. MAX shows the peak context window used.
-      // For output tokens, SUM is correct since each output is new content generated.
-      const totalInputTokens = Math.max(0, ...bubbles.map((b) => b.inputTokens || 0));
+      // Calculate token usage with sum-of-peaks for PEAK view
+      // For input tokens, track peak context per segment (between compactions).
+      // A compaction is detected when context drops by 50% or more.
+      // SUM view totals all tokens across all API calls (matches billing).
+      // For output tokens, SUM is always correct since each output is new content.
+      const COMPACTION_DROP_THRESHOLD = 0.5;
+
+      let segmentPeakInput = 0;
+      let totalPeakInput = 0;
+      let sumInputTokens = 0;
+      let prevInput = 0;
+
+      for (const bubble of bubbles) {
+        const inputTokens = bubble.inputTokens || 0;
+
+        // Accumulate sum (all API calls)
+        sumInputTokens += inputTokens;
+
+        // Check for compaction (50% or greater drop in context)
+        const isCompaction = prevInput > 0 && inputTokens > 0 &&
+          inputTokens < prevInput * COMPACTION_DROP_THRESHOLD;
+
+        if (isCompaction) {
+          // End previous segment - add its peak to totals
+          totalPeakInput += segmentPeakInput;
+          segmentPeakInput = inputTokens;
+        } else {
+          // Track peak within current segment
+          if (inputTokens > segmentPeakInput) {
+            segmentPeakInput = inputTokens;
+          }
+        }
+
+        prevInput = inputTokens;
+      }
+
+      // Add the final segment's peak
+      totalPeakInput += segmentPeakInput;
+
       const totalOutputTokens = bubbles.reduce((sum, b) => sum + (b.outputTokens || 0), 0);
 
       conversations.push({
@@ -977,8 +1016,12 @@ async function extractFromDb(
         model: data.modelConfig?.modelName,
         files,
         fileEdits: allFileEdits,
-        totalInputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
+        // PEAK view (sum of peaks across compaction segments)
+        totalInputTokens: totalPeakInput > 0 ? totalPeakInput : undefined,
         totalOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
+        // SUM view (total across all API calls)
+        sumInputTokens: sumInputTokens > 0 ? sumInputTokens : undefined,
+        sumOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
         totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
         totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
       });

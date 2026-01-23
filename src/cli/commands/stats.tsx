@@ -12,7 +12,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { withFullScreen, useScreenSize } from 'fullscreen-ink';
 import { connect } from '../../db/index';
 import { messageRepo, filesRepo, messageFilesRepo, conversationRepo } from '../../db/repository';
-import { ExportActionMenu, StatusToast, getSourceColor, SourceTokenTrend } from '../components/index';
+import { ExportActionMenu, StatusToast, getSourceColor, SourceTokenTrend, FullSourceTimeline } from '../components/index';
 import {
   exportConversationsToFile,
   exportConversationsToClipboard,
@@ -62,6 +62,7 @@ import {
   type FileStats,
   type EditTypeBreakdown,
   type FileTypeStats,
+  type TokenView,
 } from '../../db/analytics';
 import { formatLargeNumber } from '../components/MetricCard';
 import { Sparkline } from '../components/Sparkline';
@@ -87,7 +88,7 @@ interface StatsOptions {
   json?: boolean;
 }
 
-type TabId = 'overview' | 'tokens' | 'activity' | 'projects' | 'files';
+type TabId = 'overview' | 'tokens' | 'activity' | 'projects' | 'files' | 'timeline';
 
 interface AllData {
   overview: OverviewStats;
@@ -995,6 +996,9 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
   const [statusType, setStatusType] = useState<'success' | 'error'>('success');
   const [statusVisible, setStatusVisible] = useState(false);
 
+  // Token view toggle (peak = sum-of-peaks, sum = billing/cumulative)
+  const [tokenView, setTokenView] = useState<'peak' | 'sum'>('sum');
+
   // Use refs to track values and avoid stale closures in useInput
   const messageCountRef = useRef(0);
   messageCountRef.current = combinedMessages.length;
@@ -1041,10 +1045,10 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
         const periodFilter = createPeriodFilter(period);
 
         const [overview, daily, dailyTokensBySource, sources, models, unifiedModels, topConversations, lines, cache, hourly, weekly, streak, recentConversations, projectStats, fileStats, editTypeBreakdown, fileTypeStats] = await Promise.all([
-          getOverviewStats(periodFilter),
+          getOverviewStats(periodFilter, tokenView),
           getDailyActivity(periodFilter),
-          getDailyTokensBySource(periodFilter),
-          getStatsBySource(periodFilter),
+          getDailyTokensBySource(periodFilter, tokenView),
+          getStatsBySource(periodFilter, tokenView),
           getStatsByModel(periodFilter),
           getUnifiedModelStats(periodFilter),
           getTopConversationsByTokens(periodFilter, 5),
@@ -1106,7 +1110,7 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
       }
     }
     loadData();
-  }, [period]);
+  }, [period, tokenView]);
 
   // Get max index for current section
   const getMaxIndex = () => {
@@ -1240,6 +1244,12 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
     // Priority 1: Quit / Back
     if (input === 'q') {
       onBack();
+      return;
+    }
+
+    // Toggle token view (v key) - available in dashboard mode
+    if (input === 'v' && viewMode === 'dashboard') {
+      setTokenView(tv => tv === 'sum' ? 'peak' : 'sum');
       return;
     }
 
@@ -1502,16 +1512,20 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
         setActiveTab('files');
         return;
       }
+      if (input === '6') {
+        setActiveTab('timeline');
+        return;
+      }
 
       // Arrow key tab navigation
       if (key.leftArrow || input === 'h') {
-        const tabs: TabId[] = ['overview', 'tokens', 'activity', 'projects', 'files'];
+        const tabs: TabId[] = ['overview', 'tokens', 'activity', 'projects', 'files', 'timeline'];
         const idx = tabs.indexOf(activeTab);
         setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length]!);
         return;
       }
       if (key.rightArrow || input === 'l') {
-        const tabs: TabId[] = ['overview', 'tokens', 'activity', 'projects', 'files'];
+        const tabs: TabId[] = ['overview', 'tokens', 'activity', 'projects', 'files', 'timeline'];
         const idx = tabs.indexOf(activeTab);
         setActiveTab(tabs[(idx + 1) % tabs.length]!);
         return;
@@ -1569,6 +1583,7 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
     { id: 'activity', label: '3:Activity' },
     { id: 'projects', label: '4:Projects' },
     { id: 'files', label: '5:Files' },
+    { id: 'timeline', label: '6:Timeline' },
   ];
 
   const headerHeight = 4;
@@ -1813,7 +1828,11 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
       <Box flexDirection="column">
         <Box paddingX={1}>
           <Text bold color="white">Stats Dashboard</Text>
-          <Text dimColor> · Last {period} days</Text>
+          <Text dimColor> · Last {period} days · </Text>
+          <Text color={tokenView === 'sum' ? 'yellow' : 'cyan'}>
+            {tokenView === 'sum' ? '[$] Billing' : '[⚡] Peak'}
+          </Text>
+          <Text dimColor> (v to toggle)</Text>
         </Box>
         {/* Tab bar */}
         <Box paddingX={1}>
@@ -1874,6 +1893,13 @@ export function StatsContent({ width, height, period, onBack }: StatsContentProp
             height={contentHeight}
             focusSection={focusSection}
             selectedIndex={selectedIndex}
+          />
+        )}
+        {activeTab === 'timeline' && (
+          <FullSourceTimeline
+            data={data.dailyTokensBySource}
+            width={width - 2}
+            height={contentHeight}
           />
         )}
       </Box>

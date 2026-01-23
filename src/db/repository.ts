@@ -83,10 +83,16 @@ function conversationToRow(conv: Conversation): Record<string, unknown> {
     updated_at: conv.updatedAt ?? '',
     message_count: conv.messageCount,
     source_ref_json: JSON.stringify(conv.sourceRef),
+    // PEAK view (sum-of-peaks across compaction segments)
     total_input_tokens: conv.totalInputTokens ?? 0,
     total_output_tokens: conv.totalOutputTokens ?? 0,
     total_cache_creation_tokens: conv.totalCacheCreationTokens ?? 0,
     total_cache_read_tokens: conv.totalCacheReadTokens ?? 0,
+    // SUM view (total across all API calls, matches billing)
+    sum_input_tokens: conv.sumInputTokens ?? 0,
+    sum_output_tokens: conv.sumOutputTokens ?? 0,
+    sum_cache_creation_tokens: conv.sumCacheCreationTokens ?? 0,
+    sum_cache_read_tokens: conv.sumCacheReadTokens ?? 0,
     total_lines_added: conv.totalLinesAdded ?? 0,
     total_lines_removed: conv.totalLinesRemoved ?? 0,
     compact_count: conv.compactCount ?? 0,
@@ -110,10 +116,16 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     updatedAt: (row.updated_at as string) || undefined,
     messageCount: (row.message_count as number) || 0,
     sourceRef: safeJsonParse<SourceRef>(row.source_ref_json, defaultSourceRef),
+    // PEAK view (sum-of-peaks across compaction segments)
     totalInputTokens: (row.total_input_tokens as number) || undefined,
     totalOutputTokens: (row.total_output_tokens as number) || undefined,
     totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
     totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+    // SUM view (total across all API calls, matches billing)
+    sumInputTokens: (row.sum_input_tokens as number) || undefined,
+    sumOutputTokens: (row.sum_output_tokens as number) || undefined,
+    sumCacheCreationTokens: (row.sum_cache_creation_tokens as number) || undefined,
+    sumCacheReadTokens: (row.sum_cache_read_tokens as number) || undefined,
     totalLinesAdded: (row.total_lines_added as number) || undefined,
     totalLinesRemoved: (row.total_lines_removed as number) || undefined,
     compactCount: (row.compact_count as number) || undefined,
@@ -405,6 +417,7 @@ export const conversationRepo = {
     source?: string;
     model?: string;
     project?: string;
+    branch?: string;
     fromDate?: string;
     toDate?: string;
   } = {}): Promise<{ conversations: Conversation[]; total: number }> {
@@ -418,6 +431,9 @@ export const conversationRepo = {
       let filtered = results;
       if (opts.source) {
         filtered = filtered.filter((row) => (row.source as string) === opts.source);
+      }
+      if (opts.branch) {
+        filtered = filtered.filter((row) => (row.git_branch as string) === opts.branch);
       }
       if (opts.model) {
         const modelLower = opts.model.toLowerCase();

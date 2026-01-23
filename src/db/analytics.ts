@@ -9,6 +9,13 @@ import { isValidBillingEvent } from './repository';
 
 // --- Types ---
 
+/**
+ * Token counting methodology:
+ * - 'peak': Sum-of-peaks across compaction segments (total context budget consumed)
+ * - 'sum': Total across all API calls (matches billing methodology)
+ */
+export type TokenView = 'peak' | 'sum';
+
 export interface PeriodFilter {
   startDate: Date;
   endDate: Date;
@@ -137,8 +144,26 @@ export interface DailyTokensBySource {
 
 /**
  * Calculate total tokens from a conversation row (all 4 token types combined).
+ * @param conv - The conversation row from the database
+ * @param view - 'peak' for sum-of-peaks, 'sum' for billing-style total (default: 'sum')
  */
-function getTotalTokens(conv: Record<string, unknown>): number {
+function getTotalTokens(conv: Record<string, unknown>, view: TokenView = 'sum'): number {
+  if (view === 'sum') {
+    // SUM view: total across all API calls (matches billing)
+    // Falls back to peak values if sum values are 0 (old data)
+    const sumInput = (conv.sum_input_tokens as number) || 0;
+    const sumOutput = (conv.sum_output_tokens as number) || 0;
+    const sumCacheCreation = (conv.sum_cache_creation_tokens as number) || 0;
+    const sumCacheRead = (conv.sum_cache_read_tokens as number) || 0;
+    const sumTotal = sumInput + sumOutput + sumCacheCreation + sumCacheRead;
+
+    if (sumTotal > 0) {
+      return sumTotal;
+    }
+    // Fall back to peak if sum is 0 (old data without sum fields)
+  }
+
+  // PEAK view: sum-of-peaks across compaction segments
   return ((conv.total_input_tokens as number) || 0) +
     ((conv.total_output_tokens as number) || 0) +
     ((conv.total_cache_creation_tokens as number) || 0) +
@@ -243,10 +268,16 @@ function mapRowToConversation(row: Record<string, unknown>): Conversation {
     updatedAt: (row.updated_at as string) || undefined,
     messageCount: (row.message_count as number) || 0,
     sourceRef: row.source_ref_json ? JSON.parse(row.source_ref_json as string) : undefined,
+    // PEAK view (sum-of-peaks across compaction segments)
     totalInputTokens: (row.total_input_tokens as number) || undefined,
     totalOutputTokens: (row.total_output_tokens as number) || undefined,
     totalCacheCreationTokens: (row.total_cache_creation_tokens as number) || undefined,
     totalCacheReadTokens: (row.total_cache_read_tokens as number) || undefined,
+    // SUM view (total across all API calls, matches billing)
+    sumInputTokens: (row.sum_input_tokens as number) || undefined,
+    sumOutputTokens: (row.sum_output_tokens as number) || undefined,
+    sumCacheCreationTokens: (row.sum_cache_creation_tokens as number) || undefined,
+    sumCacheReadTokens: (row.sum_cache_read_tokens as number) || undefined,
     totalLinesAdded: (row.total_lines_added as number) || undefined,
     totalLinesRemoved: (row.total_lines_removed as number) || undefined,
     compactCount: (row.compact_count as number) || undefined,
@@ -255,9 +286,9 @@ function mapRowToConversation(row: Record<string, unknown>): Conversation {
 
 // --- Query Functions ---
 
-export async function getOverviewStats(period: PeriodFilter): Promise<OverviewStats> {
+export async function getOverviewStats(period: PeriodFilter, tokenView: TokenView = 'sum'): Promise<OverviewStats> {
   await connect();
-  
+
   const [rows, turnCounts] = await Promise.all([
     queryTableWithRetry(getConversationsTable, table => table.query().toArray()),
     getTurnCounts(period),
@@ -272,12 +303,62 @@ export async function getOverviewStats(period: PeriodFilter): Promise<OverviewSt
   let totalLinesRemoved = 0;
 
   for (const conv of filtered) {
+    const source = (conv.source as string) || 'unknown';
     messages += (conv.message_count as number) || 0;
-    totalInputTokens += ((conv.total_input_tokens as number) || 0) +
-      ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
-    totalOutputTokens += (conv.total_output_tokens as number) || 0;
     totalLinesAdded += (conv.total_lines_added as number) || 0;
     totalLinesRemoved += (conv.total_lines_removed as number) || 0;
+
+    // For Cursor, we'll add tokens from billing events below (more accurate)
+    if (source !== Source.Cursor) {
+      // Use appropriate token view
+      if (tokenView === 'sum') {
+        // SUM view - use sum_* fields, fall back to total_* if not available
+        const sumInput = (conv.sum_input_tokens as number) || 0;
+        const sumCacheCreation = (conv.sum_cache_creation_tokens as number) || 0;
+        const sumCacheRead = (conv.sum_cache_read_tokens as number) || 0;
+        const sumOutput = (conv.sum_output_tokens as number) || 0;
+
+        if (sumInput + sumCacheCreation + sumCacheRead + sumOutput > 0) {
+          totalInputTokens += sumInput + sumCacheCreation + sumCacheRead;
+          totalOutputTokens += sumOutput;
+        } else {
+          // Fall back to peak values for old data
+          totalInputTokens += ((conv.total_input_tokens as number) || 0) +
+            ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+          totalOutputTokens += (conv.total_output_tokens as number) || 0;
+        }
+      } else {
+        // PEAK view
+        totalInputTokens += ((conv.total_input_tokens as number) || 0) +
+          ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+        totalOutputTokens += (conv.total_output_tokens as number) || 0;
+      }
+    }
+  }
+
+  // Add Cursor tokens from billing events (includes cache, more accurate)
+  try {
+    const billingTable = await getBillingEventsTable();
+    const billingRows = await billingTable.query().toArray();
+    const validBilling = billingRows.filter(isValidBillingEvent);
+
+    for (const event of validBilling) {
+      const timestamp = event.timestamp as string;
+      if (!isInPeriod(timestamp, period)) continue;
+
+      // Billing events have input_tokens (non-cached input) + cache_read_tokens
+      totalInputTokens += ((event.input_tokens as number) || 0) + ((event.cache_read_tokens as number) || 0);
+      totalOutputTokens += (event.output_tokens as number) || 0;
+    }
+  } catch {
+    // Billing table might not exist, fall back to conversation data for Cursor
+    for (const conv of filtered) {
+      if ((conv.source as string) === Source.Cursor) {
+        totalInputTokens += ((conv.total_input_tokens as number) || 0) +
+          ((conv.total_cache_creation_tokens as number) || 0) + ((conv.total_cache_read_tokens as number) || 0);
+        totalOutputTokens += (conv.total_output_tokens as number) || 0;
+      }
+    }
   }
 
   return {
@@ -345,10 +426,11 @@ export async function getDailyActivity(period: PeriodFilter): Promise<DayActivit
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export async function getDailyTokensBySource(period: PeriodFilter): Promise<DailyTokensBySource[]> {
+export async function getDailyTokensBySource(period: PeriodFilter, tokenView: TokenView = 'sum'): Promise<DailyTokensBySource[]> {
   await connect();
-  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
 
+  // Get conversation data for non-Cursor sources
+  const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
   const filtered = rows.filter(r => isInPeriod(r.created_at as string, period));
 
   // Group by date, tracking tokens per source
@@ -360,7 +442,11 @@ export async function getDailyTokensBySource(period: PeriodFilter): Promise<Dail
     if (!date) continue;
 
     const source = (conv.source as string) || 'unknown';
-    const tokens = getTotalTokens(conv);
+
+    // Skip Cursor - we'll use billing events instead (more accurate)
+    if (source === Source.Cursor) continue;
+
+    const tokens = getTotalTokens(conv, tokenView);
 
     const existing = byDate.get(date) || {
       date,
@@ -373,9 +459,6 @@ export async function getDailyTokensBySource(period: PeriodFilter): Promise<Dail
 
     // Add tokens to the appropriate source
     switch (source) {
-      case Source.Cursor:
-        existing.cursor += tokens;
-        break;
       case Source.ClaudeCode:
         existing.claudeCode += tokens;
         break;
@@ -389,6 +472,54 @@ export async function getDailyTokensBySource(period: PeriodFilter): Promise<Dail
     existing.total += tokens;
 
     byDate.set(date, existing);
+  }
+
+  // Add Cursor tokens from billing events (includes cache tokens, more accurate)
+  try {
+    const billingTable = await getBillingEventsTable();
+    const billingRows = await billingTable.query().toArray();
+    const validBilling = billingRows.filter(isValidBillingEvent);
+
+    for (const event of validBilling) {
+      const timestamp = event.timestamp as string;
+      if (!isInPeriod(timestamp, period)) continue;
+
+      const date = timestamp.split('T')[0];
+      if (!date) continue;
+
+      const tokens = (event.total_tokens as number) || 0;
+
+      const existing = byDate.get(date) || {
+        date,
+        cursor: 0,
+        claudeCode: 0,
+        codex: 0,
+        opencode: 0,
+        total: 0,
+      };
+
+      existing.cursor += tokens;
+      existing.total += tokens;
+
+      byDate.set(date, existing);
+    }
+  } catch {
+    // Billing table might not exist, fall back to conversation data for Cursor
+    for (const conv of filtered) {
+      const source = (conv.source as string) || 'unknown';
+      if (source !== Source.Cursor) continue;
+
+      const createdAt = conv.created_at as string;
+      const date = createdAt?.split('T')[0];
+      if (!date) continue;
+
+      const tokens = getTotalTokens(conv, tokenView);
+      const existing = byDate.get(date);
+      if (existing) {
+        existing.cursor += tokens;
+        existing.total += tokens;
+      }
+    }
   }
 
   // Fill in missing dates within the period to ensure continuous data
@@ -418,9 +549,9 @@ export async function getDailyTokensBySource(period: PeriodFilter): Promise<Dail
   return result;
 }
 
-export async function getStatsBySource(period: PeriodFilter): Promise<SourceStats[]> {
+export async function getStatsBySource(period: PeriodFilter, tokenView: TokenView = 'sum'): Promise<SourceStats[]> {
   await connect();
-  
+
   const turnCounts = await getTurnCounts(period);
   const rows = await queryTableWithRetry(getConversationsTable, table => table.query().toArray());
 
@@ -440,9 +571,42 @@ export async function getStatsBySource(period: PeriodFilter): Promise<SourceStat
 
     existing.conversations += 1;
     existing.messages += (conv.message_count as number) || 0;
-    existing.tokens += getTotalTokens(conv);
+
+    // For Cursor, we'll add tokens from billing events below (more accurate)
+    if (source !== Source.Cursor) {
+      existing.tokens += getTotalTokens(conv, tokenView);
+    }
 
     bySource.set(source, existing);
+  }
+
+  // Add Cursor tokens from billing events (includes cache, more accurate)
+  try {
+    const billingTable = await getBillingEventsTable();
+    const billingRows = await billingTable.query().toArray();
+    const validBilling = billingRows.filter(isValidBillingEvent);
+
+    let cursorTokens = 0;
+    for (const event of validBilling) {
+      const timestamp = event.timestamp as string;
+      if (!isInPeriod(timestamp, period)) continue;
+      cursorTokens += (event.total_tokens as number) || 0;
+    }
+
+    const cursorStats = bySource.get(Source.Cursor);
+    if (cursorStats) {
+      cursorStats.tokens = cursorTokens;
+    }
+  } catch {
+    // Billing table might not exist, fall back to conversation data
+    const cursorStats = bySource.get(Source.Cursor);
+    if (cursorStats) {
+      for (const conv of filtered) {
+        if ((conv.source as string) === Source.Cursor) {
+          cursorStats.tokens += getTotalTokens(conv, tokenView);
+        }
+      }
+    }
   }
 
   for (const [source, stats] of bySource) {

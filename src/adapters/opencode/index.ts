@@ -121,10 +121,16 @@ export class OpenCodeAdapter implements SourceAdapter {
       updatedAt,
       messageCount: countCombinedMessages(mainMessages),
       sourceRef,
+      // PEAK view (single peak, no compaction in OpenCode)
       totalInputTokens: raw.totalInputTokens,
       totalOutputTokens: raw.totalOutputTokens,
       totalCacheCreationTokens: raw.totalCacheCreationTokens,
       totalCacheReadTokens: raw.totalCacheReadTokens,
+      // SUM view (total across all API calls, matches billing)
+      sumInputTokens: raw.sumInputTokens,
+      sumOutputTokens: raw.sumOutputTokens,
+      sumCacheCreationTokens: raw.sumCacheCreationTokens,
+      sumCacheReadTokens: raw.sumCacheReadTokens,
       totalLinesAdded: raw.totalLinesAdded,
       totalLinesRemoved: raw.totalLinesRemoved,
     };

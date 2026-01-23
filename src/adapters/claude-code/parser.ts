@@ -26,6 +26,7 @@ interface ClaudeMessage {
   content: string | ClaudeMessageContent[];
   model?: string;
   usage?: ClaudeMessageUsage;
+  id?: string; // API message ID for deduplication
 }
 
 // Content in toolUseResult can be a string or an array of text blocks
@@ -86,6 +87,8 @@ interface ClaudeEntry {
   toolUseResult?: ToolUseResult;
   // Compact summary flag - marks messages that are context restoration summaries
   isCompactSummary?: boolean;
+  // API request ID for deduplication
+  requestId?: string;
 }
 
 // Parsed/normalized types
@@ -107,6 +110,9 @@ export interface RawMessage {
   totalLinesRemoved?: number;
   // Compact summary flag - marks messages that are context restoration summaries
   isCompactSummary?: boolean;
+  // API call identifiers for deduplication
+  messageId?: string;
+  requestId?: string;
 }
 
 export interface RawToolCall {
@@ -142,10 +148,16 @@ export interface RawConversation {
   messages: RawMessage[];
   files: RawFile[];
   fileEdits: RawFileEdit[];
+  // Token usage - PEAK context (largest context window)
   totalInputTokens?: number;
   totalOutputTokens?: number;
   totalCacheCreationTokens?: number;
   totalCacheReadTokens?: number;
+  // Token usage - SUM (total across all API calls, matches billing)
+  sumInputTokens?: number;
+  sumOutputTokens?: number;
+  sumCacheCreationTokens?: number;
+  sumCacheReadTokens?: number;
   totalLinesAdded?: number;
   totalLinesRemoved?: number;
   // Number of context compactions in this conversation
@@ -494,29 +506,90 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
         totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
         totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
         isCompactSummary: entry.isCompactSummary,
+        messageId: entry.message.id,
+        requestId: entry.requestId,
       });
     }
 
     if (messages.length === 0) continue;
 
-    // Calculate token usage
-    // For input context, find the message with the peak TOTAL context
-    // (input + cache_creation + cache_read). This shows peak context window used.
-    // We can't take max of each component separately as they'd come from different messages.
-    // For output tokens, SUM is correct since each output is new content generated.
-    let peakMessage: RawMessage | undefined;
-    let peakContext = 0;
+    // Calculate both PEAK and SUM token views:
+    // - PEAK (sum-of-peaks): Sum of peak context from each segment between compactions
+    //   This represents total context budget consumed across the conversation
+    // - SUM: Total across all API calls (matches billing methodology)
+
+    // Deduplicate by message.id:requestId to avoid counting streaming chunks multiple times
+    // Claude Code creates multiple entries per API call as content streams in
+    const seenApiCalls = new Set<string>();
+
+    // SUM view - total across all API calls
+    let sumInputTokens = 0;
+    let sumCacheCreationTokens = 0;
+    let sumCacheReadTokens = 0;
+    let sumOutputTokens = 0;
+
+    // PEAK view (sum-of-peaks) - track peak within each segment, sum across segments
+    // A segment is the period between compactions
+    let segmentPeakInput = 0;
+    let segmentPeakCacheCreation = 0;
+    let segmentPeakCacheRead = 0;
+    let segmentPeakOutput = 0;
+    let segmentPeakContext = 0;
+
+    // Accumulated peaks across all segments
+    let totalPeakInput = 0;
+    let totalPeakCacheCreation = 0;
+    let totalPeakCacheRead = 0;
+    let totalPeakOutput = 0;
+
     for (const m of messages) {
-      const totalContext = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
-      if (totalContext > peakContext) {
-        peakContext = totalContext;
-        peakMessage = m;
+      // Dedupe by API call ID (messageId:requestId) to avoid counting streaming chunks
+      const apiCallKey = m.messageId && m.requestId ? `${m.messageId}:${m.requestId}` : null;
+      const isDuplicate = apiCallKey && seenApiCalls.has(apiCallKey);
+      if (apiCallKey) seenApiCalls.add(apiCallKey);
+
+      // Only count tokens once per API call
+      if (!isDuplicate) {
+        // Sum all tokens (billing view)
+        sumInputTokens += m.inputTokens || 0;
+        sumCacheCreationTokens += m.cacheCreationTokens || 0;
+        sumCacheReadTokens += m.cacheReadTokens || 0;
+        sumOutputTokens += m.outputTokens || 0;
+      }
+
+      // Check if this is a compaction boundary (start of new segment)
+      if (m.isCompactSummary) {
+        // End previous segment - add its peak to totals
+        totalPeakInput += segmentPeakInput;
+        totalPeakCacheCreation += segmentPeakCacheCreation;
+        totalPeakCacheRead += segmentPeakCacheRead;
+        totalPeakOutput += segmentPeakOutput;
+
+        // Start new segment with this message's context
+        const msgContext = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
+        segmentPeakInput = m.inputTokens || 0;
+        segmentPeakCacheCreation = m.cacheCreationTokens || 0;
+        segmentPeakCacheRead = m.cacheReadTokens || 0;
+        segmentPeakOutput = m.outputTokens || 0;
+        segmentPeakContext = msgContext;
+      } else {
+        // Track peak context within current segment
+        const msgContext = (m.inputTokens || 0) + (m.cacheCreationTokens || 0) + (m.cacheReadTokens || 0);
+        if (msgContext > segmentPeakContext) {
+          segmentPeakContext = msgContext;
+          segmentPeakInput = m.inputTokens || 0;
+          segmentPeakCacheCreation = m.cacheCreationTokens || 0;
+          segmentPeakCacheRead = m.cacheReadTokens || 0;
+          segmentPeakOutput = m.outputTokens || 0;
+        }
       }
     }
-    const totalInputTokens = peakContext || 0;
-    const totalCacheCreationTokens = peakMessage?.cacheCreationTokens || 0;
-    const totalCacheReadTokens = peakMessage?.cacheReadTokens || 0;
-    const totalOutputTokens = messages.reduce((sum, m) => sum + (m.outputTokens || 0), 0);
+
+    // Don't forget to add the final segment's peak
+    totalPeakInput += segmentPeakInput;
+    totalPeakCacheCreation += segmentPeakCacheCreation;
+    totalPeakCacheRead += segmentPeakCacheRead;
+    totalPeakOutput += segmentPeakOutput;
 
     // Calculate total line changes
     const totalLinesAdded = allEdits.reduce((sum, e) => sum + e.linesAdded, 0);
@@ -537,10 +610,16 @@ export function extractConversations(project: ClaudeCodeProject): RawConversatio
       messages,
       files: allFiles,
       fileEdits: allEdits,
-      totalInputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
-      totalOutputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
-      totalCacheCreationTokens: totalCacheCreationTokens > 0 ? totalCacheCreationTokens : undefined,
-      totalCacheReadTokens: totalCacheReadTokens > 0 ? totalCacheReadTokens : undefined,
+      // PEAK context view (sum-of-peaks across compaction segments)
+      totalInputTokens: totalPeakInput > 0 ? totalPeakInput : undefined,
+      totalOutputTokens: totalPeakOutput > 0 ? totalPeakOutput : undefined,
+      totalCacheCreationTokens: totalPeakCacheCreation > 0 ? totalPeakCacheCreation : undefined,
+      totalCacheReadTokens: totalPeakCacheRead > 0 ? totalPeakCacheRead : undefined,
+      // SUM view (total across all API calls, matches billing)
+      sumInputTokens: sumInputTokens > 0 ? sumInputTokens : undefined,
+      sumOutputTokens: sumOutputTokens > 0 ? sumOutputTokens : undefined,
+      sumCacheCreationTokens: sumCacheCreationTokens > 0 ? sumCacheCreationTokens : undefined,
+      sumCacheReadTokens: sumCacheReadTokens > 0 ? sumCacheReadTokens : undefined,
       totalLinesAdded: totalLinesAdded > 0 ? totalLinesAdded : undefined,
       totalLinesRemoved: totalLinesRemoved > 0 ? totalLinesRemoved : undefined,
       compactCount: compactCount > 0 ? compactCount : undefined,

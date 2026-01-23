@@ -675,13 +675,22 @@ async function ensureTables(): Promise<void> {
         updated_at: '',
         message_count: 0,
         source_ref_json: '{}',
+        // PEAK view (sum-of-peaks across compaction segments)
         total_input_tokens: 0,
         total_output_tokens: 0,
         total_cache_creation_tokens: 0,
         total_cache_read_tokens: 0,
+        // SUM view (total across all API calls, matches billing)
+        sum_input_tokens: 0,
+        sum_output_tokens: 0,
+        sum_cache_creation_tokens: 0,
+        sum_cache_read_tokens: 0,
         total_lines_added: 0,
         total_lines_removed: 0,
-        compact_count: 0, // Claude Code: number of context compactions
+        compact_count: 0,
+        git_branch: '',
+        git_commit_hash: '',
+        git_repository_url: '',
       },
     ]);
     // Delete placeholder row
@@ -698,7 +707,7 @@ async function ensureTables(): Promise<void> {
         conversation_id: '',
         role: 'user',
         content: '',
-        indexed_content: '', // Content with tool outputs stripped, used for FTS
+        indexed_content: '',
         timestamp: '',
         message_index: 0,
         vector: new Array(EMBEDDING_DIMENSIONS).fill(0),
@@ -708,7 +717,8 @@ async function ensureTables(): Promise<void> {
         cache_read_tokens: 0,
         total_lines_added: 0,
         total_lines_removed: 0,
-        is_compact_summary: false, // Claude Code: marks context restoration summaries
+        is_compact_summary: false,
+        git_snapshot: '',
       },
     ]);
     await messagesTable.delete("id = '_placeholder_'");
@@ -1056,6 +1066,7 @@ export async function recreateMessagesTable(): Promise<void> {
       total_lines_added: 0,
       total_lines_removed: 0,
       is_compact_summary: false,
+      git_snapshot: '',
     },
   ]);
   await messagesTable.delete("id = '_placeholder_'");
