@@ -1,11 +1,11 @@
 /**
  * MCP Server for dex - exposes conversation search and retrieval tools
  *
- * Tools:
- * - dex_stats: Get overview statistics about indexed conversations
- * - dex_list: Browse conversations by metadata filters
- * - dex_search: Search conversations by content
- * - dex_get: Retrieve conversation content in various formats
+ * Tools (namespaced as dex_* by MCP clients):
+ * - stats: Get overview statistics about indexed conversations
+ * - list: Browse conversations by metadata filters
+ * - search: Search conversations by content
+ * - get: Retrieve conversation content in various formats
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -58,9 +58,9 @@ export async function startMcpServer(): Promise<void> {
     version: '0.3.2',
   });
 
-  // ============ dex_stats ============
+  // ============ stats ============
   server.tool(
-    'dex_stats',
+    'stats',
     'Get overview statistics about indexed conversations. Returns total counts, date range, sources breakdown, top projects, and average tokens.',
     {
       period_days: z.number().optional().default(30).describe('Time period in days (default: 30)'),
@@ -117,22 +117,24 @@ export async function startMcpServer(): Promise<void> {
     }
   );
 
-  // ============ dex_list ============
+  // ============ list ============
   server.tool(
-    'dex_list',
+    'list',
     'Browse conversations by metadata filters. Returns a paginated list of conversations with their metadata.',
     {
       project: z.string().optional().describe('Filter by project/workspace path (substring match)'),
       source: z.enum(['cursor', 'claude-code', 'codex', 'opencode']).optional().describe('Filter by source'),
+      branch: z.string().optional().describe('Filter by git branch name (exact match)'),
       from: z.string().optional().describe('Start date (YYYY-MM-DD)'),
       to: z.string().optional().describe('End date (YYYY-MM-DD)'),
       limit: z.number().optional().default(20).describe('Maximum results (default: 20)'),
       offset: z.number().optional().default(0).describe('Skip first N results for pagination'),
     },
-    async ({ project, source, from, to, limit, offset }) => {
+    async ({ project, source, branch, from, to, limit, offset }) => {
       const { conversations, total } = await conversationRepo.list({
         project,
         source,
+        branch,
         fromDate: from,
         toDate: to,
         limit,
@@ -143,6 +145,7 @@ export async function startMcpServer(): Promise<void> {
         id: conv.id,
         title: conv.title,
         project: conv.workspacePath || conv.projectName || '',
+        branch: conv.gitBranch || undefined,
         source: conv.source,
         date: conv.createdAt || conv.updatedAt || '',
         message_count: conv.messageCount,
@@ -162,21 +165,22 @@ export async function startMcpServer(): Promise<void> {
     }
   );
 
-  // ============ dex_search ============
+  // ============ search ============
   server.tool(
-    'dex_search',
+    'search',
     'Search conversations by content using full-text and semantic hybrid search. Returns matching conversations with snippets.',
     {
       query: z.string().describe('Search query (required for content search)'),
       file: z.string().optional().describe('Filter by file path involvement'),
       project: z.string().optional().describe('Filter by project/workspace path (substring match)'),
+      branch: z.string().optional().describe('Filter by git branch name (exact match)'),
       source: z.enum(['cursor', 'claude-code', 'codex', 'opencode']).optional().describe('Filter by source'),
       from: z.string().optional().describe('Start date (YYYY-MM-DD)'),
       to: z.string().optional().describe('End date (YYYY-MM-DD)'),
       limit: z.number().optional().default(10).describe('Maximum results (default: 10)'),
       offset: z.number().optional().default(0).describe('Skip first N results for pagination'),
     },
-    async ({ query, file, project, source, from, to, limit, offset }) => {
+    async ({ query, file, project, branch, source, from, to, limit, offset }) => {
       type SearchResult = {
         conversation: Conversation;
         totalMatches: number;
@@ -192,6 +196,9 @@ export async function startMcpServer(): Promise<void> {
         let filtered = items;
         if (source) {
           filtered = filtered.filter((r) => r.conversation.source === source);
+        }
+        if (branch) {
+          filtered = filtered.filter((r) => r.conversation.gitBranch === branch);
         }
         if (project) {
           const projectLower = project.toLowerCase();
@@ -275,6 +282,7 @@ export async function startMcpServer(): Promise<void> {
           id: r.conversation.id,
           title: r.conversation.title,
           project: r.conversation.workspacePath || r.conversation.projectName || '',
+          branch: r.conversation.gitBranch || undefined,
           source: r.conversation.source,
           date: r.conversation.createdAt || r.conversation.updatedAt || '',
           snippet: r.snippet.slice(0, 300),
@@ -303,9 +311,9 @@ export async function startMcpServer(): Promise<void> {
     }
   );
 
-  // ============ dex_get ============
+  // ============ get ============
   server.tool(
-    'dex_get',
+    'get',
     'Retrieve conversation content in various formats. Supports expanding around specific messages and token limits.',
     {
       ids: z.array(z.string()).describe('Conversation IDs to retrieve (batch support)'),
@@ -323,6 +331,7 @@ export async function startMcpServer(): Promise<void> {
         id: string;
         title: string;
         project: string;
+        branch?: string;
         source: string;
         messages: Array<{ index: number; role: string; content: string; tokens?: number }>;
         files?: string[];
@@ -410,6 +419,7 @@ export async function startMcpServer(): Promise<void> {
           id: conversation.id,
           title: conversation.title,
           project: conversation.workspacePath || conversation.projectName || '',
+          branch: conversation.gitBranch || undefined,
           source: conversation.source,
           messages: formattedMessages,
           files: files.length > 0 ? files.map((f) => f.filePath) : undefined,
