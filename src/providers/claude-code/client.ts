@@ -10,7 +10,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { mkdirSync, existsSync } from 'fs';
 import { getClaudeCodeCredentials } from './credentials.js';
-import { getOpencodeBinPath } from '../../utils/paths.js';
+import { getOpencodeBinPath, isNpxFallback } from '../../utils/paths.js';
 
 
 
@@ -102,11 +102,22 @@ export async function startServer(options?: StartServerOptions): Promise<OpenCod
   const port = 0;
 
   const opencodeBin = await getOpencodeBinPath();
-  const proc = spawn(opencodeBin, ['serve', `--port=${port}`], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    detached: false,
-    env,
-  });
+
+  // Handle npx fallback for non-darwin-arm64 platforms
+  let proc: ChildProcess;
+  if (isNpxFallback(opencodeBin)) {
+    proc = spawn('npx', ['opencode-ai', 'serve', `--port=${port}`], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
+      env,
+    });
+  } else {
+    proc = spawn(opencodeBin, ['serve', `--port=${port}`], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
+      env,
+    });
+  }
 
   try {
     const url = await waitForServer(proc);

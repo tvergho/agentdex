@@ -10,21 +10,36 @@ const OPENCODE_BIN_PATH = join(DEX_BIN_DIR, 'opencode');
 // Dev override: set DEX_OPENCODE_BIN to use a local binary
 const DEV_OPENCODE_BIN = process.env.DEX_OPENCODE_BIN;
 
+// Fork binary config - only darwin-arm64 is built from fork
 const FORK_OWNER = 'tvergho';
 const FORK_REPO = 'opencode';
-const RELEASE_VERSION = 'v1.0.0-fork.6';
+const RELEASE_VERSION = 'v1.0.0-fork.7';
+
+// Check if we should use the fork binary (only darwin-arm64)
+function shouldUseForkBinary(): boolean {
+  return platform() === 'darwin' && arch() === 'arm64';
+}
+
+// Try to find opencode in PATH
+function findSystemOpencode(): string | null {
+  try {
+    const result = execSync('which opencode', { stdio: 'pipe', encoding: 'utf-8' });
+    const path = result.trim();
+    if (path && existsSync(path)) {
+      return path;
+    }
+  } catch {
+    // Not found in PATH
+  }
+  return null;
+}
 
 function getAssetName(): string {
-  const p = platform();
-  const a = arch();
-
-  if (p === 'darwin' && a === 'arm64') return 'opencode-darwin-arm64.zip';
-  if (p === 'darwin' && a === 'x64') return 'opencode-darwin-x64.zip';
-  if (p === 'linux' && a === 'x64') return 'opencode-linux-x64.zip';
-  if (p === 'linux' && a === 'arm64') return 'opencode-linux-arm64.zip';
-  if (p === 'win32' && a === 'x64') return 'opencode-win32-x64.zip';
-
-  throw new Error(`Unsupported platform: ${p}-${a}`);
+  // Only darwin-arm64 is available from the fork
+  if (platform() === 'darwin' && arch() === 'arm64') {
+    return 'opencode-darwin-arm64.zip';
+  }
+  throw new Error(`Fork binary not available for ${platform()}-${arch()}`);
 }
 
 async function downloadBinary(): Promise<void> {
@@ -69,14 +84,45 @@ export async function ensureOpencodeBinary(): Promise<string> {
     return DEV_OPENCODE_BIN;
   }
 
-  if (existsSync(OPENCODE_BIN_PATH)) {
+  // For darwin-arm64, use the fork binary
+  if (shouldUseForkBinary()) {
+    if (existsSync(OPENCODE_BIN_PATH)) {
+      return OPENCODE_BIN_PATH;
+    }
+    await downloadBinary();
     return OPENCODE_BIN_PATH;
   }
 
-  await downloadBinary();
-  return OPENCODE_BIN_PATH;
+  // For other platforms, try to find opencode in PATH
+  const systemOpencode = findSystemOpencode();
+  if (systemOpencode) {
+    return systemOpencode;
+  }
+
+  // Fallback: use npx to run opencode-ai
+  // Return a special marker that the caller should handle
+  return 'npx:opencode-ai';
 }
 
 export function getOpencodeBinLocation(): string {
-  return DEV_OPENCODE_BIN ?? OPENCODE_BIN_PATH;
+  if (DEV_OPENCODE_BIN) {
+    return DEV_OPENCODE_BIN;
+  }
+
+  if (shouldUseForkBinary()) {
+    return OPENCODE_BIN_PATH;
+  }
+
+  // For other platforms, check system first
+  const systemOpencode = findSystemOpencode();
+  if (systemOpencode) {
+    return systemOpencode;
+  }
+
+  return 'npx:opencode-ai';
+}
+
+// Check if the binary path indicates npx should be used
+export function isNpxFallback(binPath: string): boolean {
+  return binPath === 'npx:opencode-ai';
 }

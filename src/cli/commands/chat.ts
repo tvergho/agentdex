@@ -14,7 +14,7 @@ import {
   startServer,
   type OpenCodeServerState,
 } from '../../providers/claude-code/client.js';
-import { getOpencodeBinPath } from '../../utils/paths.js';
+import { getOpencodeBinPath, isNpxFallback } from '../../utils/paths.js';
 import {
   hasDexCredentials,
   getDefaultProvider,
@@ -153,7 +153,7 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
   console.log(`Server ready at ${serverState.url}`);
 
   const opencodePath = await getOpencodeBinPath();
-  
+
   // Build args based on mode
   let args: string[];
   if (options.print && options.query) {
@@ -170,14 +170,16 @@ export async function chatCommand(options: ChatOptions = {}): Promise<void> {
     }
   }
 
-  const child = spawn(opencodePath, args, {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      XDG_CONFIG_HOME: DEX_XDG_CONFIG,
-      XDG_DATA_HOME: DEX_XDG_DATA,
-    },
-  });
+  // Handle npx fallback for non-darwin-arm64 platforms
+  const spawnEnv = {
+    ...process.env,
+    XDG_CONFIG_HOME: DEX_XDG_CONFIG,
+    XDG_DATA_HOME: DEX_XDG_DATA,
+  };
+
+  const child = isNpxFallback(opencodePath)
+    ? spawn('npx', ['opencode-ai', ...args], { stdio: 'inherit', env: spawnEnv })
+    : spawn(opencodePath, args, { stdio: 'inherit', env: spawnEnv });
 
   // Handle exit - clean up server
   child.on('close', (code) => {

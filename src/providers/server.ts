@@ -12,7 +12,7 @@ import { homedir } from 'os';
 import { mkdirSync, existsSync } from 'fs';
 import { getClaudeCodeCredentials } from './claude-code/credentials.js';
 import { getCodexCredentials } from './codex/credentials.js';
-import { getOpencodeBinPath } from '../utils/paths.js';
+import { getOpencodeBinPath, isNpxFallback } from '../utils/paths.js';
 
 // Isolated data directory for dex's OpenCode instance
 const DEX_OPENCODE_HOME = join(homedir(), '.dex', 'opencode');
@@ -126,14 +126,28 @@ async function ensureServer(): Promise<string> {
     }
 
     const opencodeBin = await getOpencodeBinPath();
-    const proc = spawn(opencodeBin, ['serve', '--port=0'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: false,
-      env: {
-        ...process.env,
-        OPENCODE_HOME: DEX_OPENCODE_HOME,
-      },
-    });
+
+    // Handle npx fallback for non-darwin-arm64 platforms
+    let proc: ChildProcess;
+    if (isNpxFallback(opencodeBin)) {
+      proc = spawn('npx', ['opencode-ai', 'serve', '--port=0'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: false,
+        env: {
+          ...process.env,
+          OPENCODE_HOME: DEX_OPENCODE_HOME,
+        },
+      });
+    } else {
+      proc = spawn(opencodeBin, ['serve', '--port=0'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: false,
+        env: {
+          ...process.env,
+          OPENCODE_HOME: DEX_OPENCODE_HOME,
+        },
+      });
+    }
 
     state.process = proc;
 

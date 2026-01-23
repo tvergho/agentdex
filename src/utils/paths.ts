@@ -10,7 +10,7 @@
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import { homedir } from 'os';
-import { ensureOpencodeBinary, getOpencodeBinLocation } from './opencode-binary.js';
+import { ensureOpencodeBinary, getOpencodeBinLocation, isNpxFallback } from './opencode-binary.js';
 
 /**
  * Find the package root by walking up from the entry script
@@ -66,3 +66,5 @@ export async function getOpencodeBinPath(): Promise<string> {
 export function getOpencodeBinPathSync(): string {
   return getOpencodeBinLocation();
 }
+
+export { isNpxFallback };

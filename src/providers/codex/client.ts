@@ -10,7 +10,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { mkdirSync, existsSync } from 'fs';
 import { getCodexCredentials } from './credentials.js';
-import { getOpencodeBinPath } from '../../utils/paths.js';
+import { getOpencodeBinPath, isNpxFallback } from '../../utils/paths.js';
 
 
 
@@ -82,15 +82,27 @@ async function startServer(): Promise<OpenCodeServerState> {
   const port = 0;
 
   const opencodeBin = await getOpencodeBinPath();
-  const proc = spawn(opencodeBin, ['serve', `--port=${port}`], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    detached: false,
-    env: {
-      ...process.env,
-      // Use isolated data directory so Codex title gen sessions don't pollute global state
-      OPENCODE_HOME: DEX_OPENCODE_CODEX_HOME,
-    },
-  });
+  const serverEnv = {
+    ...process.env,
+    // Use isolated data directory so Codex title gen sessions don't pollute global state
+    OPENCODE_HOME: DEX_OPENCODE_CODEX_HOME,
+  };
+
+  // Handle npx fallback for non-darwin-arm64 platforms
+  let proc: ChildProcess;
+  if (isNpxFallback(opencodeBin)) {
+    proc = spawn('npx', ['opencode-ai', 'serve', `--port=${port}`], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
+      env: serverEnv,
+    });
+  } else {
+    proc = spawn(opencodeBin, ['serve', `--port=${port}`], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
+      env: serverEnv,
+    });
+  }
 
   try {
     const url = await waitForServer(proc);

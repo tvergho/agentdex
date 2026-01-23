@@ -21,7 +21,7 @@ import {
 } from '../../providers/auth.js';
 import { runAnthropicAuth } from '../../providers/claude-code/auth.js';
 import { runCodexAuth } from '../../providers/codex/auth.js';
-import { getOpencodeBinPath } from '../../utils/paths.js';
+import { getOpencodeBinPath, isNpxFallback } from '../../utils/paths.js';
 import { ProviderCard, type ProviderMenuItem } from '../components/ProviderCard.js';
 import { ImportPrompt } from '../components/ImportPrompt.js';
 import { AuthenticatingView } from '../components/AuthenticatingView.js';
@@ -189,14 +189,15 @@ function ChatSetupApp({ onComplete, initialSources, showImportPrompt }: ChatSetu
     setPhase('opencode-auth');
 
     const opencodePath = await getOpencodeBinPath();
-    const child = spawn(opencodePath, ['auth', 'login'], {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        XDG_DATA_HOME: join(homedir(), '.dex', 'opencode', 'data'),
-        XDG_CONFIG_HOME: join(homedir(), '.dex', 'opencode', 'config'),
-      },
-    });
+    const spawnEnv = {
+      ...process.env,
+      XDG_DATA_HOME: join(homedir(), '.dex', 'opencode', 'data'),
+      XDG_CONFIG_HOME: join(homedir(), '.dex', 'opencode', 'config'),
+    };
+
+    const child = isNpxFallback(opencodePath)
+      ? spawn('npx', ['opencode-ai', 'auth', 'login'], { stdio: 'inherit', env: spawnEnv })
+      : spawn(opencodePath, ['auth', 'login'], { stdio: 'inherit', env: spawnEnv });
 
     child.on('close', () => {
       // Check what was configured

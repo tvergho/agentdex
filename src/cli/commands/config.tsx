@@ -35,7 +35,7 @@ import {
   type ProviderAuthStatus,
   type ThirdPartyProvider,
 } from '../../providers/index.js';
-import { getOpencodeBinPath } from '../../utils/paths.js';
+import { getOpencodeBinPath, isNpxFallback } from '../../utils/paths.js';
 import {
   countUntitledBySource,
   enrichWithProvider,
@@ -1057,15 +1057,16 @@ function ConfigApp({ onLaunchOpencode }: ConfigAppProps) {
  */
 async function runOpencodeAuth(): Promise<boolean> {
   const opencodePath = await getOpencodeBinPath();
+  const spawnEnv = {
+    ...process.env,
+    XDG_DATA_HOME: join(homedir(), '.dex', 'opencode', 'data'),
+    XDG_CONFIG_HOME: join(homedir(), '.dex', 'opencode', 'config'),
+  };
+
   return new Promise((resolve) => {
-    const child = spawn(opencodePath, ['auth', 'login'], {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        XDG_DATA_HOME: join(homedir(), '.dex', 'opencode', 'data'),
-        XDG_CONFIG_HOME: join(homedir(), '.dex', 'opencode', 'config'),
-      },
-    });
+    const child = isNpxFallback(opencodePath)
+      ? spawn('npx', ['opencode-ai', 'auth', 'login'], { stdio: 'inherit', env: spawnEnv })
+      : spawn(opencodePath, ['auth', 'login'], { stdio: 'inherit', env: spawnEnv });
 
     child.on('close', () => {
       // Check if any new credentials were configured
