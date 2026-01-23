@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-agentdex is a local search engine for coding agent conversations. It indexes conversations from various AI coding tools (Cursor, Claude Code, Codex, OpenCode) into a local LanceDB database with full-text search.
+agentdex is a local search engine for coding agent conversations. It indexes conversations from various AI coding tools (Cursor, Claude Code, Codex, OpenCode) into a local LanceDB database with full-text and semantic search.
 
 ## Tech Stack
 
@@ -11,6 +11,7 @@ agentdex is a local search engine for coding agent conversations. It indexes con
 - **Database**: LanceDB (embedded vector/FTS database)
 - **UI**: Ink (React for CLI) + fullscreen-ink for terminal UI
 - **Schema Validation**: Zod
+- **MCP**: Model Context Protocol server for AI agent integration
 
 ## Project Structure
 
@@ -31,10 +32,16 @@ src/
 │   │   ├── show.tsx    # Show single conversation
 │   │   ├── sync.tsx    # Sync data from sources
 │   │   ├── status.tsx  # Embedding progress status
-│   │   ├── stats.tsx   # Analytics dashboard
+│   │   ├── stats.tsx   # Analytics dashboard with 6 tabs
+│   │   ├── config.tsx  # Provider settings TUI
+│   │   ├── chat.ts     # AI chat with dex integration
+│   │   ├── review.ts   # Git commit correlation
+│   │   ├── review-export.ts  # Review markdown export
+│   │   ├── review-web/ # Review HTML viewer
 │   │   ├── export.ts   # Export as markdown files
 │   │   ├── backup.ts   # Full database backup (JSON)
 │   │   ├── import.ts   # Import from backup
+│   │   ├── billing.ts  # Cursor billing commands
 │   │   └── embed.ts    # Background embedding worker
 │   ├── components/     # Reusable UI components
 │   │   ├── ConversationView.tsx
@@ -44,14 +51,22 @@ src/
 │   │   ├── HighlightedText.tsx
 │   │   ├── ActivityHeatmap.tsx
 │   │   ├── ExportActionMenu.tsx
-│   │   └── StatusToast.tsx
+│   │   ├── StatusToast.tsx
+│   │   ├── SourceTokenTrend.tsx
+│   │   ├── FullSourceTimeline.tsx
+│   │   ├── MetricCard.tsx
+│   │   ├── Sparkline.tsx
+│   │   ├── ProgressBar.tsx
+│   │   └── SourceBadge.tsx
 │   └── hooks/          # Reusable React hooks
 │       ├── useNavigation.ts  # 4-level drill-down state machine
 │       └── useExport.ts      # Export modal state
 ├── db/
 │   ├── index.ts        # LanceDB connection & table setup
 │   ├── repository.ts   # Data access layer
-│   └── analytics.ts    # Stats/analytics queries
+│   └── analytics.ts    # Stats/analytics queries (supports TokenView)
+├── mcp/
+│   └── server.ts       # MCP server with stats/list/search/get tools
 ├── schema/
 │   └── index.ts        # Zod schemas for all entities
 ├── utils/
@@ -65,24 +80,48 @@ src/
 └── index.ts            # CLI entry point (Commander.js)
 ```
 
-## Key Commands
+## All Commands
 
 ```bash
-bun run dev sync                    # Index conversations from all sources
-bun run dev search "query"          # Search conversations by content
-bun run dev search --file auth.ts   # Search by file path
-bun run dev search "bug" --file auth.ts  # Combined content + file search
-bun run dev list                    # List all conversations
-bun run dev show <id>               # Show a specific conversation
-bun run dev status                  # Check embedding progress
-bun run dev stats                   # View usage analytics dashboard
-bun run dev export                  # Export conversations as markdown
-bun run dev backup                  # Full database backup (JSON)
-bun run dev import <file>           # Import from backup
-bun run typecheck                   # Run TypeScript type checking
-bun run lint                        # Run ESLint
-bun run lint:fix                    # Auto-fix lint issues
-bun run reset                       # Reset database and embedding config
+# Core commands
+dex                             # Home screen with tabs (Search, Recent, Stats)
+dex sync                        # Index conversations from all sources
+dex sync --force                # Force full re-sync
+dex search "query"              # Search conversations by content
+dex search --file auth.ts       # Search by file path
+dex search "bug" --file auth.ts # Combined content + file search
+dex list                        # List all conversations
+dex show <id>                   # Show a specific conversation
+dex status                      # Check embedding progress
+dex stats                       # Interactive analytics dashboard
+dex stats --summary             # Quick non-interactive summary
+dex config                      # Provider settings TUI
+
+# Export/backup
+dex export                      # Export conversations as markdown
+dex backup                      # Full database backup (JSON)
+dex import <file>               # Import from backup
+
+# Advanced features
+dex chat                        # AI chat with dex integration
+dex chat -p                     # Print mode (stdout)
+dex review                      # Correlate commits with conversations
+dex review --export ./out       # Export review as HTML viewer
+dex billing sync                # Fetch Cursor billing from API
+dex billing import <csv>        # Import Cursor billing CSV
+dex billing stats               # View billing analytics
+
+# Hidden/internal
+dex serve                       # Start MCP server (usually auto-launched)
+dex embed                       # Background embedding worker
+dex embed --benchmark           # Benchmark batch sizes
+dex count --messages            # Count messages (internal)
+
+# Development
+bun run typecheck               # Run TypeScript type checking
+bun run lint                    # Run ESLint
+bun run lint:fix                # Auto-fix lint issues
+bun run reset                   # Reset database and embedding config
 ```
 
 ## Architecture Patterns
@@ -95,13 +134,19 @@ Each source (Cursor, Claude Code, etc.) implements `SourceAdapter`:
 - `normalize()` - Convert to unified schema
 
 ### Database Schema
-- **conversations** - Top-level conversation metadata (title, source, timestamps, project context, token usage)
-- **messages** - Individual messages with FTS index on content and vector embeddings
+- **conversations** - Top-level metadata (title, source, timestamps, project, tokens, git info)
+- **messages** - Individual messages with FTS index and vector embeddings
 - **tool_calls** - Tool invocations (file edits, commands)
 - **conversation_files** - Files associated with conversations (role: context/edited/mentioned)
 - **message_files** - Files associated with specific messages
 - **file_edits** - Individual file edit records with lines added/removed
+- **billing_events** - Cursor billing data (tokens, cost, model)
 - **sync_state** - Incremental sync tracking
+
+### Token Counting Modes
+Two views for token data (toggle with `v` in stats):
+- **SUM (Billing)**: Total across all API calls - matches billing methodology
+- **PEAK (Sum-of-peaks)**: Peak context from each segment between compactions
 
 ### UI Navigation (Search)
 Four-level navigation pattern:
@@ -114,84 +159,129 @@ Four-level navigation pattern:
 
 ### Command Entry Points
 
-The CLI has 5 main interactive commands, each implemented as a separate file in `src/cli/commands/`:
-
 | Command | File | Description |
 |---------|------|-------------|
 | `dex` (default) | `unified.tsx` | Home screen with tabs: Search, Recent, Stats |
 | `dex search <query>` | `search.tsx` | Direct search with 4-level drill-down |
 | `dex list` | `list.tsx` | Simple conversation list (non-TTY fallback) |
 | `dex show <id>` | `show.tsx` | Single conversation viewer |
-| `dex stats` | `stats.tsx` | Analytics dashboard with tabs |
+| `dex stats` | `stats.tsx` | Analytics dashboard with 6 tabs |
+| `dex config` | `config.tsx` | Provider settings and credentials |
+| `dex status` | `status.tsx` | Embedding progress display |
 
-### unified.tsx vs search.tsx
+### Stats Dashboard Tabs
 
-**Key distinction:** These are the two main interactive views with significant overlap.
+1. **Overview** - Total counts, date range, top sources/projects
+2. **Tokens** - Daily trends, source breakdown, cache efficiency, billing
+3. **Activity** - Hourly/daily/weekly heatmaps, streaks
+4. **Projects** - Project breakdown with token bars
+5. **Files** - File types, edit counts
+6. **Timeline** - Full source timeline visualization
 
-- **`unified.tsx`** (~970 LOC) - The default home screen when running `dex` with no arguments
-  - Tab-based navigation: Search | Recent | Stats
-  - Has its own search input in the Search tab
-  - Contains a full implementation of 4-level navigation (list → matches → conversation → message)
-  - Manages tab state, search state, AND navigation state
+### Keyboard Shortcuts
 
-- **`search.tsx`** (~900 LOC) - Direct search when running `dex search "query"`
-  - No tabs, goes straight to search results
-  - Same 4-level navigation as unified.tsx
-  - Simpler state (no tab management)
+**Global navigation:**
+| Key | Action |
+|-----|--------|
+| `j/k` | Navigate up/down |
+| `Enter` | Drill down / expand |
+| `Esc` | Go back |
+| `q` | Quit |
+| `e` | Export menu |
 
-**Why both exist:** `unified.tsx` provides a discoverable home screen for new users, while `search.tsx` provides fast direct access for power users who know what they're searching for.
+**Multi-select mode:**
+| Key | Action |
+|-----|--------|
+| `v` | Enter multi-select mode |
+| `Space` | Toggle selection |
+| `e` | Export selected |
 
-### View State Machines
+**Message detail view:**
+| Key | Action |
+|-----|--------|
+| `n/p` | Next/prev message |
+| `Tab` | Enter tool output navigation |
+| `Space/Enter` | Expand tool output (in tool mode) |
 
-Both `unified.tsx` and `search.tsx` use a `ViewMode` enum to track navigation depth:
+**Stats dashboard:**
+| Key | Action |
+|-----|--------|
+| `1-6` | Jump to tab |
+| `h/l` | Previous/next tab |
+| `v` | Toggle peak/sum token view |
 
-```
-unified.tsx ViewMode:
-  'home' → 'search' → 'list' → 'matches' → 'conversation' → 'message'
-           (tabs)     (search results)
-
-search.tsx ViewMode:
-  'list' → 'matches' → 'conversation' → 'message'
-  (starts here after search)
-```
-
-Navigation flow:
-- `Enter` - Drill down to next level
-- `Esc` / `q` - Go back one level
-- `j/k` - Navigate within current level
-- `e` - Open export menu (available at all levels)
+**Show command:**
+| Key | Action |
+|-----|--------|
+| `g` | Jump to top |
+| `G` | Jump to bottom |
 
 ### Shared Components
 
-Components in `src/cli/components/` are reused across commands:
+| Component | Purpose |
+|-----------|---------|
+| `ConversationView` | Display full conversation with messages |
+| `MessageDetailView` | Single message with tool output navigation |
+| `MatchesView` | Search matches within a conversation |
+| `ResultRow` | Conversation list item with metadata |
+| `HighlightedText` | Query term highlighting |
+| `ActivityHeatmap` | Git-style contribution heatmap |
+| `SourceTokenTrend` | Token usage trends by source |
+| `FullSourceTimeline` | Detailed timeline visualization |
+| `ExportActionMenu` | Export options overlay |
+| `StatusToast` | Temporary success/error messages |
+| `MetricCard` | Analytics metric display |
+| `ProgressBar` | Linear progress visualization |
+| `Sparkline` | Small trend line |
 
-| Component | Used By | Purpose |
-|-----------|---------|---------|
-| `ConversationView` | unified, search, show | Display full conversation with messages |
-| `MessageDetailView` | unified, search, show | Single message with markdown rendering |
-| `MatchesView` | unified, search | Search matches within a conversation |
-| `ResultRow` | unified, search, list | Conversation list item |
-| `HighlightedText` | unified, search | Search term highlighting |
-| `ActivityHeatmap` | unified, stats | Git-style contribution heatmap |
-| `ExportActionMenu` | unified, search, list, show, stats | Export modal overlay |
-| `StatusToast` | unified, search, list, show, stats | Temporary success/error messages |
+## MCP Server
 
-### Hooks
+The MCP server (`src/mcp/server.ts`) exposes tools for AI agent integration:
 
-Hooks in `src/cli/hooks/` extract reusable logic:
+| Tool | Description |
+|------|-------------|
+| `stats` | Get overview statistics (counts, date range, sources) |
+| `list` | Browse conversations with filters (project, source, branch, date) |
+| `search` | Hybrid search (FTS + semantic) with file filtering |
+| `get` | Retrieve conversation content in various formats |
 
-| Hook | Purpose |
-|------|---------|
-| `useNavigation` | 4-level drill-down state machine (list → matches → conversation → message) |
-| `useExport` | Export modal state, keyboard handling, file/clipboard actions |
+All tools support `branch` filtering for git-aware queries.
 
-The `useNavigation` hook provides:
-- View mode state machine with transitions
-- Scroll offset management for each view level
-- Combined message merging and index mapping
-- Match navigation helpers (finding distinct matches)
-- Unified keyboard handler (`handleNavigationInput`)
-- File and message loading when expanding conversations
+## Search Capabilities
+
+### Search Modes
+1. **Hybrid Search** (default) - FTS + semantic vector search with RRF reranking
+2. **Full-Text Search** (fallback) - LanceDB FTS when semantic unavailable
+3. **Substring Matching** (last resort) - Client-side when FTS corrupted
+
+### Search Filters
+- `--file <pattern>` - File path involvement (substring match)
+- `--source cursor|claude-code|codex|opencode` - Source filter
+- `--model <model>` - AI model filter
+- `--project <path>` - Project/workspace filter
+- `--from/--to <date>` - Date range
+- `--offset/--limit` - Pagination
+
+### File Search Scoring
+Results ranked by file role:
+- Edited: 1.0
+- Context: 0.5
+- Mentioned: 0.3
+
+## Git Integration
+
+### Tracked Per Conversation
+- `gitBranch` - Branch name at time of conversation
+- `gitCommitHash` - Commit hash
+- `gitRepositoryUrl` - Repository URL
+
+### Review Command (`dex review`)
+Correlates git commits with AI conversations:
+- Extracts commit diff content
+- Matches against conversation file edits
+- Computes line-by-line attribution
+- Confidence scoring (high/medium/low)
+- Coverage percentages per commit
 
 ## Coding Conventions
 
@@ -209,6 +299,7 @@ The `useNavigation` hook provides:
 - Use `fullscreen-ink` for proper terminal UI (prevents scroll issues)
 - Handle both TTY (interactive) and non-TTY (piped) modes
 - Keep state minimal - derive computed values with `useMemo`
+- Wrap all `repeat()` calls with `Math.max(0, ...)` to prevent negative values
 
 ### Error Handling
 - Parse JSON safely with try/catch and null checks
@@ -219,7 +310,7 @@ The `useNavigation` hook provides:
 
 - FTS index must be created/rebuilt AFTER data is inserted
 - Use `replace: true` when recreating indexes
-- Column names use snake_case (e.g., `conversation_id`, `message_index`) for SQL compatibility
+- Column names use snake_case for SQL compatibility
 - No `dropIndex` method - use `createIndex` with `replace: true`
 
 ### Schema Changes (Adding New Columns)
@@ -227,135 +318,56 @@ The `useNavigation` hook provides:
 LanceDB schema is defined by the first row inserted. To add new columns:
 
 1. **Update `src/schema/index.ts`** - Add fields to the Zod schema
-2. **Update adapter parsers** - Extract new data from source (e.g., `parser.ts`)
-3. **Update adapter normalizers** - Map extracted data to schema (e.g., `index.ts`)
-4. **Update `src/db/index.ts`** - Add columns to table creation placeholder rows in `ensureTables()` and any `recreate*Table()` functions
-5. **Update `src/db/repository.ts`** - Add columns to insert/upsert row objects AND to the return mappings in find/list functions
+2. **Update adapter parsers** - Extract new data from source
+3. **Update adapter normalizers** - Map extracted data to schema
+4. **Update `src/db/index.ts`** - Add columns to placeholder rows in `ensureTables()`
+5. **Update `src/db/repository.ts`** - Add columns to insert/upsert and return mappings
 6. **Delete database and re-sync** - `rm -rf ~/.dex/lancedb && bun run dev sync --force`
-
-**Critical**: Simply opening an existing table won't add new columns. The table must be recreated with the new schema for columns to exist.
-
-## Export & Backup
-
-### Export Command (`dex export`)
-
-Exports conversations as human-readable markdown files organized by source and project:
-
-```bash
-dex export                          # Export all conversations to ./agentdex-export
-dex export -o ~/my-exports          # Custom output directory
-dex export --source cursor          # Filter by source
-dex export --project myapp          # Filter by project path (substring match)
-dex export --from 2025-01-01 --to 2025-01-31  # Date range
-dex export --id <conversation-id>   # Export single conversation
-```
-
-**Output structure:**
-```
-output/
-└── <source>/
-    └── <project-name>/
-        └── YYYY-MM-DD_conversation-title.md
-```
-
-**Markdown format includes:**
-- Conversation metadata (source, project, model, mode, timestamps)
-- Token usage and lines changed statistics
-- Associated files list
-- Full message content with role labels
-
-### Backup Command (`dex backup`)
-
-Exports the full database as JSON for migration between machines:
-
-```bash
-dex backup                          # Creates dex-backup-TIMESTAMP.json
-dex backup -o my-backup.json        # Custom filename
-dex backup --source claude-code     # Filter by source
-```
-
-### Import Command (`dex import`)
-
-Imports conversations from a backup archive:
-
-```bash
-dex import backup.json              # Import all conversations
-dex import backup.json --dry-run    # Preview what would be imported
-dex import backup.json --force      # Overwrite existing conversations
-```
-
-## File Search
-
-The `--file` flag enables searching by file path across all file tables:
-
-```bash
-dex search --file auth.ts              # Find conversations involving auth.ts
-dex search --file src/components       # Find conversations in components/
-dex search "fix bug" --file auth.ts    # Combined: content + file filter
-```
-
-**How it works:**
-- Searches `file_edits`, `conversation_files`, and `message_files` tables
-- Case-insensitive substring matching on file paths
-- Results ranked by file role: edited (1.0) > context (0.5) > mentioned (0.3)
-- Combined search filters content results to only conversations with matching files
-
-**Implementation:** `searchByFilePath()` and `getFileMatchesForConversations()` in `src/db/repository.ts`
 
 ## Embeddings
 
 Background embedding generation for semantic search:
-- Uses `Qwen3-Embedding-0.6B` (1024 dimensions) via llama-server
+- **Model**: `Qwen3-Embedding-0.6B` (1024 dimensions) via llama-server
 - **GPU acceleration**: Metal on macOS (`--n-gpu-layers 99`), flash attention enabled
-- **Auto-benchmark**: On first run, tests batch sizes to find optimal config for your system
-- Spawned automatically after sync completes
-- Progress tracked in `~/.dex/embedding-progress.json`
-- Benchmark config saved to `~/.dex/embed-config.json`
-- Model stored in `~/.dex/models/`
-- Check status with `dex status`
+- **Auto-benchmark**: On first run, tests batch sizes to find optimal config
+- **Process lock**: Prevents duplicate embedding processes
+- **Progress tracking**: `~/.dex/embedding-progress.json`
+- **Config**: `~/.dex/embed-config.json`
 
-### First-Load Experience
-
-On first run (when no messages exist in database):
-- The UI blocks until initial sync completes
-- Shows sync progress with spinner, phase, and live counts
-- After sync, normal home screen appears with background embedding
+### FTS Index Recovery
+Automatic detection and repair of "fragment not found" errors:
+1. Detect corruption
+2. Rebuild FTS index
+3. Retry query
+4. Fall back to substring matching if all else fails
 
 ## Data Extraction
 
 ### Cursor
-Stores conversations in SQLite:
-- macOS: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
+- Location: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
+- Format: SQLite database
 - Key format: `composerData:{composerId}`
-- Fields: `conversation`/`conversationMap`, `context.fileSelections`, `forceMode`, `relevantFiles`
+- Also syncs billing events from `billing_events` table
 
 ### Claude Code
-Stores conversations in JSONL files:
-- All platforms: `~/.claude/projects/{sanitized-path}/*.jsonl`
+- Location: `~/.claude/projects/{sanitized-path}/*.jsonl`
+- Format: JSONL files
 - Entry types: `user`, `assistant`, `summary`, `file-history-snapshot`
-- Fields: `message.content`, `message.usage` (tokens), `toolUseResult`
+- Deduplication by `messageId:requestId` to avoid streaming chunk duplicates
 
 ### Codex CLI
-Stores conversations in JSONL files:
-- All platforms: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
+- Location: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
+- Format: JSONL files
 - Entry types: `session_meta`, `response_item`, `event_msg`, `turn_context`
-- Fields: `payload.content`, `payload.type` (message/function_call), token counts in `event_msg`
 
 ### OpenCode
-Stores conversations in JSON files with a hierarchical structure:
-- All platforms: `~/.local/share/opencode/storage/`
-- Directory structure:
-  - `project/{projectId}.json` - Project metadata with worktree path
-  - `session/{projectId}/{sessionId}.json` - Session metadata (title, timestamps)
-  - `message/{sessionId}/{messageId}.json` - Message metadata (role, tokens)
-  - `part/{messageId}/{partId}.json` - Message content parts (text, tool calls)
-- Fields: `worktree` (project path), `title`, `tokens` (input/output/cache), tool `state` (input/output)
+- Location: `~/.local/share/opencode/storage/`
+- Format: Hierarchical JSON structure
+- Structure: `project/` → `session/` → `message/` → `part/`
 
 ## Testing
 
-**366 tests** covering adapters, database, utilities, schema, and CLI commands.
-
-### Running Tests
+**366+ tests** covering adapters, database, utilities, schema, and CLI commands.
 
 ```bash
 bun run test:all            # Run all tests (Bun + Node.js Cursor tests)
@@ -363,8 +375,6 @@ bun test                    # Run Bun tests only
 bun run test:cursor         # Run Cursor adapter tests (Node.js)
 bun test --watch            # Watch mode
 bun test --coverage         # With coverage report
-bun test tests/unit/        # Run only unit tests
-bun test --grep "export"    # Run tests matching pattern
 ```
 
 ### Test Structure
@@ -372,86 +382,25 @@ bun test --grep "export"    # Run tests matching pattern
 ```
 tests/
 ├── fixtures/               # Test data factories
-│   └── index.ts            # createConversation, createMessage, etc.
 ├── helpers/                # Shared test utilities
 │   ├── db.ts               # TestDatabase for isolated DB tests
 │   ├── temp.ts             # Temporary directory management
-│   ├── cli.ts              # Console/process mocking + setupCliTest
+│   ├── cli.ts              # Console/process mocking
 │   ├── mocks.ts            # Adapter and embedding mocks
-│   ├── assertions.ts       # Custom file assertions
-│   ├── sources.ts          # Mock source data generators
-│   └── time.ts             # Date utilities
+│   └── assertions.ts       # Custom file assertions
 ├── unit/                   # Pure function tests
-│   ├── utils/              # export, format, config, platform
-│   ├── db/                 # repository, analytics
-│   ├── schema/             # Zod schema validation
-│   └── adapters/           # All 4 adapters (cursor uses Node.js)
 └── integration/            # Tests with I/O
-    └── commands/           # export, backup, import, list, show, sync, status
 ```
-
-### Writing Tests
-
-**Unit tests** - Test pure functions:
-```typescript
-import { describe, it, expect } from 'bun:test';
-import { generateFilename } from '../../../src/utils/export';
-import { createConversation } from '../../fixtures';
-
-it('generates filename', () => {
-  const conv = createConversation({ title: 'Test' });
-  expect(generateFilename(conv)).toContain('test.md');
-});
-```
-
-**Integration tests** - Test with database/filesystem:
-```typescript
-import { TestDatabase, TempDir, setupCliTest } from '../../helpers';
-import { createConversation, createMessage } from '../../fixtures';
-
-let db: TestDatabase;
-let cli: ReturnType<typeof setupCliTest>;
-
-beforeEach(async () => {
-  db = new TestDatabase();
-  cli = setupCliTest();
-  await db.setup();
-});
-
-afterEach(async () => {
-  cli.restore();
-  await db.teardown();
-});
-
-it('lists conversations', async () => {
-  await db.seed({ conversations: [createConversation()] });
-  const { listCommand } = await import('../../../src/cli/commands/list');
-  await listCommand({});
-  expect(cli.getOutput()).toContain('Conversations');
-});
-```
-
-### Cursor Adapter Tests
-
-The Cursor adapter uses `better-sqlite3` which has compatibility issues with Bun.
-Cursor tests run separately with Node.js via `bun run test:cursor`.
-
-### Manual Testing
-
-1. Reset database: `bun run reset`
-2. Re-sync: `bun run dev sync --force`
-3. Test search: `bun run dev search "your query"`
-4. Run typecheck: `bun run typecheck`
 
 ## Platform Notes
 
 ### macOS
-- The `timeout` command is not available by default on macOS
-- Use the Bash tool's `timeout` parameter instead of the `timeout` command
+- The `timeout` command is not available by default
+- Use the Bash tool's `timeout` parameter instead
 - Example: Use `Bash(command: "bun ...", timeout: 10000)` instead of `timeout 10 bun ...`
 
 ## Git Commits
 
-- Do NOT include "Claude Code" references, co-author lines, or AI attribution in commit messages
+- Do NOT include AI attribution in commit messages
 - Write clear, conventional commit messages focused on the actual changes
-- Example: `feat: add project context to search results` (not `feat: add project context 🤖 Generated with Claude Code`)
+- Example: `feat: add project context to search results`
