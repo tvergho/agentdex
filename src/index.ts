@@ -43,6 +43,7 @@ import { embedCommand } from './cli/commands/embed';
 import { chatCommand } from './cli/commands/chat';
 import { billingImportCommand, billingStatsCommand, billingSyncCommand } from './cli/commands/billing';
 import { reviewCommand } from './cli/commands/review';
+import { reflectCommand } from './cli/commands/reflect';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json') as { version: string };
@@ -157,6 +158,19 @@ program
   .option('-j, --json', 'Output as JSON')
   .option('-e, --export <path>', 'Export review as markdown to directory')
   .action(reviewCommand);
+
+program
+  .command('reflect [project]')
+  .description('Analyze conversations to generate CLAUDE.md files')
+  .option('-d, --days <n>', 'Time window in days', '90')
+  .option('-s, --source <source>', 'Filter by source (cursor, claude-code, codex, opencode)')
+  .option('--dry-run', 'Preview output without writing files')
+  .option('-o, --output <dir>', 'Custom output directory')
+  .option('--json', 'Output as JSON')
+  .option('--force', 'Regenerate from scratch (ignore existing CLAUDE.md)')
+  .option('-m, --model <model>', 'Model ID (default: claude-opus-4-6)')
+  .option('--no-prs', 'Skip GitHub PR review analysis')
+  .action(reflectCommand);
 
 program
   .command('review-web <exportPath>')

@@ -30,6 +30,8 @@ import {
   createPeriodFilter,
 } from '../db/analytics';
 import type { Conversation, Message } from '../schema/index';
+import { findRepoRoot, getRemoteUrl } from '../git/index';
+import { parseGitHubRepo, fetchPRList, fetchPRDetail } from './pr-reviews';
 
 // Strip tool outputs from message content
 function stripToolOutputs(content: string): string {
@@ -324,9 +326,16 @@ export async function startMcpServer(): Promise<void> {
         before: z.number().optional().default(2).describe('Messages before (default: 2)'),
         after: z.number().optional().default(2).describe('Messages after (default: 2)'),
       }).optional().describe('Expand around specific message instead of full conversation'),
-      max_tokens: z.number().optional().describe('Auto-truncate from end if exceeded'),
+      max_tokens: z.number().optional().describe('Token budget — truncates to fit. Use with tail=true to read the END of long conversations'),
+      tail: z.boolean().optional().default(false).describe('When true with max_tokens, takes messages from the END instead of beginning. Useful for reading conclusions/fixes in long conversations.'),
     },
-    async ({ ids, format, expand, max_tokens }) => {
+    async ({ ids, format, expand, max_tokens, tail }) => {
+      // Hard cap on total response size to prevent blowing the caller's context window.
+      // ~80K tokens ≈ 320K chars. If exceeded, remaining IDs are listed but not fetched.
+      const TOTAL_CHAR_BUDGET = 320_000;
+      let totalCharsUsed = 0;
+      const skippedIds: string[] = [];
+
       const conversations: Array<{
         id: string;
         title: string;
@@ -341,6 +350,11 @@ export async function startMcpServer(): Promise<void> {
       }> = [];
 
       for (const id of ids) {
+        // Check if we've already used most of the budget
+        if (totalCharsUsed > TOTAL_CHAR_BUDGET) {
+          skippedIds.push(id);
+          continue;
+        }
         const conversation = await conversationRepo.findById(id);
         if (!conversation) continue;
 
@@ -393,10 +407,12 @@ export async function startMcpServer(): Promise<void> {
           (conversation.totalCacheReadTokens || 0);
 
         if (max_tokens && format !== 'outline') {
+          // Tail mode: iterate from the end to capture conclusions/fixes
+          const source = tail ? [...formattedMessages].reverse() : formattedMessages;
           let runningTokens = 0;
           const truncatedMessages: typeof formattedMessages = [];
 
-          for (const msg of formattedMessages) {
+          for (const msg of source) {
             const msgTokens = msg.tokens || Math.ceil(msg.content.length / 4);
             if (runningTokens + msgTokens > max_tokens) {
               const remainingBudget = max_tokens - runningTokens;
@@ -404,7 +420,9 @@ export async function startMcpServer(): Promise<void> {
                 const charBudget = remainingBudget * 4;
                 truncatedMessages.push({
                   ...msg,
-                  content: msg.content.slice(0, charBudget) + '\n... (truncated)',
+                  content: tail
+                    ? '... (truncated)\n' + msg.content.slice(-charBudget)
+                    : msg.content.slice(0, charBudget) + '\n... (truncated)',
                 });
               }
               break;
@@ -412,10 +430,13 @@ export async function startMcpServer(): Promise<void> {
             runningTokens += msgTokens;
             truncatedMessages.push(msg);
           }
-          formattedMessages = truncatedMessages;
+
+          // Restore chronological order for tail mode
+          formattedMessages = tail ? truncatedMessages.reverse() : truncatedMessages;
+          if (tail) hasMoreBefore = true;
         }
 
-        conversations.push({
+        const convEntry = {
           id: conversation.id,
           title: conversation.title,
           project: conversation.workspacePath || conversation.projectName || '',
@@ -426,15 +447,110 @@ export async function startMcpServer(): Promise<void> {
           total_tokens: totalTokens,
           has_more_before: hasMoreBefore || undefined,
           has_more_after: hasMoreAfter || undefined,
-        });
+        };
+
+        // Estimate chars for this conversation entry
+        const entryChars = formattedMessages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
+        totalCharsUsed += entryChars;
+        conversations.push(convEntry);
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result: Record<string, any> = { conversations };
+      if (skippedIds.length > 0) {
+        result.skipped_ids = skippedIds;
+        result.skipped_message = `Response budget exceeded (~80K tokens). ${skippedIds.length} conversation(s) were not included. Fetch them in a separate call.`;
       }
 
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ conversations }, null, 2),
+          text: JSON.stringify(result, null, 2),
         }],
       };
+    }
+  );
+
+  // ============ pr_reviews ============
+  server.tool(
+    'pr_reviews',
+    'Browse and read GitHub PR review comments. List mode (omit number/numbers): returns PR titles, review decisions, comment counts. Detail mode: pass a single number OR an array of numbers to fetch multiple PRs in one call.',
+    {
+      repo: z.string().optional().describe('owner/repo format. Auto-detected from git remote if omitted.'),
+      number: z.number().optional().describe('Single PR number for detail view. Omit for list mode.'),
+      numbers: z.array(z.number()).optional().describe('Multiple PR numbers to fetch in one batch call. More efficient than calling one at a time.'),
+      state: z.enum(['open', 'closed', 'merged', 'all']).optional().default('merged').describe('PR state filter (default: merged)'),
+      days: z.number().optional().default(90).describe('Lookback window in days (default: 90)'),
+      limit: z.number().optional().default(30).describe('Maximum PRs to return (default: 30)'),
+      offset: z.number().optional().default(0).describe('Skip first N results for pagination'),
+      min_chars: z.number().optional().default(50).describe('Minimum comment/review body length to include (default: 50)'),
+    },
+    async ({ repo, number, numbers, state, days, limit, offset, min_chars }) => {
+      // Resolve repo: use provided, or auto-detect from git remote
+      let resolvedRepo = repo;
+      if (!resolvedRepo) {
+        const repoRoot = await findRepoRoot(process.cwd());
+        if (repoRoot) {
+          const remoteUrl = await getRemoteUrl(repoRoot);
+          if (remoteUrl) {
+            const parsed = parseGitHubRepo(remoteUrl);
+            if (parsed) {
+              resolvedRepo = `${parsed.owner}/${parsed.repo}`;
+            }
+          }
+        }
+      }
+
+      if (!resolvedRepo) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ error: 'Could not determine GitHub repo. Provide repo parameter as owner/repo.' }),
+          }],
+        };
+      }
+
+      try {
+        if (numbers !== undefined && numbers.length > 0) {
+          // Batch detail mode — fetch multiple PRs in parallel
+          const results = await Promise.all(
+            numbers.map((n) => fetchPRDetail(resolvedRepo!, n, min_chars)
+              .catch((err) => ({ pr: { number: n, title: '', body: '', author: '', url: '' }, reviews: [], comments: [], error: String(err) }))),
+          );
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify(results, null, 2),
+            }],
+          };
+        } else if (number !== undefined) {
+          // Single detail mode
+          const result = await fetchPRDetail(resolvedRepo, number, min_chars);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            }],
+          };
+        } else {
+          // List mode
+          const result = await fetchPRList(resolvedRepo, days, limit, offset, state, min_chars);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            }],
+          };
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ error: `Failed to fetch PR data: ${message}` }),
+          }],
+        };
+      }
     }
   );
 
