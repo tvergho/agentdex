@@ -141,6 +141,40 @@ export const OPENCODE_CODEX_CONFIG = {
             store: false,
           },
         },
+        // GPT-5.2 Codex models
+        'gpt-5.2-codex': {
+          name: 'GPT 5.2 Codex (OAuth)',
+          limit: { context: 272000, output: 128000 },
+          options: {
+            reasoningEffort: 'medium',
+            reasoningSummary: 'auto',
+            textVerbosity: 'medium',
+            include: ['reasoning.encrypted_content'],
+            store: false,
+          },
+        },
+        'gpt-5.2-codex-high': {
+          name: 'GPT 5.2 Codex High (OAuth)',
+          limit: { context: 272000, output: 128000 },
+          options: {
+            reasoningEffort: 'high',
+            reasoningSummary: 'detailed',
+            textVerbosity: 'medium',
+            include: ['reasoning.encrypted_content'],
+            store: false,
+          },
+        },
+        'gpt-5.2': {
+          name: 'GPT 5.2 (OAuth)',
+          limit: { context: 272000, output: 128000 },
+          options: {
+            reasoningEffort: 'medium',
+            reasoningSummary: 'auto',
+            textVerbosity: 'medium',
+            include: ['reasoning.encrypted_content'],
+            store: false,
+          },
+        },
         'gpt-5.1-low': {
           name: 'GPT 5.1 Low (OAuth)',
           limit: { context: 272000, output: 128000 },
