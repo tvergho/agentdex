@@ -107,6 +107,10 @@ dex chat                        # AI chat with dex integration
 dex chat -p                     # Print mode (stdout)
 dex review                      # Correlate commits with conversations
 dex review --export ./out       # Export review as HTML viewer
+dex reflect                     # Generate CLAUDE.md from conversation history
+dex reflect --dry-run           # Preview without writing files
+dex reflect --days 30           # Limit time window
+dex reflect --no-prs            # Skip PR review analysis
 dex billing sync                # Fetch Cursor billing from API
 dex billing import <csv>        # Import Cursor billing CSV
 dex billing stats               # View billing analytics
@@ -244,6 +248,7 @@ The MCP server (`src/mcp/server.ts`) exposes tools for AI agent integration:
 | `list` | Browse conversations with filters (project, source, branch, date) |
 | `search` | Hybrid search (FTS + semantic) with file filtering |
 | `get` | Retrieve conversation content in various formats |
+| `pr_reviews` | Browse GitHub PR review comments |
 
 All tools support `branch` filtering for git-aware queries.
 

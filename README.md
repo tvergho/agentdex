@@ -17,6 +17,7 @@ agentdex indexes conversations from AI coding assistants (Cursor, Claude Code, C
 - **Analytics dashboard** - token usage, activity heatmaps, project stats, billing
 - **Export & backup** - markdown exports and JSON backups for portability
 - **Git correlation** - `dex review` maps commits to AI conversations
+- **Self-reflection** - `dex reflect` generates CLAUDE.md and skills from your conversation history
 - **MCP server** - integrate with AI agents via Model Context Protocol
 - **AI chat** - `dex chat` launches an AI assistant with access to your conversation history
 - **Fully local** - your data never leaves your machine
@@ -224,6 +225,28 @@ dex chat "query"        # Start with a query
 
 Uses OpenCode with the dex MCP server for conversation search.
 
+### `dex reflect [project]`
+
+Analyze your conversation history to generate CLAUDE.md files and skills for a project:
+
+```bash
+dex reflect                         # Reflect on current project (auto-detected from cwd)
+dex reflect /path/to/project        # Specific project
+dex reflect --dry-run               # Preview without writing files
+dex reflect --days 30               # Limit to last 30 days
+dex reflect -m claude-sonnet-4-5-20250929  # Use a specific model
+dex reflect --no-prs                # Skip GitHub PR review analysis
+dex reflect --force                 # Regenerate from scratch
+```
+
+Runs parallel LLM tasks to produce:
+- **CLAUDE.md** - Coding conventions, architecture, commands, pitfalls extracted from conversations
+- **.claude/skills/** - Recurring multi-step workflows (debugging, deployment, testing patterns)
+- **Subdirectory CLAUDE.md** - Per-package conventions for monorepos
+- **PR review patterns** - Team conventions from GitHub code reviews (requires `gh` CLI)
+
+Requires an Anthropic API key (`ANTHROPIC_API_KEY` or configured via `dex config`).
+
 ### `dex review [branch]`
 
 Correlate git commits with AI conversations:
@@ -260,6 +283,7 @@ dex serve   # Start MCP server (usually auto-launched)
 - `list` - Browse conversations with filters
 - `search` - Search by content/file with hybrid search
 - `get` - Retrieve full conversation content
+- `pr_reviews` - Browse GitHub PR review comments
 
 Configure in your MCP client to give AI agents access to your coding history.
 
