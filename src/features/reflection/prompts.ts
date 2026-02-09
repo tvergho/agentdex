@@ -37,11 +37,21 @@ You have access to these dex MCP tools:
 1. Call dex_stats to understand the landscape
 2. Call dex_list with limit=50 repeatedly (incrementing offset) to page through ALL conversations for this project${options.source ? ` from source "${options.source}"` : ''}
 3. Read ALL conversations using dex_get with \`outline\` format first — this is very compact
-4. Deep-read the top **15-20 most informative conversations** using \`stripped\` format with \`max_tokens: 30000\`
+4. **Keyword scan for user behavioral patterns:** Before deep-reading, use dex_search to scan ALL conversations for common user correction keywords. Run searches for terms like:
+   - "simplify" / "too complex" / "overcomplicated"
+   - "remove comments" / "no comments" / "unnecessary comments"
+   - "parallelize" / "concurrent" / "in parallel"
+   - "existing util" / "already have" / "don't reinvent" / "reuse"
+   - "remove debug" / "remove logging" / "clean up"
+   - "DRY" / "deduplicate" / "duplicated code"
+   - "don't add" / "unnecessary" / "remove the" / "I said"
+
+   For each search hitting 5+ conversations, that keyword represents a high-frequency user behavioral pattern. Use dex_get with \`user_only\` format on 2-3 representative hits to understand the exact preference. These patterns become Agent Instructions in the output.
+5. Deep-read the top **15-20 most informative conversations** using \`stripped\` format with \`max_tokens: 30000\`
    - For short conversations (<30K tokens): read without max_tokens
    - For long conversations (>30K tokens): Use \`tail: true\` with \`max_tokens: 30000\` to read the ENDING
-5. Prioritize conversations with debugging sessions, architecture decisions, error messages, performance issues
-6. **Batch dex_get calls with at most 3-5 IDs at a time** to avoid exceeding response limits
+6. Prioritize conversations with debugging sessions, architecture decisions, error messages, performance issues
+7. **Batch dex_get calls with at most 3-5 IDs at a time** to avoid exceeding response limits
 
 ## Analysis Guidelines
 
@@ -81,7 +91,7 @@ function buildPatternQualityInstructions(): string {
 You are NOT generating codebase documentation. Your unique value is **EXPERIENTIAL KNOWLEDGE from conversations** — things developers learned by working with the code.
 
 ### The Litmus Test
-For every rule you write, ask: **"Would I need to read conversation history to know this, or could I figure it out from the code alone?"** If the answer is "from the code alone", DELETE IT.
+For every rule you write, ask: **"Would I need to read conversation history to know this, or could I figure it out from the code alone?"** If the answer is "from the code alone", DELETE IT — UNLESS the pattern appears as a repeated user correction in 5+ conversations. High-frequency user corrections represent preferences that are invisible in the codebase (e.g., "keep it simple", "no comments", "use existing utils"). These are extremely valuable because they must be re-taught every session without CLAUDE.md.
 
 ### DO NOT INCLUDE (code-derivable):
 - "Uses React with TypeScript" — obvious from package.json
@@ -99,6 +109,7 @@ For every rule you write, ask: **"Would I need to read conversation history to k
 - **Code review patterns** reviewers consistently enforce
 - **Stylistic conventions the team enforces** — coding style rules that developers or reviewers repeatedly correct (e.g., "always use X instead of Y", "never do Z"). These often have the HIGHEST frequency because they apply to every change.
 - **Process conventions** — how the team expects things to be done (naming, file organization, commit style, cleanup steps)
+- **User behavioral patterns (repeated corrections)** — Instructions users give the AI agent repeatedly: "simplify this", "remove the comments", "use the existing util", "parallelize this", "remove debug logging", "DRY this up". Each represents a standing preference the agent should follow automatically. These often have the HIGHEST frequency (20-60+ occurrences) because users must re-teach them every session.
 
 ### Prioritize by Frequency
 
@@ -106,6 +117,7 @@ Start with the **highest-frequency patterns first**. If developers corrected the
 - Repeated corrections or reminders across many conversations
 - Rules that developers keep re-learning or forgetting
 - Conventions that apply broadly (to every file, every PR, every feature)
+- User behavioral patterns (corrections/instructions repeated in 5+ conversations) — look for phrases like "I told you", "always", "don't", "stop doing", "I prefer", "why did you", "too many", "unnecessary"
 
 ### Output Structure for Each Pattern
 
@@ -189,6 +201,7 @@ Your CLAUDE.md should have these sections (include only where you have evidence)
 5. **Coding Conventions** (structured as numbered patterns with frequency/evidence/spec)
 6. **Common Issues / Pitfalls** (structured as numbered patterns with frequency/evidence/spec)
 7. **Testing** (gotchas, specific commands, what breaks)
+8. **Agent Instructions** (standing user preferences enforced repeatedly — simplicity, commenting style, code reuse, cleanup expectations. Format as numbered patterns with frequency.)
 
 The Coding Conventions and Common Issues sections should follow the pattern structure (frequency + evidence + code examples). Keep Project Overview and Tech Stack SHORT. Spend most of your output on experiential knowledge.
 
@@ -219,7 +232,9 @@ Use **imperative voice**: "Use TypeScript strict mode" not "The project uses Typ
 
 Generate a root CLAUDE.md with structured patterns following the frequency/evidence/specification format. Survey every conversation via outline, deep-read the top 15-20 most informative ones, and output using === FILE: CLAUDE.md === markers.
 
-Focus on extracting EXPERIENTIAL knowledge — bugs, fixes, gotchas, architecture rationale, performance numbers, non-obvious commands. NOT code-structure documentation.`;
+Focus on extracting EXPERIENTIAL knowledge — bugs, fixes, gotchas, architecture rationale, performance numbers, non-obvious commands. NOT code-structure documentation.
+
+ALSO: Before deep-reading, use dex_search to scan for repeated user corrections (e.g., "simplify", "remove comments", "parallelize", "existing util", "DRY", "remove debug"). For each keyword hitting 5+ conversations, read 2-3 examples with \`user_only\` format and extract the standing preference as an Agent Instruction.`;
 
   return { system, user };
 }
