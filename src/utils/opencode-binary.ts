@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, chmodSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, chmodSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir, platform, arch } from 'os';
@@ -42,11 +42,27 @@ function getAssetName(): string {
   throw new Error(`Fork binary not available for ${platform()}-${arch()}`);
 }
 
+// Version tracking file to know which release is installed
+const VERSION_FILE = join(DEX_BIN_DIR, 'opencode.version');
+
+/**
+ * Check if the installed binary matches the expected release version.
+ */
+function isCorrectVersion(): boolean {
+  try {
+    if (!existsSync(VERSION_FILE)) return false;
+    const installed = readFileSync(VERSION_FILE, 'utf-8').trim();
+    return installed === RELEASE_VERSION;
+  } catch {
+    return false;
+  }
+}
+
 async function downloadBinary(): Promise<void> {
   const assetName = getAssetName();
   const url = `https://github.com/${FORK_OWNER}/${FORK_REPO}/releases/download/${RELEASE_VERSION}/${assetName}`;
 
-  console.log(`Downloading OpenCode from ${url}...`);
+  console.log(`Downloading OpenCode ${RELEASE_VERSION} from ${url}...`);
 
   mkdirSync(DEX_BIN_DIR, { recursive: true });
 
@@ -62,16 +78,34 @@ async function downloadBinary(): Promise<void> {
   console.log('Extracting...');
   execSync(`unzip -o "${zipPath}" -d "${DEX_BIN_DIR}"`, { stdio: 'pipe' });
 
-  // Handle nested directory structure: opencode-darwin-arm64/bin/opencode
-  const extractedDir = join(DEX_BIN_DIR, assetName.replace('.zip', ''));
-  const extractedBin = join(extractedDir, 'bin', 'opencode');
-  if (existsSync(extractedBin)) {
-    execSync(`mv "${extractedBin}" "${OPENCODE_BIN_PATH}"`, { stdio: 'pipe' });
-    execSync(`rm -rf "${extractedDir}"`, { stdio: 'pipe' });
+  // Handle zip structures:
+  // 1. Nested: opencode-darwin-arm64/bin/opencode (older releases)
+  // 2. Flat: bin/opencode (newer releases)
+  const nestedDir = join(DEX_BIN_DIR, assetName.replace('.zip', ''));
+  const nestedBin = join(nestedDir, 'bin', 'opencode');
+  const flatBin = join(DEX_BIN_DIR, 'bin', 'opencode');
+
+  if (existsSync(nestedBin)) {
+    execSync(`mv "${nestedBin}" "${OPENCODE_BIN_PATH}"`, { stdio: 'pipe' });
+    execSync(`rm -rf "${nestedDir}"`, { stdio: 'pipe' });
+  } else if (existsSync(flatBin)) {
+    execSync(`mv "${flatBin}" "${OPENCODE_BIN_PATH}"`, { stdio: 'pipe' });
+    // Clean up the extracted bin/ directory
+    const flatBinDir = join(DEX_BIN_DIR, 'bin');
+    try { execSync(`rmdir "${flatBinDir}" 2>/dev/null`, { stdio: 'pipe' }); } catch { /* not empty or doesn't exist */ }
+  }
+
+  // Clean up extracted package.json if present
+  const extractedPkg = join(DEX_BIN_DIR, 'package.json');
+  if (existsSync(extractedPkg)) {
+    try { unlinkSync(extractedPkg); } catch { /* ignore */ }
   }
 
   chmodSync(OPENCODE_BIN_PATH, 0o755);
   unlinkSync(zipPath);
+
+  // Record the installed version
+  writeFileSync(VERSION_FILE, RELEASE_VERSION);
 
   console.log('OpenCode binary installed.');
 }
@@ -86,7 +120,7 @@ export async function ensureOpencodeBinary(): Promise<string> {
 
   // For darwin-arm64, use the fork binary
   if (shouldUseForkBinary()) {
-    if (existsSync(OPENCODE_BIN_PATH)) {
+    if (existsSync(OPENCODE_BIN_PATH) && isCorrectVersion()) {
       return OPENCODE_BIN_PATH;
     }
     await downloadBinary();

@@ -653,6 +653,29 @@ async function safeOpenTable(tableName: string, timeoutMs = 10000): Promise<Tabl
   });
 }
 
+/**
+ * Validate that an existing table has all expected columns.
+ * If columns are missing (schema was updated since table creation), drop the table
+ * so it can be recreated with the correct schema.
+ * Returns true if the table is valid, false if it was dropped and needs recreation.
+ */
+async function validateTableSchema(tableName: string, table: Table, expectedColumns: string[]): Promise<boolean> {
+  try {
+    const schema = await table.schema();
+    const existingColumns = new Set(schema.fields.map(f => f.name));
+    const missingColumns = expectedColumns.filter(col => !existingColumns.has(col));
+    if (missingColumns.length > 0) {
+      console.error(`[db] Table "${tableName}" is missing columns: ${missingColumns.join(', ')}. Recreating table...`);
+      await db!.dropTable(tableName);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[db] Failed to validate schema for "${tableName}": ${err instanceof Error ? err.message : err}`);
+    return true;
+  }
+}
+
 async function ensureTables(): Promise<void> {
   if (!db) throw new Error('Database not connected');
 
@@ -660,7 +683,23 @@ async function ensureTables(): Promise<void> {
 
   // Conversations table
   // Note: All column names use snake_case to ensure LanceDB SQL compatibility
-  if (!existingTables.includes('conversations')) {
+  const conversationColumns = [
+    'id', 'source', 'title', 'subtitle', 'workspace_path', 'project_name',
+    'model', 'mode', 'created_at', 'updated_at', 'message_count', 'source_ref_json',
+    'total_input_tokens', 'total_output_tokens', 'total_cache_creation_tokens', 'total_cache_read_tokens',
+    'sum_input_tokens', 'sum_output_tokens', 'sum_cache_creation_tokens', 'sum_cache_read_tokens',
+    'total_lines_added', 'total_lines_removed', 'compact_count',
+    'git_branch', 'git_commit_hash', 'git_repository_url',
+  ];
+  let needsCreateConversations = !existingTables.includes('conversations');
+  if (!needsCreateConversations) {
+    conversationsTable = await safeOpenTable('conversations');
+    if (!await validateTableSchema('conversations', conversationsTable, conversationColumns)) {
+      needsCreateConversations = true;
+      conversationsTable = null;
+    }
+  }
+  if (needsCreateConversations) {
     conversationsTable = await db.createTable('conversations', [
       {
         id: '_placeholder_',
@@ -695,12 +734,24 @@ async function ensureTables(): Promise<void> {
     ]);
     // Delete placeholder row
     await conversationsTable.delete("id = '_placeholder_'");
-  } else {
-    conversationsTable = await safeOpenTable('conversations');
   }
 
   // Messages table - primary search target with vector embeddings
-  if (!existingTables.includes('messages')) {
+  const messageColumns = [
+    'id', 'conversation_id', 'role', 'content', 'indexed_content', 'timestamp',
+    'message_index', 'vector', 'input_tokens', 'output_tokens',
+    'cache_creation_tokens', 'cache_read_tokens', 'total_lines_added', 'total_lines_removed',
+    'is_compact_summary', 'git_snapshot',
+  ];
+  let needsCreateMessages = !existingTables.includes('messages');
+  if (!needsCreateMessages) {
+    messagesTable = await safeOpenTable('messages');
+    if (!await validateTableSchema('messages', messagesTable, messageColumns)) {
+      needsCreateMessages = true;
+      messagesTable = null;
+    }
+  }
+  if (needsCreateMessages) {
     messagesTable = await db.createTable('messages', [
       {
         id: '_placeholder_',
@@ -723,12 +774,19 @@ async function ensureTables(): Promise<void> {
     ]);
     await messagesTable.delete("id = '_placeholder_'");
     // Note: FTS and vector indexes will be created/rebuilt after sync when data exists
-  } else {
-    messagesTable = await safeOpenTable('messages');
   }
 
   // Tool calls table
-  if (!existingTables.includes('tool_calls')) {
+  const toolCallColumns = ['id', 'message_id', 'conversation_id', 'type', 'input', 'output', 'file_path'];
+  let needsCreateToolCalls = !existingTables.includes('tool_calls');
+  if (!needsCreateToolCalls) {
+    toolCallsTable = await safeOpenTable('tool_calls');
+    if (!await validateTableSchema('tool_calls', toolCallsTable, toolCallColumns)) {
+      needsCreateToolCalls = true;
+      toolCallsTable = null;
+    }
+  }
+  if (needsCreateToolCalls) {
     toolCallsTable = await db.createTable('tool_calls', [
       {
         id: '_placeholder_',
@@ -741,12 +799,19 @@ async function ensureTables(): Promise<void> {
       },
     ]);
     await toolCallsTable.delete("id = '_placeholder_'");
-  } else {
-    toolCallsTable = await safeOpenTable('tool_calls');
   }
 
   // Sync state table
-  if (!existingTables.includes('sync_state')) {
+  const syncStateColumns = ['source', 'workspace_path', 'db_path', 'last_synced_at', 'last_mtime'];
+  let needsCreateSyncState = !existingTables.includes('sync_state');
+  if (!needsCreateSyncState) {
+    syncStateTable = await safeOpenTable('sync_state');
+    if (!await validateTableSchema('sync_state', syncStateTable, syncStateColumns)) {
+      needsCreateSyncState = true;
+      syncStateTable = null;
+    }
+  }
+  if (needsCreateSyncState) {
     syncStateTable = await db.createTable('sync_state', [
       {
         source: Source.Cursor,
@@ -757,12 +822,19 @@ async function ensureTables(): Promise<void> {
       },
     ]);
     await syncStateTable.delete("workspace_path = '_placeholder_'");
-  } else {
-    syncStateTable = await safeOpenTable('sync_state');
   }
 
   // Conversation files table
-  if (!existingTables.includes('conversation_files')) {
+  const convFilesColumns = ['id', 'conversation_id', 'file_path', 'role'];
+  let needsCreateConvFiles = !existingTables.includes('conversation_files');
+  if (!needsCreateConvFiles) {
+    filesTable = await safeOpenTable('conversation_files');
+    if (!await validateTableSchema('conversation_files', filesTable, convFilesColumns)) {
+      needsCreateConvFiles = true;
+      filesTable = null;
+    }
+  }
+  if (needsCreateConvFiles) {
     filesTable = await db.createTable('conversation_files', [
       {
         id: '_placeholder_',
@@ -772,12 +844,19 @@ async function ensureTables(): Promise<void> {
       },
     ]);
     await filesTable.delete("id = '_placeholder_'");
-  } else {
-    filesTable = await safeOpenTable('conversation_files');
   }
 
   // Message files table (per-message file associations)
-  if (!existingTables.includes('message_files')) {
+  const msgFilesColumns = ['id', 'message_id', 'conversation_id', 'file_path', 'role'];
+  let needsCreateMsgFiles = !existingTables.includes('message_files');
+  if (!needsCreateMsgFiles) {
+    messageFilesTable = await safeOpenTable('message_files');
+    if (!await validateTableSchema('message_files', messageFilesTable, msgFilesColumns)) {
+      needsCreateMsgFiles = true;
+      messageFilesTable = null;
+    }
+  }
+  if (needsCreateMsgFiles) {
     messageFilesTable = await db.createTable('message_files', [
       {
         id: '_placeholder_',
@@ -788,12 +867,22 @@ async function ensureTables(): Promise<void> {
       },
     ]);
     await messageFilesTable.delete("id = '_placeholder_'");
-  } else {
-    messageFilesTable = await safeOpenTable('message_files');
   }
 
   // File edits table (individual line-level edits)
-  if (!existingTables.includes('file_edits')) {
+  const fileEditsColumns = [
+    'id', 'message_id', 'conversation_id', 'file_path', 'edit_type',
+    'lines_added', 'lines_removed', 'start_line', 'end_line', 'new_content',
+  ];
+  let needsCreateFileEdits = !existingTables.includes('file_edits');
+  if (!needsCreateFileEdits) {
+    fileEditsTable = await safeOpenTable('file_edits');
+    if (!await validateTableSchema('file_edits', fileEditsTable, fileEditsColumns)) {
+      needsCreateFileEdits = true;
+      fileEditsTable = null;
+    }
+  }
+  if (needsCreateFileEdits) {
     fileEditsTable = await db.createTable('file_edits', [
       {
         id: '_placeholder_',
@@ -809,12 +898,22 @@ async function ensureTables(): Promise<void> {
       },
     ]);
     await fileEditsTable.delete("id = '_placeholder_'");
-  } else {
-    fileEditsTable = await safeOpenTable('file_edits');
   }
 
   // Billing events table (Cursor CSV billing data)
-  if (!existingTables.includes('billing_events')) {
+  const billingColumns = [
+    'id', 'conversation_id', 'timestamp', 'model', 'kind',
+    'input_tokens', 'output_tokens', 'cache_read_tokens', 'total_tokens', 'cost', 'csv_source',
+  ];
+  let needsCreateBilling = !existingTables.includes('billing_events');
+  if (!needsCreateBilling) {
+    billingEventsTable = await safeOpenTable('billing_events');
+    if (!await validateTableSchema('billing_events', billingEventsTable, billingColumns)) {
+      needsCreateBilling = true;
+      billingEventsTable = null;
+    }
+  }
+  if (needsCreateBilling) {
     billingEventsTable = await db.createTable('billing_events', [
       {
         id: '_placeholder_',
@@ -831,8 +930,6 @@ async function ensureTables(): Promise<void> {
       },
     ]);
     await billingEventsTable.delete("id = '_placeholder_'");
-  } else {
-    billingEventsTable = await safeOpenTable('billing_events');
   }
 }
 
